@@ -6,6 +6,7 @@ package bigslice
 
 import (
 	"context"
+	"errors"
 	"log"
 )
 
@@ -18,7 +19,7 @@ type Executor interface {
 	// and after all funcs have been registered. Start need not return:
 	// for example, the Bigmachine implementation of Executor uses
 	// Start as an entry point for worker processes.
-	Start(context.Context) (shutdown func())
+	Start(*Session) (shutdown func())
 
 	// Run runs the given task on the executor. It returns an error if
 	// the task fails. Run is called only when a task is ready to be run
@@ -30,7 +31,7 @@ type Executor interface {
 	Reader(context.Context, *Task, int) Reader
 
 	// Maxprocs returns the number of available processors in this executor.
-	// It determines the amount of parallelism possible.
+	// It determines the amount of available physical parallelism.
 	Maxprocs() int
 }
 
@@ -46,7 +47,10 @@ type Executor interface {
 // be interpreted without an accompanying invocation.
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
-func Eval(ctx context.Context, executor Executor, inv Invocation, roots []*Task) error {
+func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots []*Task) error {
+	if p == 0 {
+		return errors.New("cannot evaluate with 0 parallelism")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	tasks := make(map[*Task]bool)
@@ -70,7 +74,7 @@ func Eval(ctx context.Context, executor Executor, inv Invocation, roots []*Task)
 		}
 		// Kick off ready tasks as long as we have space.
 		for task, taskState := range state {
-			if running >= executor.Maxprocs() {
+			if running >= p {
 				break
 			}
 			if taskState != taskReady {

@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+
+	"github.com/grailbio/bigmachine"
 )
 
 // Session represents a Bigslice compute session. A session shares a
@@ -41,6 +43,7 @@ import (
 //	}
 type Session struct {
 	context.Context
+	p        int
 	executor Executor
 	tasks    map[uint64][]*Task
 	types    map[uint64][]reflect.Type
@@ -49,17 +52,26 @@ type Session struct {
 // An Option represents a session configuration parameter value.
 type Option func(s *Session)
 
-var (
-	// Local configures a session with the local in-binary executor.
-	Local Option = func(s *Session) {
-		s.executor = newLocalExecutor()
+// Local configures a session with the local in-binary executor.
+var Local Option = func(s *Session) {
+	s.executor = newLocalExecutor()
+}
+
+// Bigmachine configures a session using the bigmachine executor
+// configured with the provided system.
+func Bigmachine(system bigmachine.System) Option {
+	return func(s *Session) {
+		s.executor = newBigmachineExecutor(system)
 	}
-	// Bigmachine configures a session with the bigmachine executor.
-	// This is default.
-	Bigmachine Option = func(s *Session) {
-		s.executor = newBigmachineExecutor()
+}
+
+// Parallelism configures the session with the provided target
+// parallelism.
+func Parallelism(p int) Option {
+	return func(s *Session) {
+		s.p = p
 	}
-)
+}
 
 // Start creates and starts a new bigslice session, configuring it
 // according to the provided options. Only one session may be created
@@ -76,9 +88,9 @@ func Start(options ...Option) *Session {
 		opt(s)
 	}
 	if s.executor == nil {
-		s.executor = newBigmachineExecutor()
+		s.executor = newBigmachineExecutor(bigmachine.Local)
 	}
-	s.executor.Start(s.Context)
+	s.executor.Start(s)
 	return s
 }
 
@@ -107,5 +119,14 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 		s.tasks[key] = tasks
 		s.types[key] = ColumnTypes(slice)
 	}
-	return Eval(ctx, s.executor, inv, tasks)
+	p := s.p
+	if p == 0 {
+		p = s.executor.Maxprocs()
+	}
+	return Eval(ctx, s.executor, p, inv, tasks)
+}
+
+// Parallelism returns the desired amount of evaluation parallelism.
+func (s *Session) Parallelism() int {
+	return s.p
 }

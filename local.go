@@ -16,6 +16,7 @@ import (
 type localExecutor struct {
 	mu      sync.Mutex
 	buffers map[*Task]taskBuffer
+	sess    *Session
 }
 
 func newLocalExecutor() *localExecutor {
@@ -27,9 +28,9 @@ func newLocalExecutor() *localExecutor {
 // Maxprocs returns the maxprocs reported by the Go runtime.
 func (localExecutor) Maxprocs() int { return runtime.GOMAXPROCS(0) }
 
-// Start is a no-op.
-func (l *localExecutor) Start(_ context.Context) (shutdown func()) {
-	return func() {}
+func (l *localExecutor) Start(sess *Session) (shutdown func()) {
+	l.sess = sess
+	return
 }
 
 func (l *localExecutor) Run(ctx context.Context, inv Invocation, task *Task) error {

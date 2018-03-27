@@ -48,7 +48,7 @@ func run(ctx context.Context, slice Slice) (*Scanner, error) {
 		return nil, err
 	}
 	x := newLocalExecutor()
-	if err := Eval(ctx, x, Invocation{}, tasks); err != nil {
+	if err := Eval(ctx, x, 1, Invocation{}, tasks); err != nil {
 		return nil, err
 	}
 	scan := &Scanner{

@@ -9,7 +9,7 @@ import (
 	"container/heap"
 	"context"
 	"encoding/gob"
-	"flag"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,7 +18,7 @@ import (
 	"sync"
 
 	"github.com/grailbio/bigmachine"
-	"github.com/grailbio/bigmachine/driver"
+	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -28,8 +28,6 @@ func init() {
 // TODO(marius): clean up flag registration, etc. vis-a-vis bigmachine.
 // e.g., perhaps we can register flags in a bigmachine flagset that gets
 // parsed together, so that we don't litter the process with global flags.
-
-var bignmach = flag.Int("bignmach", 3, "number of machines to run")
 
 // LoadedMachine maintains a load for each machine in order
 // to load balance tasks among them.
@@ -57,53 +55,37 @@ func (h *machineHeap) Pop() interface{} {
 }
 
 // BigmachineExecutor is an executor that runs individual tasks on
-// bigmachine machines. The bigmachine is currently configured by the
-// the flags provided by bigmachine/driver; the number of machines to
-// launch is determined by the global flag "bignmach". This is only
-// temporary and will change soon.
+// bigmachine machines.
 type bigmachineExecutor struct {
-	machines []*bigmachine.Machine
+	system bigmachine.System
 
-	b *bigmachine.B
+	sess *Session
+	b    *bigmachine.B
+
+	machines     []*bigmachine.Machine
+	machinesOnce sync.Once
+	machinesErr  error
 
 	mu        sync.Mutex
 	load      machineHeap
 	locations map[*Task]*bigmachine.Machine
 }
 
-func newBigmachineExecutor() *bigmachineExecutor {
-	return new(bigmachineExecutor)
+func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
+	return &bigmachineExecutor{system: system}
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
-// starts the bigmachine. The driver process also runs a local web server
-// on port 3333 to export diagnostics.
-//
-// TODO(marius): change the way the bigmachine executor is instantiated
-// and configured.
+// starts the bigmachine.
 //
 // TODO(marius): provide fine-grained fault tolerance.
-func (b *bigmachineExecutor) Start(ctx context.Context) (shutdown func()) {
-	b.b = driver.Start()
+func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
+	b.sess = sess
+	b.b = bigmachine.Start(b.system)
 	go func() {
 		log.Printf("http.ListenAndServe: %v", http.ListenAndServe(":3333", nil))
 	}()
 
-	var err error
-	b.machines, err = b.b.StartN(ctx, *bignmach, bigmachine.Services{
-		"Worker": &worker{},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("waiting for %d machines to come up", len(b.machines))
-	for _, m := range b.machines {
-		<-m.Wait(bigmachine.Running)
-		if err := m.Err(); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("machine %v is ready", m.Addr)
-	}
 	b.locations = make(map[*Task]*bigmachine.Machine)
 	heap.Init(&b.load)
 	for _, m := range b.machines {
@@ -119,6 +101,9 @@ func (b *bigmachineExecutor) Start(ctx context.Context) (shutdown func()) {
 // TODO(marius): provide a standardized means of propagating
 // status updates and logs.
 func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task) (err error) {
+	if err := b.initMachines(); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	m := heap.Pop(&b.load).(loadedMachine)
 	m.Load++
@@ -179,6 +164,62 @@ func (b *bigmachineExecutor) Maxprocs() int {
 		n += mach.Maxprocs
 	}
 	return n
+}
+
+func (b *bigmachineExecutor) initMachines() error {
+	b.machinesOnce.Do(func() {
+		var (
+			n        = 1
+			p        = b.sess.Parallelism()
+			maxprocs = b.b.System().Maxprocs()
+		)
+		if p > 0 {
+			n = p / maxprocs
+			if p%maxprocs != 0 {
+				n++
+			}
+		}
+		log.Printf("starting %d bigmachines (p=%d, maxprocs=%d)", n, p, maxprocs)
+		ctx := context.Background()
+		machines, err := b.b.StartN(ctx, n, bigmachine.Services{
+			"Worker": &worker{},
+		})
+		if err != nil {
+			b.machinesErr = err
+			return
+		}
+		log.Printf("waiting for %d machines", len(machines))
+		g, ctx := errgroup.WithContext(ctx)
+		for i := range machines {
+			m := machines[i]
+			g.Go(func() error {
+				<-m.Wait(bigmachine.Running)
+				if err := m.Err(); err != nil {
+					log.Printf("machine %s failed to start: %v", m.Addr, err)
+					return nil
+				}
+				log.Printf("machine %v is ready", m.Addr)
+				b.mu.Lock()
+				b.machines = append(b.machines, m)
+				b.mu.Unlock()
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			b.machinesErr = err
+			return
+		}
+		if len(b.machines) == 0 {
+			b.machinesErr = errors.New("no machines started")
+			return
+		}
+		b.mu.Lock()
+		for _, m := range b.machines {
+			heap.Push(&b.load, loadedMachine{m, 0})
+		}
+		b.mu.Unlock()
+	})
+	return b.machinesErr
 }
 
 // Location returns the machine on which the results of the provided

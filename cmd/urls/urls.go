@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,7 +24,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/file/s3file"
+	"github.com/grailbio/bigmachine/ec2system"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/slicecmd"
 )
 
 func init() {
@@ -98,32 +101,33 @@ func main() {
 		n   = flag.Int("n", 1000, "number of shards to process")
 		out = flag.String("out", "", "output path")
 	)
-	flag.Parse()
-	if *out == "" {
-		flag.Usage()
-	}
-	sess := bigslice.Start()
-	ctx := context.Background()
-	var paths []string
-	url := "s3://gdelt-open-data/v2/events"
-
-	lst := file.List(ctx, url)
-	for lst.Scan() {
-		if strings.HasSuffix(lst.Path(), ".csv") {
-			paths = append(paths, lst.Path())
+	slicecmd.RegisterSystem("ec2", &ec2system.System{
+		InstanceType: "r3.8xlarge",
+	})
+	slicecmd.Main(func(sess *bigslice.Session, args []string) error {
+		if *out == "" {
+			return errors.New("missing flag -out")
 		}
-	}
-	if err := lst.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	sort.Strings(paths)
-	if len(paths) > *n {
-		paths = paths[:*n]
-	}
-	log.Printf("computing %d paths", len(paths))
-	if err := sess.Run(ctx, domainCounts, paths, *out); err != nil {
-		log.Fatal(err)
-	}
-	log.Print("done")
+		ctx := context.Background()
+		var paths []string
+		url := "s3://gdelt-open-data/v2/events"
+		lst := file.List(ctx, url)
+		for lst.Scan() {
+			if strings.HasSuffix(lst.Path(), ".csv") {
+				paths = append(paths, lst.Path())
+			}
+		}
+		if err := lst.Err(); err != nil {
+			log.Fatal(err)
+		}
+		sort.Strings(paths)
+		if len(paths) > *n {
+			paths = paths[:*n]
+		}
+		log.Printf("computing %d paths", len(paths))
+		if err := sess.Run(ctx, domainCounts, paths, *out); err != nil {
+			return err
+		}
+		return nil
+	})
 }
