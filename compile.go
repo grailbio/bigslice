@@ -15,10 +15,6 @@ import (
 	"text/tabwriter"
 )
 
-// AllPartitions indicates that a dependency should read all partitions
-// from a task dependency.
-const AllPartitions = -1
-
 // A TaskDep describes a single dependency for a task. A dependency
 // comprises one or more tasks and the partition number of the task
 // set that must be read at run time.
@@ -78,11 +74,7 @@ func (t *Task) WriteGraph(w io.Writer) {
 func (t *Task) writeDeps(w io.Writer) {
 	for _, dep := range t.Deps {
 		for _, task := range dep.Tasks {
-			if dep.Partition != AllPartitions {
-				fmt.Fprintf(w, "\t%s:\t%s[%d]\n", t.Name, task.Name, dep.Partition)
-			} else {
-				fmt.Fprintf(w, "\t%s:\t%s\n", t.Name, task.Name)
-			}
+			fmt.Fprintf(w, "\t%s:\t%s[%d]\n", t.Name, task.Name, dep.Partition)
 			task.writeDeps(w)
 		}
 	}

@@ -86,7 +86,7 @@ var domainCounts = bigslice.Func(func(files []string, prefix string) bigslice.Sl
 			domain string
 			count  int
 		)
-		for scan.Scan(&domain, &count) {
+		for scan.Scan(context.Background(), &domain, &count) {
 			fmt.Fprintf(w, "%s\t%d\n", domain, count)
 		}
 		w.Flush()

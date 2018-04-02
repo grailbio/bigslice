@@ -4,7 +4,12 @@
 
 package bigslice
 
-import "reflect"
+import (
+	"bytes"
+	"context"
+	"encoding/gob"
+	"reflect"
+)
 
 // TaskBuffer is an in-memory buffer of task output. It has the
 // ability to handle multiple partitions, and stores vectors of
@@ -24,12 +29,7 @@ type taskBuffer [][][]reflect.Value
 // lengths so that we can perform a binary search. Alternatively, we
 // can return a cookie from Slice that enables efficient resumption.
 func (b taskBuffer) Slice(partition, off int) ([]reflect.Value, int) {
-	var beg, end int
-	if partition == AllPartitions {
-		beg, end = 0, len(b)
-	} else {
-		beg, end = partition, partition+1
-	}
+	beg, end := partition, partition+1
 	// Find the offset.
 	var n int
 	for i := beg; i < end; i++ {
@@ -49,7 +49,7 @@ type taskBufferReader struct {
 	i, j, k int
 }
 
-func (r *taskBufferReader) Read(out ...reflect.Value) (int, error) {
+func (r *taskBufferReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
 loop:
 	for {
 		switch {
@@ -82,8 +82,44 @@ loop:
 
 // Reader returns a Reader for a partition of the taskBuffer.
 func (b taskBuffer) Reader(partition int) Reader {
-	if partition == AllPartitions {
-		return &taskBufferReader{q: b}
+	if len(b) == 0 {
+		return emptyReader{}
 	}
 	return &taskBufferReader{q: b[partition : partition+1]}
+}
+
+// SliceBuffer buffers serialized slice output in memory. The data are stored
+// as a gob-stream where records are as batches in column-major form.
+type sliceBuffer struct {
+	bytes.Buffer
+
+	enc *gob.Encoder
+	dec *gob.Decoder
+}
+
+// WriteColumns serializes a batch of records into the buffer.
+func (s *sliceBuffer) WriteColumns(columns ...reflect.Value) error {
+	if s.enc == nil {
+		s.enc = gob.NewEncoder(&s.Buffer)
+	}
+	for i := range columns {
+		if err := s.enc.EncodeValue(columns[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReadColumns deserializes a batch of records into the provided column
+// pointers. This interface is provided for testing.
+func (s *sliceBuffer) ReadColumns(columnptrs ...reflect.Value) error {
+	if s.dec == nil {
+		s.dec = gob.NewDecoder(&s.Buffer)
+	}
+	for i := range columnptrs {
+		if err := s.dec.DecodeValue(columnptrs[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

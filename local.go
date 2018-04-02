@@ -50,7 +50,7 @@ func (l *localExecutor) Run(ctx context.Context, inv Invocation, task *Task) err
 
 	// Start execution, then place output in a task buffer.
 	out := task.Do(in)
-	buf, err := bufferOutput(task, out)
+	buf, err := bufferOutput(ctx, task, out)
 	if err != nil {
 		return err
 	}
@@ -70,9 +70,9 @@ func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) Rea
 // BufferOutput reads the output from reader and places it in a
 // task buffer. If the output is partitioned, bufferOutput invokes
 // the task's partitioner in order to determine the correct partition.
-func bufferOutput(task *Task, out Reader) (taskBuffer, error) {
+func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, error) {
 	if len(task.Out) == 0 {
-		_, err := out.Read()
+		_, err := out.Read(ctx)
 		if err == EOF {
 			err = nil
 		}
@@ -83,7 +83,7 @@ func bufferOutput(task *Task, out Reader) (taskBuffer, error) {
 		in         []reflect.Value
 		partitions []int
 	)
-	if task.NumPartition > 0 {
+	if task.NumPartition > 1 {
 		partitions = make([]int, defaultChunksize, defaultChunksize)
 	}
 	for {
@@ -93,7 +93,7 @@ func bufferOutput(task *Task, out Reader) (taskBuffer, error) {
 				in[i] = reflect.MakeSlice(reflect.SliceOf(task.Out[i]), defaultChunksize, defaultChunksize)
 			}
 		}
-		n, err := out.Read(in...)
+		n, err := out.Read(ctx, in...)
 		if err != nil && err != EOF {
 			return nil, err
 		}
@@ -139,12 +139,12 @@ type multiReader struct {
 	err error
 }
 
-func (m *multiReader) Read(columns ...reflect.Value) (n int, err error) {
+func (m *multiReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
 	if m.err != nil {
 		return 0, m.err
 	}
 	for len(m.q) > 0 {
-		n, err := m.q[0].Read(columns...)
+		n, err := m.q[0].Read(ctx, columns...)
 		switch {
 		case err == EOF:
 			err = nil

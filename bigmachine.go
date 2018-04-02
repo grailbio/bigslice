@@ -5,18 +5,18 @@
 package bigslice
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"encoding/gob"
-	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
-	"net/http"
 	"reflect"
 	"runtime/debug"
 	"sync"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigmachine"
 	"golang.org/x/sync/errgroup"
 )
@@ -82,10 +82,6 @@ func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
 func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	b.sess = sess
 	b.b = bigmachine.Start(b.system)
-	go func() {
-		log.Printf("http.ListenAndServe: %v", http.ListenAndServe(":3333", nil))
-	}()
-
 	b.locations = make(map[*Task]*bigmachine.Machine)
 	heap.Init(&b.load)
 	for _, m := range b.machines {
@@ -146,12 +142,20 @@ func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task
 func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) Reader {
 	m := b.location(task)
 	if m == nil {
-		panic("no such task")
+		return errorReader{errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))}
 	}
-	return &workerReader{
-		task:      task.Name,
-		partition: partition,
-		machine:   m,
+	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
+	req := taskReadRequest{
+		Task:      task.Name,
+		Partition: partition,
+	}
+	var rc io.ReadCloser
+	if err := m.Call(ctx, "Worker.Read", req, &rc); err != nil {
+		return errorReader{err}
+	}
+	return &closingReader{
+		Reader: newDecodingReader(rc),
+		Closer: rc,
 	}
 }
 
@@ -210,7 +214,7 @@ func (b *bigmachineExecutor) initMachines() error {
 			return
 		}
 		if len(b.machines) == 0 {
-			b.machinesErr = errors.New("no machines started")
+			b.machinesErr = errors.E("no machines started")
 			return
 		}
 		b.mu.Lock()
@@ -247,7 +251,7 @@ type worker struct {
 	b *bigmachine.B
 
 	mu          sync.Mutex
-	buffers     map[string]taskBuffer
+	store       Store
 	invocations map[uint64]bool
 	tasks       map[string]*Task
 }
@@ -255,8 +259,12 @@ type worker struct {
 func (w *worker) Init(b *bigmachine.B) error {
 	w.tasks = make(map[string]*Task)
 	w.invocations = make(map[uint64]bool)
-	w.buffers = make(map[string]taskBuffer)
 	w.b = b
+	dir, err := ioutil.TempDir("", "bigslice")
+	if err != nil {
+		return err
+	}
+	w.store = &fileStore{Prefix: dir + "/"}
 	return nil
 }
 
@@ -320,16 +328,14 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		reader := new(multiReader)
 		reader.q = make([]Reader, len(dep.Tasks))
 		for j, deptask := range dep.Tasks {
-			w.mu.Lock()
-			// If we have it locally, use it directly.
-			if buf := w.buffers[deptask.Name]; buf != nil {
-				reader.q[j] = buf.Reader(dep.Partition)
-			}
-			w.mu.Unlock()
-			if reader.q[j] != nil {
+			// If we have it locally, or if we're using a shared backend store
+			// (e.g., S3), then read it directly.
+			rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
+			if err == nil {
+				defer rc.Close()
+				reader.q[j] = newDecodingReader(rc)
 				continue
 			}
-
 			// Find the location of the task.
 			addr := req.Locations[deptask.Name]
 			if addr == "" {
@@ -339,116 +345,150 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil {
 				return err
 			}
-			reader.q[j] = &workerReader{
-				task:      deptask.Name,
-				partition: dep.Partition,
-				machine:   machine,
+			req := taskReadRequest{
+				Task:      deptask.Name,
+				Partition: dep.Partition,
 			}
+			if err := machine.Call(ctx, "Worker.Read", req, &rc); err != nil {
+				return err
+			}
+			reader.q[j] = newDecodingReader(rc)
+			defer rc.Close()
 		}
 		in[i] = reader
 	}
 
-	// Compute the task and store its output in a local buffer.
+	// Compute the task and store its output in a serialized
+	// in-memory buffer. This is then flushed to disk.
+	buffers := make([]sliceBuffer, task.NumPartition)
 	out := task.Do(in)
-	buf, err := bufferOutput(task, out)
-	if err != nil {
-		log.Printf("error: %v", err)
+	switch {
+	case len(task.Out) == 0:
+		// If there are no output columns, just drive the computation.
+		_, err := out.Read(ctx)
+		if err == EOF {
+			err = nil
+		}
 		return err
+	case task.NumPartition == 1:
+		in := makeOutputVectors(task)
+		for {
+			n, err := out.Read(ctx, in...)
+			if err != nil && err != EOF {
+				return err
+			}
+			limit(in, n)
+			if err := buffers[0].WriteColumns(in...); err != nil {
+				return err
+			}
+			if err == EOF {
+				break
+			}
+			unlimit(in)
+		}
+	default:
+		var (
+			partition  = make([]int, defaultChunksize)
+			partitionv = make([][]reflect.Value, task.NumPartition)
+			lens       = make([]int, task.NumPartition)
+		)
+		for i := range partitionv {
+			partitionv[i] = makeOutputVectors(task)
+		}
+		in := makeOutputVectors(task)
+		for {
+			n, err := out.Read(ctx, in...)
+			if err != nil && err != EOF {
+				return err
+			}
+			task.Partitioner.Partition(in, partition, n, task.NumPartition)
+			for i := 0; i < n; i++ {
+				p := partition[i]
+				for j, vec := range partitionv[p] {
+					vec.Index(lens[p]).Set(in[j].Index(i))
+				}
+				lens[p]++
+				if lens[p] == defaultChunksize {
+					if err := buffers[p].WriteColumns(partitionv[p]...); err != nil {
+						return err
+					}
+					lens[p] = 0
+				}
+			}
+			if err == EOF {
+				break
+			}
+		}
+		// Flush remaining data.
+		for p, n := range lens {
+			if n == 0 {
+				continue
+			}
+			limit(partitionv[p], n)
+			if err := buffers[p].WriteColumns(partitionv[p]...); err != nil {
+				return err
+			}
+		}
 	}
-	w.mu.Lock()
-	w.buffers[task.Name] = buf
-	w.mu.Unlock()
+	// TODO(marius): split this out as a separate task
+	// Now write data to disk. They are already serialized.
+	// TODO(marius): how to think about I/O concurrency here?
+	for p, buf := range buffers {
+		wc, err := w.store.Create(ctx, task.Name, p)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(wc, &buf)
+		if err != nil {
+			go wc.Close()
+			return err
+		}
+		if err := wc.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// TaskReadRequest describes a request to read a slice of a task
-// output buffer.
+// TaskReadRequest describes a request to read a slice buffer.
 type taskReadRequest struct {
 	// Task is the name of the task whose output is to be read.
 	Task string
 	// Partition is the partition number to read.
 	Partition int
-	// Off is the read offset.
-	Off int
-	// Max is the largest number of elements that should be returned.
-	Max int
-}
-
-// TaskReadReply contains the reply for a single taskReadRequest.
-type taskReadReply struct {
-	// Data is the raw, encoded data.
-	Data []byte
-	// N is the number of elements returned. N < 0
-	// indicates EOF.
-	N int
-
-	// TODO(marius): return a cookie to make paging (much) cheaper
 }
 
 // Read reads a slice
-func (w *worker) Read(ctx context.Context, req taskReadRequest, reply *taskReadReply) (err error) {
-	w.mu.Lock()
-	buf := w.buffers[req.Task]
-	w.mu.Unlock()
-	if buf == nil {
-		return fmt.Errorf("no buffer for task %s", req.Task)
-	}
-	columns, off := buf.Slice(req.Partition, req.Off)
-	if off < 0 {
-		reply.N = -1 // EOF
-		return nil
-	}
-	var b bytes.Buffer
-	enc := gob.NewEncoder(&b)
-	n := columns[0].Len() - off
-	if req.Max < n {
-		n = req.Max
-	}
-	// Encode a column at a time.
-	for _, colv := range columns {
-		if err := enc.EncodeValue(colv.Slice(off, off+n)); err != nil {
-			return err
-		}
-	}
-	reply.Data = b.Bytes()
-	reply.N = n
-	return nil
+func (w *worker) Read(ctx context.Context, req taskReadRequest, rc *io.ReadCloser) (err error) {
+	*rc, err = w.store.Open(ctx, req.Task, req.Partition)
+	return
 }
 
-// A workerReader implements a Reader that reads data
-// from a remote worker service.
-type workerReader struct {
-	task      string
-	partition int
-	machine   *bigmachine.Machine
-	off       int
+func makeOutputVectors(task *Task) []reflect.Value {
+	cols := make([]reflect.Value, len(task.Out))
+	for i, typ := range task.Out {
+		cols[i] = reflect.MakeSlice(reflect.SliceOf(typ), defaultChunksize, defaultChunksize)
+	}
+	return cols
 }
 
-func (w *workerReader) Read(columns ...reflect.Value) (int, error) {
-	ctx := context.Background()
-	req := taskReadRequest{
-		Task:      w.task,
-		Partition: w.partition,
-		Off:       w.off,
-		Max:       columns[0].Len(),
+func limit(cols []reflect.Value, n int) {
+	if cols[0].Len() == n {
+		return
 	}
-	var reply taskReadReply
-	if err := w.machine.Call(ctx, "Worker.Read", req, &reply); err != nil {
-		return 0, err
+	for i := range cols {
+		// TODO(marius): if we used addressable values here, we could
+		// call Value.SetLen directly, avoiding this copy.
+		cols[i] = cols[i].Slice(0, n)
 	}
-	if reply.N < 0 {
-		return 0, EOF
+}
+
+func unlimit(cols []reflect.Value) {
+	c := cols[0].Cap()
+	if c == cols[0].Len() {
+		return
 	}
-	// TODO(marius): stream this straight through
-	dec := gob.NewDecoder(bytes.NewReader(reply.Data))
-	// Write each column sequentially.
-	for _, column := range columns {
-		ptr := reflect.New(column.Type())
-		ptr.Elem().Set(column)
-		if err := dec.DecodeValue(ptr); err != nil {
-			return 0, err
-		}
+	for i := range cols {
+		cols[i] = cols[i].Slice(0, c)
 	}
-	w.off += reply.N
-	return reply.N, nil
 }

@@ -4,7 +4,10 @@
 
 package bigslice
 
-import "reflect"
+import (
+	"context"
+	"reflect"
+)
 
 // A Scanner provides a convenient interface for reading records
 // (e.g. from a Slice or a shard of a Slice). Successive calls to
@@ -28,7 +31,7 @@ type Scanner struct {
 // the columns do not match arity and type with the underlying data
 // set. Scan returns true while no errors are encountered and there
 // remains data to be scanned.
-func (s *Scanner) Scan(out ...interface{}) bool {
+func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	if s.err != nil {
 		return false
 	}
@@ -55,7 +58,7 @@ func (s *Scanner) Scan(out ...interface{}) bool {
 			s.err = EOF
 			return false
 		}
-		n, err := s.readers[0].Read(s.in...)
+		n, err := s.readers[0].Read(ctx, s.in...)
 		if err != nil && err != EOF {
 			s.err = err
 			return false
@@ -78,7 +81,7 @@ func (s *Scanner) Scan(out ...interface{}) bool {
 // underlying dataset. The number of records scanned is returned
 // together with a boolean indicating whether scanning should
 // continue, as in Scan.
-func (s *Scanner) Scanv(out ...interface{}) (int, bool) {
+func (s *Scanner) Scanv(ctx context.Context, out ...interface{}) (int, bool) {
 	// TODO(marius): vectorize this all the way down
 	if s.err != nil {
 		return 0, false
@@ -96,7 +99,7 @@ func (s *Scanner) Scanv(out ...interface{}) (int, bool) {
 		for j := range args {
 			args[j] = columnvs[j].Index(i).Addr().Interface()
 		}
-		if !s.Scan(args...) {
+		if !s.Scan(ctx, args...) {
 			return i, false
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"text/tabwriter"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigmachine/testsystem"
 )
 
 func sortColumns(columns []interface{}) {
@@ -26,7 +27,7 @@ func sortColumns(columns []interface{}) {
 	for i := range columns {
 		s.swappers[i] = reflect.Swapper(columns[i])
 	}
-	sort.Sort(s)
+	sort.Stable(s)
 }
 
 type columnSlice struct {
@@ -42,23 +43,34 @@ func (c columnSlice) Swap(i, j int) {
 	}
 }
 
-func run(ctx context.Context, slice Slice) (*Scanner, error) {
-	tasks, err := compile(newTaskNamer(""), slice)
-	if err != nil {
-		return nil, err
+var executors = map[string]Option{
+	"Local":           Local,
+	"Bigmachine.Test": Bigmachine(testsystem.New()),
+}
+
+func run(ctx context.Context, t *testing.T, slice Slice) map[string]*Scanner {
+	results := make(map[string]*Scanner)
+	fn := Func(func() Slice { return slice })
+
+	for name, opt := range executors {
+		sess := Start(opt)
+		// TODO(marius): faster teardown in bigmachine so that we can call this here.
+		// defer sess.Shutdown()
+		if err := sess.Run(ctx, fn); err != nil {
+			t.Errorf("executor %s error %v", name, err)
+			continue
+		}
+		tasks := sess.tasks[fn.Invocation().Sum64()]
+		scan := &Scanner{
+			out:     ColumnTypes(slice),
+			readers: make([]Reader, len(tasks)),
+		}
+		for i := range scan.readers {
+			scan.readers[i] = sess.executor.Reader(ctx, tasks[i], 0)
+		}
+		results[name] = scan
 	}
-	x := newLocalExecutor()
-	if err := Eval(ctx, x, 1, Invocation{}, tasks); err != nil {
-		return nil, err
-	}
-	scan := &Scanner{
-		out:     ColumnTypes(slice),
-		readers: make([]Reader, len(tasks)),
-	}
-	for i := range scan.readers {
-		scan.readers[i] = x.Reader(ctx, tasks[i], AllPartitions)
-	}
-	return scan, nil
+	return results
 }
 
 func assertEqual(t *testing.T, slice Slice, sort bool, expect ...interface{}) {
@@ -76,72 +88,73 @@ func assertEqual(t *testing.T, slice Slice, sort bool, expect ...interface{}) {
 			t.Fatal("expect argument length mismatch")
 		}
 	}
-	args := make([]interface{}, len(expect))
-	for i := range args {
-		// Make this one larger to make sure we exhaust the scanner.
-		slice := reflect.MakeSlice(expectvs[i].Type(), expectvs[i].Len()+1, expectvs[i].Len()+1)
-		args[i] = slice.Interface()
-	}
-	s, err := run(context.Background(), slice)
-	if err != nil {
-		t.Errorf("run error: %v", err)
-		return
-	}
-	n, ok := s.Scanv(args...)
-	if ok {
-		t.Errorf("long read (%d)", n)
-	}
-	if err := s.Err(); err != nil {
-		t.Fatal(err)
-	}
-	switch got, want := n, expectvs[0].Len(); {
-	case got == want:
-	case got < want:
-		t.Fatalf("short result: got %v, want %v", got, want)
-	case want+1 == got:
-		row := make([]string, len(args))
-		for i := range row {
-			row[i] = fmt.Sprint(reflect.ValueOf(args[i]).Index(got - 1).Interface())
+	for name, s := range run(context.Background(), t, slice) {
+		args := make([]interface{}, len(expect))
+		for i := range args {
+			// Make this one larger to make sure we exhaust the scanner.
+			slice := reflect.MakeSlice(expectvs[i].Type(), expectvs[i].Len()+1, expectvs[i].Len()+1)
+			args[i] = slice.Interface()
 		}
-		t.Errorf("extra values: %v", strings.Join(row, ","))
-		n = want
-	default:
-		t.Fatalf("bad read: got %v, want %v", got, want)
-	}
-	for i := range args {
-		args[i] = reflect.ValueOf(args[i]).Slice(0, n).Interface()
-	}
-	if sort {
-		if slice.Out(0).Kind() != reflect.String {
-			t.Fatal("can only sort string keys")
+		n, ok := s.Scanv(context.Background(), args...)
+		if ok {
+			t.Errorf("%s: long read (%d)", name, n)
 		}
-		sortColumns(args)
-		sortColumns(expect)
-	}
-	if !reflect.DeepEqual(expect, args) {
-		// Print as columns
-		var b bytes.Buffer
-		var tw tabwriter.Writer
-		tw.Init(&b, 4, 4, 1, ' ', 0)
-		for i := 0; i < n; i++ {
-			var diff bool
+		if err := s.Err(); err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		switch got, want := n, expectvs[0].Len(); {
+		case got == want:
+		case got < want:
+			t.Errorf("%s: short result: got %v, want %v", name, got, want)
+			continue
+		case want+1 == got:
 			row := make([]string, len(args))
-			for j := range row {
-				got := reflect.ValueOf(args[j]).Index(i).Interface()
-				want := reflect.ValueOf(expect[j]).Index(i).Interface()
-				if !reflect.DeepEqual(got, want) {
-					diff = true
-					row[j] = fmt.Sprintf("%v->%v", want, got)
-				} else {
-					row[j] = fmt.Sprint(got)
+			for i := range row {
+				row[i] = fmt.Sprint(reflect.ValueOf(args[i]).Index(got - 1).Interface())
+			}
+			t.Errorf("%s: extra values: %v", name, strings.Join(row, ","))
+			n = want
+		default:
+			t.Errorf("%s: bad read: got %v, want %v", name, got, want)
+			continue
+		}
+		for i := range args {
+			args[i] = reflect.ValueOf(args[i]).Slice(0, n).Interface()
+		}
+		if sort {
+			if slice.Out(0).Kind() != reflect.String {
+				t.Errorf("%s: can only sort string keys", name)
+				continue
+			}
+			sortColumns(args)
+			sortColumns(expect)
+		}
+		if !reflect.DeepEqual(expect, args) {
+			// Print as columns
+			var b bytes.Buffer
+			var tw tabwriter.Writer
+			tw.Init(&b, 4, 4, 1, ' ', 0)
+			for i := 0; i < n; i++ {
+				var diff bool
+				row := make([]string, len(args))
+				for j := range row {
+					got := reflect.ValueOf(args[j]).Index(i).Interface()
+					want := reflect.ValueOf(expect[j]).Index(i).Interface()
+					if !reflect.DeepEqual(got, want) {
+						diff = true
+						row[j] = fmt.Sprintf("%v->%v", want, got)
+					} else {
+						row[j] = fmt.Sprint(got)
+					}
+				}
+				if diff {
+					fmt.Fprintf(&tw, "[%d] %s\n", i, strings.Join(row, "\t"))
 				}
 			}
-			if diff {
-				fmt.Fprintf(&tw, "[%d] %s\n", i, strings.Join(row, "\t"))
-			}
+			tw.Flush()
+			t.Errorf("%s: result mismatch:\n%s", name, b.String())
 		}
-		tw.Flush()
-		t.Errorf("result mismatch:\n%s", b.String())
 	}
 }
 
@@ -443,21 +456,20 @@ func TestScan(t *testing.T) {
 		defer mu.Unlock()
 		shards[shard]++
 		var elem int
-		for scan.Scan(&elem) {
+		ctx := context.Background()
+		for scan.Scan(ctx, &elem) {
 			output[elem]++
 		}
 		return scan.Err()
 	})
-	if _, err := run(context.Background(), slice); err != nil {
-		t.Fatal(err)
-	}
+	n := len(run(context.Background(), t, slice))
 	for i, got := range output {
-		if want := 1; got != want {
+		if want := n; got != want {
 			t.Errorf("wrong count for output %d, got %v, want %v", i, got, want)
 		}
 	}
 	for i, got := range shards {
-		if want := 1; got != want {
+		if want := n; got != want {
 			t.Errorf("wrong count for shard %d, got %v, want %v", i, got, want)
 		}
 	}

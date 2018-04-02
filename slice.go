@@ -5,6 +5,7 @@
 package bigslice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -52,25 +53,6 @@ const (
 	// is always the first column of the slice.
 	RangeShard
 )
-
-// A Reader represents a stateful stream of computed records from a
-// slice. Each call to Read reads the next set of available records.
-type Reader interface {
-	// Read reads a vector of records from the underlying Slice. Each
-	// passed-in column should be a value containing a slice of column
-	// values. The number of columns should match the number of columns
-	// in the slice; their types should match the corresponding column
-	// types of the slice. Each column should have the same slice
-	// length.
-	//
-	// Read returns the total number of records read, or an error. When
-	// no more records are available, Read returns EOF. Read may return
-	// EOF when n > 0. In this case, n records were read, but no more
-	// are available.
-	//
-	// Read should not be called concurrently.
-	Read(columns ...reflect.Value) (int, error)
-}
 
 // A Slice is a shardable, ordered dataset. Each slice consists of
 // zero or more columns of data distributed over one or  more shards.
@@ -159,7 +141,7 @@ type constReader struct {
 	shard   int
 }
 
-func (s *constReader) Read(out ...reflect.Value) (int, error) {
+func (s *constReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
 	if err := columnTypecheck(s.op, out...); err != nil {
 		return 0, err
 	}
@@ -277,7 +259,7 @@ type readerFuncSliceReader struct {
 	err   error
 }
 
-func (r *readerFuncSliceReader) Read(out ...reflect.Value) (n int, err error) {
+func (r *readerFuncSliceReader) Read(ctx context.Context, out ...reflect.Value) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
 	}
@@ -360,7 +342,7 @@ type mapReader struct {
 	err    error
 }
 
-func (m *mapReader) Read(out ...reflect.Value) (int, error) {
+func (m *mapReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
@@ -369,7 +351,7 @@ func (m *mapReader) Read(out ...reflect.Value) (int, error) {
 	}
 	n := out[0].Len()
 	m.in = makeVectors(m.in, m.op.Slice, n)
-	n, m.err = m.reader.Read(m.in...)
+	n, m.err = m.reader.Read(ctx, m.in...)
 	// Now iterate over each record, transform it, and set the output
 	// records. Note that we could parallelize the map operation here,
 	// but for simplicity, parallelism should be achieved by finer
@@ -443,7 +425,7 @@ type filterReader struct {
 	err    error
 }
 
-func (f *filterReader) Read(out ...reflect.Value) (n int, err error) {
+func (f *filterReader) Read(ctx context.Context, out ...reflect.Value) (n int, err error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -461,7 +443,7 @@ func (f *filterReader) Read(out ...reflect.Value) (n int, err error) {
 		// case where we issue a call for each element. Consider input
 		// buffering instead.
 		f.in = makeVectors(f.in, f.op.Slice, max-m)
-		n, f.err = f.reader.Read(f.in...)
+		n, f.err = f.reader.Read(ctx, f.in...)
 		for i := 0; i < n; i++ {
 			for j := range args {
 				args[j] = f.in[j].Index(i)
@@ -550,7 +532,7 @@ type flatmapReader struct {
 	eof          bool
 }
 
-func (f *flatmapReader) Read(out ...reflect.Value) (int, error) {
+func (f *flatmapReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
 	if err := columnTypecheck(f.op, out...); err != nil {
 		return 0, err
 	}
@@ -584,7 +566,7 @@ func (f *flatmapReader) Read(out ...reflect.Value) (int, error) {
 			// TODO(marius): maybe always default to a fixed chunk size? Or
 			// dynamically keep track of the average input:output ratio?
 			f.in = makeVectors(f.in, f.op.Slice, out[0].Len())
-			n, err := f.reader.Read(f.in...)
+			n, err := f.reader.Read(ctx, f.in...)
 			if err != nil && err != EOF {
 				return 0, err
 			}
@@ -711,14 +693,14 @@ type foldReader struct {
 
 // Compute accumulates values across all keys in this shard. The entire
 // output is buffered in memory.
-func (f *foldReader) compute() (Accumulator, error) {
+func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 	in := make([]reflect.Value, f.op.dep.NumOut())
 	for i := range in {
 		in[i] = reflect.MakeSlice(reflect.SliceOf(f.op.dep.Out(i)), defaultChunksize, defaultChunksize)
 	}
 	accum := makeAccumulator(f.op.dep.Out(0), f.op.out[1], f.op.fval)
 	for {
-		n, err := f.reader.Read(in...)
+		n, err := f.reader.Read(ctx, in...)
 		if err != nil && err != EOF {
 			return nil, err
 		}
@@ -729,7 +711,7 @@ func (f *foldReader) compute() (Accumulator, error) {
 	}
 }
 
-func (f *foldReader) Read(out ...reflect.Value) (int, error) {
+func (f *foldReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
 	if err := columnTypecheck(f.op, out...); err != nil {
 		return 0, err
 	}
@@ -740,7 +722,7 @@ func (f *foldReader) Read(out ...reflect.Value) (int, error) {
 		return 0, err
 	}
 	if f.accum == nil {
-		f.accum, f.err = f.compute()
+		f.accum, f.err = f.compute(ctx)
 		if f.err != nil {
 			return 0, f.err
 		}
@@ -779,11 +761,11 @@ func (h headSlice) Reader(shard int, deps []Reader) Reader {
 	return &headReader{deps[0], h.n}
 }
 
-func (h *headReader) Read(columns ...reflect.Value) (n int, err error) {
+func (h *headReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
 	if h.n <= 0 {
 		return 0, EOF
 	}
-	n, err = h.reader.Read(columns...)
+	n, err = h.reader.Read(ctx, columns...)
 	h.n -= n
 	if h.n < 0 {
 		n -= -h.n
@@ -815,7 +797,7 @@ type scanReader struct {
 	reader Reader
 }
 
-func (s *scanReader) Read(columns ...reflect.Value) (n int, err error) {
+func (s *scanReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
 	err = s.slice.scan(s.shard, &Scanner{out: ColumnTypes(s.slice.Slice), readers: []Reader{s.reader}})
 	if err == nil {
 		err = EOF
@@ -825,12 +807,6 @@ func (s *scanReader) Read(columns ...reflect.Value) (n int, err error) {
 
 func (s scanSlice) Reader(shard int, deps []Reader) Reader {
 	return &scanReader{s, shard, deps[0]}
-}
-
-type emptyReader struct{}
-
-func (emptyReader) Read(columns ...reflect.Value) (int, error) {
-	return 0, EOF
 }
 
 // ColumnTypes returns all column types of the provided slice

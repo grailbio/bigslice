@@ -43,6 +43,7 @@ import (
 //	}
 type Session struct {
 	context.Context
+	shutdown func()
 	p        int
 	executor Executor
 	tasks    map[uint64][]*Task
@@ -87,10 +88,13 @@ func Start(options ...Option) *Session {
 	for _, opt := range options {
 		opt(s)
 	}
+	if s.p == 0 {
+		s.p = 1
+	}
 	if s.executor == nil {
 		s.executor = newBigmachineExecutor(bigmachine.Local)
 	}
-	s.executor.Start(s)
+	s.shutdown = s.executor.Start(s)
 	return s
 }
 
@@ -129,4 +133,12 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 // Parallelism returns the desired amount of evaluation parallelism.
 func (s *Session) Parallelism() int {
 	return s.p
+}
+
+// Shutdown tears down resources associated with this session.
+// It should be called when the session is discarded.
+func (s *Session) Shutdown() {
+	if s.shutdown != nil {
+		s.shutdown()
+	}
 }
