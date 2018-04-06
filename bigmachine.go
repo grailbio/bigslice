@@ -5,6 +5,7 @@
 package bigslice
 
 import (
+	"bufio"
 	"container/heap"
 	"context"
 	"encoding/gob"
@@ -358,9 +359,38 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		in[i] = reader
 	}
 
-	// Compute the task and store its output in a serialized
-	// in-memory buffer. This is then flushed to disk.
-	buffers := make([]sliceBuffer, task.NumPartition)
+	// Stream partition output directly to the underlying store, but
+	// through a buffer because the column encoder can make small
+	// writes.
+	//
+	// TODO(marius): switch to using a monotasks-like arrangement
+	// instead once we also have memory management, in order to control
+	// buffer growth.
+	type partition struct {
+		closer io.Closer
+		buf    *bufio.Writer
+		*Encoder
+	}
+	partitions := make([]*partition, task.NumPartition)
+	for p := range partitions {
+		wc, err := w.store.Create(ctx, task.Name, p)
+		if err != nil {
+			return err
+		}
+		// TODO(marius): pool the writers so we can reuse them.
+		part := new(partition)
+		part.closer = wc
+		part.buf = bufio.NewWriter(wc)
+		part.Encoder = NewEncoder(part.buf)
+		partitions[p] = part
+	}
+	defer func() {
+		for p, part := range partitions {
+			if err := part.closer.Close(); err != nil {
+				log.Printf("close %s partition %d: %v", task.Name, p, err)
+			}
+		}
+	}()
 	out := task.Do(in)
 	switch {
 	case len(task.Out) == 0:
@@ -378,7 +408,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				return err
 			}
 			limit(in, n)
-			if err := buffers[0].WriteColumns(in...); err != nil {
+			if err := partitions[0].Encode(in...); err != nil {
 				return err
 			}
 			if err == EOF {
@@ -409,7 +439,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				}
 				lens[p]++
 				if lens[p] == defaultChunksize {
-					if err := buffers[p].WriteColumns(partitionv[p]...); err != nil {
+					if err := partitions[p].Encode(partitionv[p]...); err != nil {
 						return err
 					}
 					lens[p] = 0
@@ -425,28 +455,22 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				continue
 			}
 			limit(partitionv[p], n)
-			if err := buffers[p].WriteColumns(partitionv[p]...); err != nil {
+			if err := partitions[p].Encode(partitionv[p]...); err != nil {
 				return err
 			}
 		}
 	}
-	// TODO(marius): split this out as a separate task
-	// Now write data to disk. They are already serialized.
-	// TODO(marius): how to think about I/O concurrency here?
-	for p, buf := range buffers {
-		wc, err := w.store.Create(ctx, task.Name, p)
-		if err != nil {
+
+	for _, part := range partitions {
+		if err := part.buf.Flush(); err != nil {
 			return err
 		}
-		_, err = io.Copy(wc, &buf)
-		if err != nil {
-			go wc.Close()
-			return err
-		}
-		if err := wc.Close(); err != nil {
+		if err := part.closer.Close(); err != nil {
 			return err
 		}
 	}
+	// Disable defer close.
+	partitions = nil
 	return nil
 }
 
