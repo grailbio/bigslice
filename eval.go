@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/http"
 )
 
 // Executor defines an interface used to provide implementations of
@@ -33,6 +34,11 @@ type Executor interface {
 	// Maxprocs returns the number of available processors in this executor.
 	// It determines the amount of available physical parallelism.
 	Maxprocs() int
+
+	// HandleDebug adds executor-specific debug handlers to the provided
+	// http.ServeMux. This is used to serve diagnostic information relating
+	// to the executor.
+	HandleDebug(handler *http.ServeMux)
 }
 
 // Eval simultaneously evaluates a set of task graphs from the

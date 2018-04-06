@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"reflect"
 	"runtime/debug"
 	"sync"
@@ -225,6 +226,10 @@ func (b *bigmachineExecutor) initMachines() error {
 		b.mu.Unlock()
 	})
 	return b.machinesErr
+}
+
+func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
+	b.b.HandleDebug(handler)
 }
 
 // Location returns the machine on which the results of the provided

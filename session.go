@@ -7,6 +7,7 @@ package bigslice
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"reflect"
 
 	"github.com/grailbio/bigmachine"
@@ -141,4 +142,8 @@ func (s *Session) Shutdown() {
 	if s.shutdown != nil {
 		s.shutdown()
 	}
+}
+
+func (s *Session) HandleDebug(handler *http.ServeMux) {
+	s.executor.HandleDebug(http.DefaultServeMux)
 }

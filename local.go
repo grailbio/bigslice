@@ -6,6 +6,7 @@ package bigslice
 
 import (
 	"context"
+	"net/http"
 	"reflect"
 	"runtime"
 	"sync"
@@ -66,6 +67,8 @@ func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) Rea
 	l.mu.Unlock()
 	return buf.Reader(partition)
 }
+
+func (*localExecutor) HandleDebug(*http.ServeMux) {}
 
 // BufferOutput reads the output from reader and places it in a
 // task buffer. If the output is partitioned, bufferOutput invokes

@@ -112,6 +112,7 @@ func Main(main func(sess *bigslice.Session, args []string) error) {
 	}
 	options = append(options, bigslice.Parallelism(*p))
 	sess := bigslice.Start(options...)
+	sess.HandleDebug(http.DefaultServeMux)
 	go func() {
 		log.Printf("http.ListenAndServe %s: %v", *addr, http.ListenAndServe(*addr, nil))
 	}()
