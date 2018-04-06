@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/grailbio/base/status"
 )
 
 // A TaskDep describes a single dependency for a task. A dependency
@@ -43,6 +45,8 @@ type Task struct {
 	NumPartition int
 	// Partitioner is the partitioner used to partition output from this task.
 	Partitioner Partitioner
+	// Status is a status object to which task status is reported.
+	Status *status.Task
 }
 
 // GraphString returns a schematic string of the task graph rooted at t.

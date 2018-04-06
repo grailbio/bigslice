@@ -124,6 +124,7 @@ func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task
 			req.Locations[deptask.Name] = m.Addr
 		}
 	}
+	task.Status.Print(m.Addr)
 	var reply taskRunReply
 	err = m.Call(ctx, "Worker.Run", req, &reply)
 	b.mu.Lock()

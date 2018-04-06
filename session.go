@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 
+	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 )
 
@@ -49,6 +50,7 @@ type Session struct {
 	executor Executor
 	tasks    map[uint64][]*Task
 	types    map[uint64][]reflect.Type
+	status   *status.Status
 }
 
 // An Option represents a session configuration parameter value.
@@ -72,6 +74,14 @@ func Bigmachine(system bigmachine.System) Option {
 func Parallelism(p int) Option {
 	return func(s *Session) {
 		s.p = p
+	}
+}
+
+// Status configures the session with a status object to which
+// run statuses are reported.
+func Status(status *status.Status) Option {
+	return func(s *Session) {
+		s.status = status
 	}
 }
 
@@ -128,7 +138,12 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 	if p == 0 {
 		p = s.executor.Maxprocs()
 	}
-	return Eval(ctx, s.executor, p, inv, tasks)
+	// TODO(marius): give a way to provide names for these groups
+	var group *status.Group
+	if s.status != nil {
+		group = s.status.Group("bigslice")
+	}
+	return Eval(ctx, s.executor, p, inv, tasks, group)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

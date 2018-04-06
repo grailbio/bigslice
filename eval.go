@@ -7,8 +7,12 @@ package bigslice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+
+	"github.com/grailbio/base/status"
 )
 
 // Executor defines an interface used to provide implementations of
@@ -53,7 +57,7 @@ type Executor interface {
 // be interpreted without an accompanying invocation.
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
-func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots []*Task) error {
+func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots []*Task, group *status.Group) error {
 	if p == 0 {
 		return errors.New("cannot evaluate with 0 parallelism")
 	}
@@ -79,21 +83,25 @@ func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots [
 			break
 		}
 		// Kick off ready tasks as long as we have space.
+		// Also count tasks by state.
+		var stateCounts [maxState]int
 		for task, taskState := range state {
-			if running >= p {
-				break
-			}
-			if taskState != taskReady {
+			if running >= p || taskState != taskReady {
+				stateCounts[taskState]++
 				continue
 			}
+			stateCounts[taskRunning]++
 			running++
 			state[task] = taskRunning
+			task.Status = group.Start(task.Name)
 			go func(task *Task) {
 				if err := executor.Run(ctx, inv, task); err != nil {
+					task.Status.Printf("error %v", err)
 					errc <- err
 				} else {
 					donec <- task
 				}
+				task.Status.Done()
 			}(task)
 		}
 		// DEBUG: print all task states.
@@ -103,6 +111,11 @@ func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots [
 				log.Printf("task %s state %s", task.Name, taskState)
 			}
 		}
+		states := make([]string, maxState)
+		for state := range states {
+			states[state] = fmt.Sprintf("%s=%d", taskState(state), stateCounts[state])
+		}
+		group.Printf("tasks: %s", strings.Join(states, " "))
 		select {
 		case task := <-donec:
 			running--
@@ -140,6 +153,8 @@ const (
 	taskReady
 	taskRunning
 	taskDone
+
+	maxState
 )
 
 func (t taskState) String() string {

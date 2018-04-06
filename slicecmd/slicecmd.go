@@ -41,6 +41,7 @@ import (
 	// Pprof is included to be exposed on the local diagnostic web server.
 	_ "net/http/pprof"
 
+	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 )
@@ -111,8 +112,11 @@ func Main(main func(sess *bigslice.Session, args []string) error) {
 		}
 	}
 	options = append(options, bigslice.Parallelism(*p))
+	top := new(status.Status)
+	options = append(options, bigslice.Status(top))
 	sess := bigslice.Start(options...)
 	sess.HandleDebug(http.DefaultServeMux)
+	http.Handle("/debug/status", status.Handler(top))
 	go func() {
 		log.Printf("http.ListenAndServe %s: %v", *addr, http.ListenAndServe(*addr, nil))
 	}()
