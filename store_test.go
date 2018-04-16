@@ -39,10 +39,22 @@ func testStore(t *testing.T, store Store) {
 	} else if !errors.Is(errors.NotExist, err) {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if err := wc.Close(); err != nil {
+	if err := wc.Commit(ctx, 12345); err != nil {
 		t.Error(err)
 		return
 	}
+	info, err := store.Stat(ctx, "test", 0)
+	if err != nil {
+		t.Error(err)
+	} else {
+		if got, want := info.Size, int64(len(data)); got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+		if got, want := info.Records, int64(12345); got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	}
+
 	rc, err := store.Open(ctx, "test", 0)
 	if err != nil {
 		t.Error(err)

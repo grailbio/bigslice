@@ -373,8 +373,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// instead once we also have memory management, in order to control
 	// buffer growth.
 	type partition struct {
-		closer io.Closer
-		buf    *bufio.Writer
+		wc  WriteCommitter
+		buf *bufio.Writer
 		*Encoder
 	}
 	partitions := make([]*partition, task.NumPartition)
@@ -385,19 +385,23 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		// TODO(marius): pool the writers so we can reuse them.
 		part := new(partition)
-		part.closer = wc
+		part.wc = wc
 		part.buf = bufio.NewWriter(wc)
 		part.Encoder = NewEncoder(part.buf)
 		partitions[p] = part
 	}
 	defer func() {
 		for p, part := range partitions {
-			if err := part.closer.Close(); err != nil {
-				log.Printf("close %s partition %d: %v", task.Name, p, err)
+			if part == nil {
+				continue
+			}
+			if err := part.wc.Discard(ctx); err != nil {
+				log.Printf("discard %s partition %d: %v", task.Name, p, err)
 			}
 		}
 	}()
 	out := task.Do(in)
+	count := make([]int64, task.NumPartition)
 	switch {
 	case len(task.Out) == 0:
 		// If there are no output columns, just drive the computation.
@@ -417,6 +421,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err := partitions[0].Encode(in...); err != nil {
 				return err
 			}
+			count[0] += int64(n)
 			if err == EOF {
 				break
 			}
@@ -444,6 +449,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					vec.Index(lens[p]).Set(in[j].Index(i))
 				}
 				lens[p]++
+				count[p]++
 				if lens[p] == defaultChunksize {
 					if err := partitions[p].Encode(partitionv[p]...); err != nil {
 						return err
@@ -467,15 +473,15 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 	}
 
-	for _, part := range partitions {
+	for i, part := range partitions {
 		if err := part.buf.Flush(); err != nil {
 			return err
 		}
-		if err := part.closer.Close(); err != nil {
+		partitions[i] = nil
+		if err := part.wc.Commit(ctx, count[i]); err != nil {
 			return err
 		}
 	}
-	// Disable defer close.
 	partitions = nil
 	return nil
 }
