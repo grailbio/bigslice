@@ -159,6 +159,11 @@ func (s *Session) Shutdown() {
 	}
 }
 
+// Status returns the session's status aggregator.
+func (s *Session) Status() *status.Status {
+	return s.status
+}
+
 func (s *Session) HandleDebug(handler *http.ServeMux) {
 	s.executor.HandleDebug(http.DefaultServeMux)
 }

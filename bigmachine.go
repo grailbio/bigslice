@@ -17,11 +17,16 @@ import (
 	"reflect"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
 )
+
+const statsPollInterval = 5 * time.Second
 
 func init() {
 	gob.Register(&worker{})
@@ -31,21 +36,80 @@ func init() {
 // e.g., perhaps we can register flags in a bigmachine flagset that gets
 // parsed together, so that we don't litter the process with global flags.
 
-// LoadedMachine maintains a load for each machine in order
-// to load balance tasks among them.
-type loadedMachine struct {
+// SliceMachine maintains bigslice-specific metadata to bigmachine machines.
+type sliceMachine struct {
 	*bigmachine.Machine
-	Load int
+	Load   int
+	Stats  *stats.Map
+	Status *status.Task
+
+	mu   sync.Mutex
+	disk bigmachine.DiskInfo
+	mem  bigmachine.MemInfo
 }
 
-type machineHeap []loadedMachine
+// Go polls runtime statistics from the underlying machine until
+// the provided context is done.
+func (s *sliceMachine) Go(ctx context.Context) error {
+	for ctx.Err() == nil {
+		g, gctx := errgroup.WithContext(ctx)
+		var (
+			mem  bigmachine.MemInfo
+			merr error
+			disk bigmachine.DiskInfo
+			derr error
+		)
+		g.Go(func() error {
+			mem, merr = s.Machine.MemInfo(gctx)
+			return nil
+		})
+		g.Go(func() error {
+			disk, derr = s.Machine.DiskInfo(gctx)
+			return nil
+		})
+		if err := g.Wait(); err != nil {
+			return err
+		}
+		if merr != nil {
+			log.Printf("meminfo %s: %v", s.Machine.Addr, merr)
+		}
+		if derr != nil {
+			log.Printf("diskinfo %s: %v", s.Machine.Addr, derr)
+		}
+		s.mu.Lock()
+		if merr == nil {
+			s.mem = mem
+		}
+		if derr == nil {
+			s.disk = disk
+		}
+		s.mu.Unlock()
+		s.UpdateStatus()
+		select {
+		case <-time.After(statsPollInterval):
+		case <-ctx.Done():
+		}
+	}
+	return ctx.Err()
+}
+
+// UpdateStatus update's the machine's status.
+func (s *sliceMachine) UpdateStatus() {
+	values := make(stats.Values)
+	s.Stats.AddAll(values)
+	s.mu.Lock()
+	s.Status.Printf("mem %s disk %s counters %s", s.mem, s.disk, values)
+	s.mu.Unlock()
+}
+
+type machineHeap []*sliceMachine
 
 func (h machineHeap) Len() int           { return len(h) }
 func (h machineHeap) Less(i, j int) bool { return h[i].Load < h[j].Load }
 func (h machineHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 
 func (h *machineHeap) Push(x interface{}) {
-	*h = append(*h, x.(loadedMachine))
+	*h = append(*h, x.(*sliceMachine))
 }
 
 func (h *machineHeap) Pop() interface{} {
@@ -64,17 +128,21 @@ type bigmachineExecutor struct {
 	sess *Session
 	b    *bigmachine.B
 
-	machines     []*bigmachine.Machine
 	machinesOnce sync.Once
+	machines     machineHeap
 	machinesErr  error
 
+	status *status.Group
+
 	mu        sync.Mutex
-	load      machineHeap
 	locations map[*Task]*bigmachine.Machine
+	stats     map[string]stats.Values
 }
 
 func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
-	return &bigmachineExecutor{system: system}
+	return &bigmachineExecutor{
+		system: system,
+	}
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
@@ -85,9 +153,9 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	b.sess = sess
 	b.b = bigmachine.Start(b.system)
 	b.locations = make(map[*Task]*bigmachine.Machine)
-	heap.Init(&b.load)
-	for _, m := range b.machines {
-		heap.Push(&b.load, loadedMachine{m, 0})
+	b.stats = make(map[string]stats.Values)
+	if status := sess.Status(); status != nil {
+		b.status = status.Group("bigmachine")
 	}
 	return b.b.Shutdown
 }
@@ -99,14 +167,23 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 // TODO(marius): provide a standardized means of propagating
 // status updates and logs.
 func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task) (err error) {
+	task.Status.Print("waiting for a machine")
 	if err := b.initMachines(); err != nil {
 		return err
 	}
 	b.mu.Lock()
-	m := heap.Pop(&b.load).(loadedMachine)
+	m := heap.Pop(&b.machines).(*sliceMachine)
 	m.Load++
-	heap.Push(&b.load, m)
+	heap.Push(&b.machines, m)
 	b.mu.Unlock()
+
+	numTasks := m.Stats.Int("tasks")
+	numTasks.Add(1)
+	m.UpdateStatus()
+	defer func() {
+		numTasks.Add(-1)
+		m.UpdateStatus()
+	}()
 
 	// Populate the run request. Include the locations of all dependent
 	// outputs so that the receiving worker can read from them.
@@ -125,13 +202,39 @@ func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task
 		}
 	}
 	task.Status.Print(m.Addr)
+	// While we're running, also update task stats directly into the tasks's status.
+	// TODO(marius): also aggregate stats across all tasks.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(statsPollInterval):
+			}
+			var vals stats.Values
+			if err := m.Call(ctx, "Worker.Stats", struct{}{}, &vals); err != nil {
+				if err != context.Canceled {
+					log.Printf("Worker.Stats: %v", err)
+				}
+				return
+			}
+			task.Status.Printf("%s: %s", m.Addr, vals)
+			b.mu.Lock()
+			b.stats[task.Name] = vals
+			b.mu.Unlock()
+			b.updateStatus()
+		}
+	}()
+
 	var reply taskRunReply
 	err = m.Call(ctx, "Worker.Run", req, &reply)
 	b.mu.Lock()
-	for i := range b.load {
-		if b.load[i] == m {
-			b.load[i].Load--
-			heap.Fix(&b.load, i)
+	m.Load--
+	for i := range b.machines {
+		if b.machines[i] == m {
+			heap.Fix(&b.machines, i)
 			break
 		}
 	}
@@ -148,12 +251,9 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 		return errorReader{errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))}
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
-	req := taskReadRequest{
-		Task:      task.Name,
-		Partition: partition,
-	}
+	tp := taskPartition{task.Name, partition}
 	var rc io.ReadCloser
-	if err := m.Call(ctx, "Worker.Read", req, &rc); err != nil {
+	if err := m.Call(ctx, "Worker.Read", tp, &rc); err != nil {
 		return errorReader{err}
 	}
 	return &closingReader{
@@ -167,9 +267,11 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 func (b *bigmachineExecutor) Maxprocs() int {
 	// TODO(marius): cache this
 	var n int
+	b.mu.Lock()
 	for _, mach := range b.machines {
 		n += mach.Maxprocs
 	}
+	b.mu.Unlock()
 	return n
 }
 
@@ -199,15 +301,29 @@ func (b *bigmachineExecutor) initMachines() error {
 		g, ctx := errgroup.WithContext(ctx)
 		for i := range machines {
 			m := machines[i]
+			status := b.status.Start()
+			status.Print("waiting for machine to boot")
 			g.Go(func() error {
 				<-m.Wait(bigmachine.Running)
 				if err := m.Err(); err != nil {
 					log.Printf("machine %s failed to start: %v", m.Addr, err)
+					status.Printf("failed to start: %v", err)
+					status.Done()
 					return nil
 				}
+				status.Title(m.Addr)
+				status.Print("running")
 				log.Printf("machine %v is ready", m.Addr)
+				sm := &sliceMachine{
+					Machine: m,
+					Stats:   stats.NewMap(),
+					Status:  status,
+				}
+				// TODO(marius): pass a context that's tied to the evaluation
+				// lifetime, or lifetime of the machine.
+				go sm.Go(context.Background())
 				b.mu.Lock()
-				b.machines = append(b.machines, m)
+				b.machines = append(b.machines, sm)
 				b.mu.Unlock()
 				return nil
 			})
@@ -221,9 +337,7 @@ func (b *bigmachineExecutor) initMachines() error {
 			return
 		}
 		b.mu.Lock()
-		for _, m := range b.machines {
-			heap.Push(&b.load, loadedMachine{m, 0})
-		}
+		heap.Init(&b.machines)
 		b.mu.Unlock()
 	})
 	return b.machinesErr
@@ -248,6 +362,18 @@ func (b *bigmachineExecutor) setLocation(task *Task, m *bigmachine.Machine) {
 	b.mu.Unlock()
 }
 
+func (b *bigmachineExecutor) updateStatus() {
+	total := make(stats.Values)
+	b.mu.Lock()
+	for _, stat := range b.stats {
+		for k, v := range stat {
+			total[k] += v
+		}
+	}
+	b.mu.Unlock()
+	b.status.Print(total)
+}
+
 // A worker is the bigmachine service that runs individual tasks and serves
 // the results of previous runs. Currently all output is buffered in memory.
 type worker struct {
@@ -261,6 +387,7 @@ type worker struct {
 	store       Store
 	invocations map[uint64]bool
 	tasks       map[string]*Task
+	stats       *stats.Map
 }
 
 func (w *worker) Init(b *bigmachine.B) error {
@@ -272,6 +399,7 @@ func (w *worker) Init(b *bigmachine.B) error {
 		return err
 	}
 	w.store = &fileStore{Prefix: dir + "/"}
+	w.stats = stats.NewMap()
 	return nil
 }
 
@@ -293,6 +421,7 @@ type taskRunReply struct{} // nothing here yet
 // returns a nil error when the task was successfully run and its
 // output deposited in a local buffer.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
+	recordsOut := w.stats.Int("write")
 	defer func() {
 		if e := recover(); e != nil {
 			stack := debug.Stack()
@@ -330,18 +459,31 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	}
 	// Gather inputs from the bigmachine cluster, dialing machines
 	// as necessary.
+	var (
+		totalRecordsIn *stats.Int
+		recordsIn      *stats.Int
+	)
+	if len(task.Deps) > 0 {
+		totalRecordsIn = w.stats.Int("inrecords")
+		recordsIn = w.stats.Int("read")
+	}
 	in := make([]Reader, len(task.Deps))
 	for i, dep := range task.Deps {
 		reader := new(multiReader)
 		reader.q = make([]Reader, len(dep.Tasks))
+	Tasks:
 		for j, deptask := range dep.Tasks {
 			// If we have it locally, or if we're using a shared backend store
 			// (e.g., S3), then read it directly.
-			rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
+			info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
 			if err == nil {
-				defer rc.Close()
-				reader.q[j] = newDecodingReader(rc)
-				continue
+				rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
+				if err == nil {
+					defer rc.Close()
+					reader.q[j] = newDecodingReader(rc)
+					totalRecordsIn.Add(info.Records)
+					continue Tasks
+				}
 			}
 			// Find the location of the task.
 			addr := req.Locations[deptask.Name]
@@ -352,14 +494,16 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil {
 				return err
 			}
-			req := taskReadRequest{
-				Task:      deptask.Name,
-				Partition: dep.Partition,
-			}
-			if err := machine.Call(ctx, "Worker.Read", req, &rc); err != nil {
+			tp := taskPartition{deptask.Name, dep.Partition}
+			if err := machine.Call(ctx, "Worker.Stat", tp, &info); err != nil {
 				return err
 			}
-			reader.q[j] = newDecodingReader(rc)
+			var rc io.ReadCloser
+			if err := machine.Call(ctx, "Worker.Read", tp, &rc); err != nil {
+				return err
+			}
+			reader.q[j] = &statsReader{newDecodingReader(rc), recordsIn}
+			totalRecordsIn.Add(info.Records)
 			defer rc.Close()
 		}
 		in[i] = reader
@@ -421,6 +565,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err := partitions[0].Encode(in...); err != nil {
 				return err
 			}
+			recordsOut.Add(int64(n))
 			count[0] += int64(n)
 			if err == EOF {
 				break
@@ -457,6 +602,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					lens[p] = 0
 				}
 			}
+			recordsOut.Add(int64(n))
 			if err == EOF {
 				break
 			}
@@ -486,17 +632,28 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
-// TaskReadRequest describes a request to read a slice buffer.
-type taskReadRequest struct {
+func (w *worker) Stats(ctx context.Context, _ struct{}, values *stats.Values) error {
+	w.stats.AddAll(*values)
+	return nil
+}
+
+// TaskPartition names a partition of a task.
+type taskPartition struct {
 	// Task is the name of the task whose output is to be read.
 	Task string
 	// Partition is the partition number to read.
 	Partition int
 }
 
+// Stat returns the SliceInfo for a slice.
+func (w *worker) Stat(ctx context.Context, tp taskPartition, info *SliceInfo) (err error) {
+	*info, err = w.store.Stat(ctx, tp.Task, tp.Partition)
+	return
+}
+
 // Read reads a slice
-func (w *worker) Read(ctx context.Context, req taskReadRequest, rc *io.ReadCloser) (err error) {
-	*rc, err = w.store.Open(ctx, req.Task, req.Partition)
+func (w *worker) Read(ctx context.Context, tp taskPartition, rc *io.ReadCloser) (err error) {
+	*rc, err = w.store.Open(ctx, tp.Task, tp.Partition)
 	return
 }
 

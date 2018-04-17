@@ -11,6 +11,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/bigslice/stats"
 )
 
 // A Reader represents a stateful stream of computed records from a
@@ -100,6 +101,17 @@ func (d *decodingReader) Read(ctx context.Context, columns ...reflect.Value) (n 
 		d.off += n
 	}
 	return n, nil
+}
+
+type statsReader struct {
+	reader  Reader
+	numRead *stats.Int
+}
+
+func (s *statsReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
+	n, err = s.reader.Read(ctx, columns...)
+	s.numRead.Add(int64(n))
+	return
 }
 
 // ReadAll copies all elements from reader r into the provided column
