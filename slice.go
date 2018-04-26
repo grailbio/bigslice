@@ -29,6 +29,8 @@ const defaultChunksize = 1024
 // different error should be returned.
 var EOF = errors.New("EOF")
 
+var errTypeError = errors.New("type error")
+
 // A Dep is a Slice dependency. Deps comprise a slice and a boolean
 // flag determining whether this is represents a shuffle dependency.
 // Shuffle dependencies must perform a data shuffle step: the
@@ -94,7 +96,7 @@ type Slice interface {
 }
 
 type constSlice struct {
-	columns []reflect.Value
+	columns Frame
 	types   []reflect.Type
 	nshard  int
 }
@@ -111,7 +113,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 	if s.nshard < 1 {
 		typePanicf(1, "const slices need at least one shard")
 	}
-	s.columns = make([]reflect.Value, len(columns))
+	s.columns = make(Frame, len(columns))
 	s.types = make([]reflect.Type, len(columns))
 	for i := range s.columns {
 		s.columns[i] = reflect.ValueOf(columns[i])
@@ -137,24 +139,18 @@ func (*constSlice) Partitioner() Partitioner { return nil }
 
 type constReader struct {
 	op      *constSlice
-	columns []reflect.Value
+	columns Frame
 	shard   int
 }
 
-func (s *constReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
-	if err := columnTypecheck(s.op, out...); err != nil {
-		return 0, err
+func (s *constReader) Read(ctx context.Context, out Frame) (int, error) {
+	if !Assignable(s.op, out) {
+		return 0, errTypeError
 	}
-	n := out[0].Len()
-	m := s.columns[0].Len()
-	if m < n {
-		n = m
-	}
-	for i := range out {
-		reflect.Copy(out[i], s.columns[i])
-		s.columns[i] = s.columns[i].Slice(n, m)
-	}
-	if s.columns[0].Len() == 0 {
+	n := CopyFrame(out, s.columns)
+	m := s.columns.Len()
+	s.columns = s.columns.Slice(n, m)
+	if m == 0 {
 		return n, EOF
 	}
 	return n, nil
@@ -178,7 +174,7 @@ func (s *constSlice) Reader(shard int, deps []Reader) Reader {
 	}
 	r := &constReader{
 		op:      s,
-		columns: make([]reflect.Value, len(s.columns)),
+		columns: make(Frame, len(s.columns)),
 		shard:   shard,
 	}
 	for i := range r.columns {
@@ -259,9 +255,12 @@ type readerFuncSliceReader struct {
 	err   error
 }
 
-func (r *readerFuncSliceReader) Read(ctx context.Context, out ...reflect.Value) (n int, err error) {
+func (r *readerFuncSliceReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
+	}
+	if !Assignable(out, r.op) {
+		return 0, errTypeError
 	}
 	// Initialize state (on first call)
 	if !r.state.IsValid() {
@@ -337,21 +336,21 @@ func (*mapSlice) Partitioner() Partitioner { return nil }
 
 type mapReader struct {
 	op     *mapSlice
-	reader Reader          // parent reader
-	in     []reflect.Value // buffer for input column vectors
+	reader Reader // parent reader
+	in     Frame  // buffer for input column vectors
 	err    error
 }
 
-func (m *mapReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
+func (m *mapReader) Read(ctx context.Context, out Frame) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
-	if err := columnTypecheck(m.op, out...); err != nil {
-		return 0, err
+	if !Assignable(out, m.op) {
+		return 0, errTypeError
 	}
-	n := out[0].Len()
-	m.in = makeVectors(m.in, m.op.Slice, n)
-	n, m.err = m.reader.Read(ctx, m.in...)
+	n := out.Len()
+	m.in = m.in.Realloc(m.op.Slice, n)
+	n, m.err = m.reader.Read(ctx, m.in)
 	// Now iterate over each record, transform it, and set the output
 	// records. Note that we could parallelize the map operation here,
 	// but for simplicity, parallelism should be achieved by finer
@@ -362,13 +361,8 @@ func (m *mapReader) Read(ctx context.Context, out ...reflect.Value) (int, error)
 	args := make([]reflect.Value, len(m.in))
 	for i := 0; i < n; i++ {
 		// Gather the arguments for a single invocation.
-		for j := range args {
-			args[j] = m.in[j].Index(i)
-		}
-		result := m.op.fval.Call(args)
-		for j, resultv := range result {
-			out[j].Index(i).Set(resultv)
-		}
+		m.in.CopyIndex(args, i)
+		out.SetIndex(m.op.fval.Call(args), i)
 	}
 	return n, m.err
 }
@@ -421,20 +415,20 @@ func (f *filterSlice) Dep(i int) Dep { return singleDep(i, f.Slice, false) }
 type filterReader struct {
 	op     *filterSlice
 	reader Reader
-	in     []reflect.Value
+	in     Frame
 	err    error
 }
 
-func (f *filterReader) Read(ctx context.Context, out ...reflect.Value) (n int, err error) {
+func (f *filterReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	if f.err != nil {
 		return 0, f.err
 	}
-	if err := columnTypecheck(f.op, out...); err != nil {
-		return 0, err
+	if !Assignable(out, f.op) {
+		return 0, errTypeError
 	}
 	var (
 		m   int
-		max = out[0].Len()
+		max = out.Len()
 	)
 	args := make([]reflect.Value, len(out))
 	for m < max && f.err == nil {
@@ -442,12 +436,10 @@ func (f *filterReader) Read(ctx context.Context, out ...reflect.Value) (n int, e
 		// rate is low: as we fill the output; we could degenerate into a
 		// case where we issue a call for each element. Consider input
 		// buffering instead.
-		f.in = makeVectors(f.in, f.op.Slice, max-m)
-		n, f.err = f.reader.Read(ctx, f.in...)
+		f.in = f.in.Realloc(f.op, max-m)
+		n, f.err = f.reader.Read(ctx, f.in)
 		for i := 0; i < n; i++ {
-			for j := range args {
-				args[j] = f.in[j].Index(i)
-			}
+			f.in.CopyIndex(args, i)
 			if f.op.pred.Call(args)[0].Bool() {
 				for j := range out {
 					out[j].Index(m).Set(f.in[j].Index(i))
@@ -526,15 +518,15 @@ type flatmapReader struct {
 	op     *flatmapSlice
 	reader Reader // underlying reader
 
-	in           []reflect.Value // buffer of inputs
+	in           Frame // buffer of inputs
 	begIn, endIn int
-	out          []reflect.Value // buffer of outputs
+	out          Frame // buffer of outputs
 	eof          bool
 }
 
-func (f *flatmapReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
-	if err := columnTypecheck(f.op, out...); err != nil {
-		return 0, err
+func (f *flatmapReader) Read(ctx context.Context, out Frame) (int, error) {
+	if !Assignable(out, f.op) {
+		return 0, errTypeError
 	}
 	args := make([]reflect.Value, f.op.Slice.NumOut())
 	begOut, endOut := 0, out[0].Len()
@@ -545,17 +537,12 @@ func (f *flatmapReader) Read(ctx context.Context, out ...reflect.Value) (int, er
 	}
 	// Add buffered output from last call, if any.
 	if f.out != nil {
-		var ncopy int
-		for i := range f.out {
-			ncopy = reflect.Copy(out[i], f.out[i])
-		}
-		begOut += ncopy
-		if ncopy == f.out[0].Len() {
+		n := CopyFrame(out, f.out)
+		begOut += n
+		if n == f.out.Len() {
 			f.out = nil
 		} else {
-			for i := range f.out {
-				f.out[i] = f.out[i].Slice(ncopy, f.out[i].Len())
-			}
+			f.out = f.out.Slice(n, f.out.Len())
 		}
 	}
 	// Continue as long as we have (possibly buffered) input, and space
@@ -565,8 +552,8 @@ func (f *flatmapReader) Read(ctx context.Context, out ...reflect.Value) (int, er
 			// out[0].Len() may not be related to an actually useful size, but we'll go with it.
 			// TODO(marius): maybe always default to a fixed chunk size? Or
 			// dynamically keep track of the average input:output ratio?
-			f.in = makeVectors(f.in, f.op.Slice, out[0].Len())
-			n, err := f.reader.Read(ctx, f.in...)
+			f.in = f.in.Realloc(f.op.Slice, out.Len())
+			n, err := f.reader.Read(ctx, f.in)
 			if err != nil && err != EOF {
 				return 0, err
 			}
@@ -576,23 +563,14 @@ func (f *flatmapReader) Read(ctx context.Context, out ...reflect.Value) (int, er
 		// Consume one input at a time, as long as we have space in our
 		// output buffer.
 		for ; f.begIn < f.endIn && begOut < endOut; f.begIn++ {
-			for i := range args {
-				args[i] = f.in[i].Index(f.begIn)
-			}
-			result := f.op.fval.Call(args)
-			var ncopy int
-			for i, resultv := range result {
-				// TODO: check if the sizes are the same.
-				ncopy = reflect.Copy(out[i].Slice(begOut, endOut), resultv)
-			}
-			begOut += ncopy
+			f.in.CopyIndex(args, f.begIn)
+			result := Frame(f.op.fval.Call(args))
+			n := CopyFrame(out.Slice(begOut, endOut), result)
+			begOut += n
 			// We've run out of output space. In this case, stash the rest of
 			// our output into f.out, if any.
-			if ncopy < result[0].Len() {
-				f.out = make([]reflect.Value, len(result))
-				for i, resultv := range result {
-					f.out[i] = resultv.Slice(ncopy, resultv.Len())
-				}
+			if m := result.Len(); n < m {
+				f.out = result.Slice(n, m)
 			}
 		}
 	}
@@ -694,13 +672,10 @@ type foldReader struct {
 // Compute accumulates values across all keys in this shard. The entire
 // output is buffered in memory.
 func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
-	in := make([]reflect.Value, f.op.dep.NumOut())
-	for i := range in {
-		in[i] = reflect.MakeSlice(reflect.SliceOf(f.op.dep.Out(i)), defaultChunksize, defaultChunksize)
-	}
+	in := MakeFrame(f.op.dep, defaultChunksize)
 	accum := makeAccumulator(f.op.dep.Out(0), f.op.out[1], f.op.fval)
 	for {
-		n, err := f.reader.Read(ctx, in...)
+		n, err := f.reader.Read(ctx, in)
 		if err != nil && err != EOF {
 			return nil, err
 		}
@@ -711,15 +686,12 @@ func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 	}
 }
 
-func (f *foldReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
-	if err := columnTypecheck(f.op, out...); err != nil {
-		return 0, err
-	}
+func (f *foldReader) Read(ctx context.Context, out Frame) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
-	if err := columnTypecheck(f.op, out...); err != nil {
-		return 0, err
+	if !Assignable(out, f.op) {
+		return 0, errTypeError
 	}
 	if f.accum == nil {
 		f.accum, f.err = f.compute(ctx)
@@ -761,11 +733,11 @@ func (h headSlice) Reader(shard int, deps []Reader) Reader {
 	return &headReader{deps[0], h.n}
 }
 
-func (h *headReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
+func (h *headReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	if h.n <= 0 {
 		return 0, EOF
 	}
-	n, err = h.reader.Read(ctx, columns...)
+	n, err = h.reader.Read(ctx, out)
 	h.n -= n
 	if h.n < 0 {
 		n -= -h.n
@@ -797,7 +769,7 @@ type scanReader struct {
 	reader Reader
 }
 
-func (s *scanReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
+func (s *scanReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	err = s.slice.scan(s.shard, &Scanner{out: ColumnTypes(s.slice.Slice), readers: []Reader{s.reader}})
 	if err == nil {
 		err = EOF
@@ -856,60 +828,9 @@ func (err typeError) Error() string {
 	return fmt.Sprintf("%s:%d: %v", err.file, err.line, err.err)
 }
 
-// TODO(marius): find a way to turn this off in "production",
-// or perform the check in the evaluator instead?
-func columnTypecheck(slice Slice, columns ...reflect.Value) error {
-	if got, want := len(columns), slice.NumOut(); got != want {
-		return typeErrorf(2, "expected %d columns, got %d", want, got)
-	}
-	for i := range columns {
-		if got, want := columns[i].Type(), reflect.SliceOf(slice.Out(i)); got != want {
-			return typeErrorf(2, "expected column %d of type %v, got %v", i, want, got)
-		}
-		if i > 1 && columns[i-1].Len() != columns[i].Len() {
-			return typeErrorf(2, "got columns of uneven size")
-		}
-	}
-	return nil
-}
-
 func singleDep(i int, slice Slice, shuffle bool) Dep {
 	if i != 0 {
 		panic(fmt.Sprintf("invalid dependency %d", i))
 	}
 	return Dep{slice, shuffle}
-}
-
-// makeVectors adjusts the column vectors in so that they are usable
-// for reading at most n elements from from the provided slice.
-func makeVectors(in []reflect.Value, slice Slice, n int) []reflect.Value {
-	if in == nil {
-		in = make([]reflect.Value, slice.NumOut())
-		cap := n
-		if cap < defaultChunksize {
-			cap = defaultChunksize
-		}
-		for i := range in {
-			in[i] = reflect.MakeSlice(reflect.SliceOf(slice.Out(i)), n, cap)
-		}
-		return in
-	}
-	m := in[0].Len()
-	if n == m {
-		return in
-	}
-	if m < n {
-		if c := in[0].Cap(); c < n {
-			n = c
-		}
-		if n == m {
-			// Can't do any better without resizing.
-			// This is guaranteed to be >= defaultChunksize.
-			return in
-		}
-	}
-	for i := range in {
-		in[i] = in[i].Slice(0, n)
-	}
-	return in
 }

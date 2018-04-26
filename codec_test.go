@@ -26,8 +26,8 @@ func TestCodec(t *testing.T) {
 
 	var b bytes.Buffer
 	enc := NewEncoder(&b)
-	in := []reflect.Value{reflect.ValueOf(c0), reflect.ValueOf(c1)}
-	if err := enc.Encode(in...); err != nil {
+	in := Frame{reflect.ValueOf(c0), reflect.ValueOf(c1)}
+	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
 	out := []reflect.Value{
@@ -49,7 +49,7 @@ func TestCodec(t *testing.T) {
 	for i := range out {
 		outptrs[i] = out[i].Pointer() // points to the slice header's data
 	}
-	if err := enc.Encode(in...); err != nil {
+	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
 	if err := dec.Decode(out...); err != nil {

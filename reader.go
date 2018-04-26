@@ -30,12 +30,12 @@ type Reader interface {
 	// are available.
 	//
 	// Read should not be called concurrently.
-	Read(ctx context.Context, columns ...reflect.Value) (int, error)
+	Read(ctx context.Context, frame Frame) (int, error)
 }
 
 type errorReader struct{ error }
 
-func (e errorReader) Read(ctx context.Context, columns ...reflect.Value) (int, error) {
+func (e errorReader) Read(ctx context.Context, f Frame) (int, error) {
 	return 0, e.error
 }
 
@@ -44,8 +44,8 @@ type closingReader struct {
 	io.Closer
 }
 
-func (c *closingReader) Read(ctx context.Context, columns ...reflect.Value) (int, error) {
-	n, err := c.Reader.Read(ctx, columns...)
+func (c *closingReader) Read(ctx context.Context, out Frame) (int, error) {
+	n, err := c.Reader.Read(ctx, out)
 	if err != nil {
 		c.Closer.Close()
 	}
@@ -54,7 +54,7 @@ func (c *closingReader) Read(ctx context.Context, columns ...reflect.Value) (int
 
 type emptyReader struct{}
 
-func (emptyReader) Read(ctx context.Context, columns ...reflect.Value) (int, error) {
+func (emptyReader) Read(ctx context.Context, f Frame) (int, error) {
 	return 0, EOF
 }
 
@@ -67,23 +67,23 @@ func newDecodingReader(r io.Reader) *decodingReader {
 type decodingReader struct {
 	dec      *gob.Decoder
 	off, len int
-	buf      []reflect.Value
+	buf      []reflect.Value // points to slices
 	err      error
 }
 
-func (d *decodingReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
+func (d *decodingReader) Read(ctx context.Context, f Frame) (n int, err error) {
 	if d.err != nil {
 		return 0, d.err
 	}
 	if d.off == d.len {
 		if d.buf == nil {
-			d.buf = make([]reflect.Value, len(columns))
+			d.buf = make([]reflect.Value, len(f))
 			for i := range d.buf {
-				d.buf[i] = reflect.New(columns[i].Type())
+				d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
 			}
 		}
 		// Read the next batch.
-		for i := range columns {
+		for i := range f {
 			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
 				if d.err == io.EOF {
 					d.err = EOF
@@ -95,8 +95,8 @@ func (d *decodingReader) Read(ctx context.Context, columns ...reflect.Value) (n 
 		d.len = d.buf[0].Elem().Len()
 	}
 	if d.len > 0 {
-		for i := range columns {
-			n = reflect.Copy(columns[i], d.buf[i].Elem().Slice(d.off, d.len))
+		for i := range f {
+			n = reflect.Copy(f[i], d.buf[i].Elem().Slice(d.off, d.len))
 		}
 		d.off += n
 	}
@@ -108,8 +108,8 @@ type statsReader struct {
 	numRead *stats.Int
 }
 
-func (s *statsReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
-	n, err = s.reader.Read(ctx, columns...)
+func (s *statsReader) Read(ctx context.Context, f Frame) (n int, err error) {
+	n, err = s.reader.Read(ctx, f)
 	s.numRead.Add(int64(n))
 	return
 }
@@ -125,24 +125,24 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 			return errors.E(errors.Invalid, "attempted to read into non-pointer")
 		}
 	}
-	buf := make([]reflect.Value, len(columns))
+	buf := make(Frame, len(columns))
 	for i := range columns {
 		typ := columnsv[i].Type().Elem()
 		buf[i] = reflect.MakeSlice(reflect.SliceOf(typ.Elem()), defaultChunksize, defaultChunksize)
 	}
 	for {
-		n, err := r.Read(ctx, buf...)
+		n, err := r.Read(ctx, buf)
 		if err != nil && err != EOF {
 			return err
 		}
-		limit(buf, n)
+		buf = buf.Slice(0, n)
 		for i := range columnsv {
 			columnsv[i].Elem().Set(reflect.AppendSlice(columnsv[i].Elem(), buf[i]))
 		}
 		if err == EOF {
 			break
 		}
-		unlimit(buf)
+		buf = buf.Slice(0, buf.Cap())
 	}
 	return nil
 }

@@ -20,10 +20,10 @@ import (
 //
 // Callers should not mix calls to Scan and Scanv.
 type Scanner struct {
-	out      []reflect.Type
+	out      typeSlice
 	readers  []Reader
 	err      error
-	in       []reflect.Value
+	in       Frame
 	beg, end int
 }
 
@@ -46,10 +46,7 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 		}
 	}
 	if s.in == nil {
-		s.in = make([]reflect.Value, len(s.out))
-		for i := range s.in {
-			s.in[i] = reflect.MakeSlice(reflect.SliceOf(s.out[i]), defaultChunksize, defaultChunksize)
-		}
+		s.in = MakeFrame(s.out, defaultChunksize)
 		s.beg, s.end = 0, 0
 	}
 	// Read the next batch of input.
@@ -58,7 +55,7 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 			s.err = EOF
 			return false
 		}
-		n, err := s.readers[0].Read(ctx, s.in...)
+		n, err := s.readers[0].Read(ctx, s.in)
 		if err != nil && err != EOF {
 			s.err = err
 			return false

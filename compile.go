@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -29,6 +28,7 @@ type TaskDep struct {
 // form graphs through dependencies; task graphs are compiled
 // from slices.
 type Task struct {
+	Type
 	// Name is the name of the task. Tasks are named universally: they
 	// should be unique among all possible tasks in a bigslice session.
 	Name string
@@ -38,8 +38,6 @@ type Task struct {
 	Do func([]Reader) Reader
 	// Deps are the task's dependencies. See TaskDep for details.
 	Deps []TaskDep
-	// Out is the task's output types.
-	Out []reflect.Type
 	// NumPartition is the number of partitions that are output by this task.
 	// If NumPartition > 1, then the task must also define a partitioner.
 	NumPartition int
@@ -62,9 +60,9 @@ func (t *Task) WriteGraph(w io.Writer) {
 	tw.Init(w, 4, 4, 1, ' ', 0)
 	fmt.Fprintln(&tw, "tasks:")
 	for _, task := range t.All() {
-		out := make([]string, len(task.Out))
+		out := make([]string, task.NumOut())
 		for i := range out {
-			out[i] = fmt.Sprint(task.Out[i])
+			out[i] = fmt.Sprint(task.Out(i))
 		}
 		outstr := strings.Join(out, ",")
 		fmt.Fprintf(&tw, "\t%s\t%s\t%d\n", task.Name, outstr, task.NumPartition)
@@ -154,12 +152,11 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 		ops = append(ops, slices[i].Op())
 	}
 	name := namer.Get(strings.Join(ops, "_"))
-	out := ColumnTypes(slices[0])
 	for i := range tasks {
 		tasks[i] = &Task{
+			Type:         slices[0],
 			Name:         fmt.Sprintf("%s@%d:%d", name, len(tasks), i),
 			NumPartition: 1,
-			Out:          out,
 		}
 	}
 	// Pipeline execution, folding multiple frame operations

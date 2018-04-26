@@ -15,8 +15,8 @@ import (
 // ability to handle multiple partitions, and stores vectors of
 // records for efficiency.
 //
-// TaskBuffer layout is: partition, slices, columns.
-type taskBuffer [][][]reflect.Value
+// TaskBuffer layout is: partition, slices, frames.
+type taskBuffer [][]Frame
 
 // Slice returns column vectors for the provided partition and global
 // offset. The returned offset indicates the position of the global
@@ -28,15 +28,15 @@ type taskBuffer [][][]reflect.Value
 // linear walk through the stored vectors. We should aggregate
 // lengths so that we can perform a binary search. Alternatively, we
 // can return a cookie from Slice that enables efficient resumption.
-func (b taskBuffer) Slice(partition, off int) ([]reflect.Value, int) {
+func (b taskBuffer) Slice(partition, off int) (Frame, int) {
 	beg, end := partition, partition+1
 	// Find the offset.
 	var n int
 	for i := beg; i < end; i++ {
-		for _, cols := range b[i] {
-			l := cols[0].Len()
+		for _, f := range b[i] {
+			l := f.Len()
 			if n+l > off {
-				return cols, off - n
+				return f, off - n
 			}
 			n += l
 		}
@@ -49,7 +49,7 @@ type taskBufferReader struct {
 	i, j, k int
 }
 
-func (r *taskBufferReader) Read(ctx context.Context, out ...reflect.Value) (int, error) {
+func (r *taskBufferReader) Read(ctx context.Context, out Frame) (int, error) {
 loop:
 	for {
 		switch {
@@ -66,16 +66,12 @@ loop:
 		}
 	}
 	buf := r.q[r.i][r.j]
-	n := out[0].Len()
-	if m := buf[0].Len() - r.k; m < n {
+	n := out.Len()
+	if m := buf.Len() - r.k; m < n {
 		n = m
 	}
 	l := r.k + n
-	for i, val := range out {
-		// TODO(marius): Consider changing the Reader interface to allow
-		// for zero-copy transfers in this case.
-		reflect.Copy(val, r.q[r.i][r.j][i].Slice(r.k, l))
-	}
+	CopyFrame(out, r.q[r.i][r.j].Slice(r.k, l))
 	r.k = l
 	return n, nil
 }

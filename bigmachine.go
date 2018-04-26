@@ -14,7 +14,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"reflect"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -547,22 +546,21 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	out := task.Do(in)
 	count := make([]int64, task.NumPartition)
 	switch {
-	case len(task.Out) == 0:
+	case task.NumOut() == 0:
 		// If there are no output columns, just drive the computation.
-		_, err := out.Read(ctx)
+		_, err := out.Read(ctx, nil)
 		if err == EOF {
 			err = nil
 		}
 		return err
 	case task.NumPartition == 1:
-		in := makeOutputVectors(task)
+		in := MakeFrame(task, defaultChunksize)
 		for {
-			n, err := out.Read(ctx, in...)
+			n, err := out.Read(ctx, in)
 			if err != nil && err != EOF {
 				return err
 			}
-			limit(in, n)
-			if err := partitions[0].Encode(in...); err != nil {
+			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
 				return err
 			}
 			recordsOut.Add(int64(n))
@@ -570,20 +568,19 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err == EOF {
 				break
 			}
-			unlimit(in)
 		}
 	default:
 		var (
 			partition  = make([]int, defaultChunksize)
-			partitionv = make([][]reflect.Value, task.NumPartition)
+			partitionv = make([]Frame, task.NumPartition)
 			lens       = make([]int, task.NumPartition)
 		)
 		for i := range partitionv {
-			partitionv[i] = makeOutputVectors(task)
+			partitionv[i] = MakeFrame(task, defaultChunksize)
 		}
-		in := makeOutputVectors(task)
+		in := MakeFrame(task, defaultChunksize)
 		for {
-			n, err := out.Read(ctx, in...)
+			n, err := out.Read(ctx, in)
 			if err != nil && err != EOF {
 				return err
 			}
@@ -595,8 +592,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				}
 				lens[p]++
 				count[p]++
+				// Flush when we fill up.
 				if lens[p] == defaultChunksize {
-					if err := partitions[p].Encode(partitionv[p]...); err != nil {
+					if err := partitions[p].Encode(partitionv[p]); err != nil {
 						return err
 					}
 					lens[p] = 0
@@ -612,8 +610,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if n == 0 {
 				continue
 			}
-			limit(partitionv[p], n)
-			if err := partitions[p].Encode(partitionv[p]...); err != nil {
+			if err := partitions[p].Encode(partitionv[p].Slice(0, n)); err != nil {
 				return err
 			}
 		}
@@ -655,33 +652,4 @@ func (w *worker) Stat(ctx context.Context, tp taskPartition, info *SliceInfo) (e
 func (w *worker) Read(ctx context.Context, tp taskPartition, rc *io.ReadCloser) (err error) {
 	*rc, err = w.store.Open(ctx, tp.Task, tp.Partition)
 	return
-}
-
-func makeOutputVectors(task *Task) []reflect.Value {
-	cols := make([]reflect.Value, len(task.Out))
-	for i, typ := range task.Out {
-		cols[i] = reflect.MakeSlice(reflect.SliceOf(typ), defaultChunksize, defaultChunksize)
-	}
-	return cols
-}
-
-func limit(cols []reflect.Value, n int) {
-	if cols[0].Len() == n {
-		return
-	}
-	for i := range cols {
-		// TODO(marius): if we used addressable values here, we could
-		// call Value.SetLen directly, avoiding this copy.
-		cols[i] = cols[i].Slice(0, n)
-	}
-}
-
-func unlimit(cols []reflect.Value) {
-	c := cols[0].Cap()
-	if c == cols[0].Len() {
-		return
-	}
-	for i := range cols {
-		cols[i] = cols[i].Slice(0, c)
-	}
 }

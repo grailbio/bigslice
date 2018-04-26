@@ -74,8 +74,8 @@ func (*localExecutor) HandleDebug(*http.ServeMux) {}
 // task buffer. If the output is partitioned, bufferOutput invokes
 // the task's partitioner in order to determine the correct partition.
 func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, error) {
-	if len(task.Out) == 0 {
-		_, err := out.Read(ctx)
+	if task.NumOut() == 0 {
+		_, err := out.Read(ctx, nil)
 		if err == EOF {
 			err = nil
 		}
@@ -83,7 +83,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 	}
 	var (
 		buf        = make(taskBuffer, task.NumPartition)
-		in         []reflect.Value
+		in         Frame
 		partitions []int
 	)
 	if task.NumPartition > 1 {
@@ -91,12 +91,9 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 	}
 	for {
 		if in == nil {
-			in = make([]reflect.Value, len(task.Out))
-			for i := range in {
-				in[i] = reflect.MakeSlice(reflect.SliceOf(task.Out[i]), defaultChunksize, defaultChunksize)
-			}
+			in = MakeFrame(task, defaultChunksize)
 		}
-		n, err := out.Read(ctx, in...)
+		n, err := out.Read(ctx, in)
 		if err != nil && err != EOF {
 			return nil, err
 		}
@@ -108,15 +105,12 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 			task.Partitioner.Partition(in, partitions, n, task.NumPartition)
 			for i := 0; i < n; i++ {
 				p := partitions[i]
-				// If we don't yet have a vector or the current one is at capacity,
+				// If we don't yet have a buffer or the current one is at capacity,
 				// create a new one.
 				m := len(buf[p])
-				if m == 0 || buf[p][m-1][0].Cap() == buf[p][m-1][0].Len() {
-					cols := make([]reflect.Value, len(task.Out))
-					for j, typ := range task.Out {
-						cols[j] = reflect.MakeSlice(reflect.SliceOf(typ), 0, defaultChunksize)
-					}
-					buf[p] = append(buf[p], cols)
+				if m == 0 || buf[p][m-1].Cap() == buf[p][m-1].Len() {
+					frame := MakeFrame(task, 0, defaultChunksize)
+					buf[p] = append(buf[p], frame)
 					m++
 				}
 				for j := range buf[p][m-1] {
@@ -124,9 +118,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 				}
 			}
 		} else if n > 0 {
-			for i := range in {
-				in[i] = in[i].Slice(0, n)
-			}
+			in = in.Slice(0, n)
 			buf[0] = append(buf[0], in)
 			in = nil
 		}
@@ -142,12 +134,12 @@ type multiReader struct {
 	err error
 }
 
-func (m *multiReader) Read(ctx context.Context, columns ...reflect.Value) (n int, err error) {
+func (m *multiReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	if m.err != nil {
 		return 0, m.err
 	}
 	for len(m.q) > 0 {
-		n, err := m.q[0].Read(ctx, columns...)
+		n, err := m.q[0].Read(ctx, out)
 		switch {
 		case err == EOF:
 			err = nil

@@ -26,9 +26,9 @@ func NewEncoder(w io.Writer) *Encoder {
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
-func (e *Encoder) Encode(columns ...reflect.Value) error {
-	for i := range columns {
-		if err := e.enc.EncodeValue(columns[i]); err != nil {
+func (e *Encoder) Encode(f Frame) error {
+	for i := range f {
+		if err := e.enc.EncodeValue(f[i]); err != nil {
 			return err
 		}
 	}
