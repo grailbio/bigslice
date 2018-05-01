@@ -6,6 +6,7 @@ package bigslice
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -82,12 +83,16 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 		return nil, err
 	}
 	var (
-		buf        = make(taskBuffer, task.NumPartition)
-		in         Frame
-		partitions []int
+		buf         = make(taskBuffer, task.NumPartition)
+		in          Frame
+		partitions  []int
+		partitioner *partitioner
 	)
-	if task.NumPartition > 1 {
+	if task.Hasher != nil {
 		partitions = make([]int, defaultChunksize, defaultChunksize)
+		partitioner = newPartitioner(task.Hasher, task.NumPartition)
+	} else if task.NumPartition != 1 {
+		return nil, fmt.Errorf("invalid task graph: NumPartition is %d, but no Hasher provided", task.NumPartition)
 	}
 	for {
 		if in == nil {
@@ -101,8 +106,8 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 		// assign partitions to each input element, and then append the
 		// elements in their respective partitions. In this case, we just
 		// maintain buffer slices of defaultChunksize each.
-		if task.NumPartition > 1 {
-			task.Partitioner.Partition(in, partitions, n, task.NumPartition)
+		if task.Hasher != nil {
+			partitioner.Partition(in, partitions[:n])
 			for i := 0; i < n; i++ {
 				p := partitions[i]
 				// If we don't yet have a buffer or the current one is at capacity,

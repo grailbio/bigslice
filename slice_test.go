@@ -20,6 +20,13 @@ import (
 	"github.com/grailbio/bigmachine/testsystem"
 )
 
+var (
+	typeOfString  = reflect.TypeOf("")
+	typeOfInt     = reflect.TypeOf(int(0))
+	typeOfInt64   = reflect.TypeOf(int64(0))
+	typeOfFloat64 = reflect.TypeOf(float64(0))
+)
+
 func sortColumns(columns []interface{}) {
 	s := new(columnSlice)
 	s.keys = columns[0].([]string)
@@ -106,7 +113,7 @@ func assertEqual(t *testing.T, slice Slice, sort bool, expect ...interface{}) {
 		switch got, want := n, expectvs[0].Len(); {
 		case got == want:
 		case got < want:
-			t.Errorf("%s: short result: got %v, want %v", name, got, want)
+			t.Errorf("%s: short result: got %v, want %v: got %v", name, got, want, args)
 			continue
 		case want+1 == got:
 			row := make([]string, len(args))
@@ -425,7 +432,7 @@ func TestFoldError(t *testing.T) {
 	input := Const(1, []int{1, 2, 3})
 	floatInput := Map(input, func(x int) (float64, int) { return 0, 0 })
 	intInput := Map(input, func(x int) (int, int) { return 0, 0 })
-	expectTypeError(t, "key type float64 is not partitionable", func() { Fold(floatInput, func(x int) int { return 0 }) })
+	expectTypeError(t, "key type float64 cannot be accumulated", func() { Fold(floatInput, func(x int) int { return 0 }) })
 	expectTypeError(t, "Fold can be applied only for slices with at least two columns; got 1", func() { Fold(input, func(x int) int { return 0 }) })
 	expectTypeError(t, "expected 2 arguments, got 1", func() { Fold(intInput, func(x int) int { return 0 }) })
 	expectTypeError(t, "expected output type int, got string", func() { Fold(intInput, func(a, x int) string { return "" }) })

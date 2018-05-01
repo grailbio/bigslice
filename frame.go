@@ -4,7 +4,15 @@
 
 package bigslice
 
-import "reflect"
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"reflect"
+	"strings"
+	"text/tabwriter"
+)
 
 // A Type is the type of a set of columns.
 type Type interface {
@@ -60,6 +68,23 @@ func MakeFrame(types Type, frameLen int, frameCap ...int) Frame {
 	return f
 }
 
+// AppendFrame appends the rows in the frame g to the rows in frame
+// f, returning the appended frame. Its semantics matches that of
+// Go's builtin append: the returned frame may share underlying
+// storage with frame f.
+func AppendFrame(f, g Frame) Frame {
+	if f == nil {
+		f = make(Frame, len(g))
+		for i := range f {
+			f[i] = reflect.Zero(g[i].Type())
+		}
+	}
+	for i := range f {
+		f[i] = reflect.AppendSlice(f[i], g[i])
+	}
+	return f
+}
+
 // CopyFrame copies the frame src to dst. The number of copied rows
 // are returned. CopyFrame panics if src is not assignable to dst.
 func CopyFrame(dst, src Frame) int {
@@ -73,6 +98,9 @@ func CopyFrame(dst, src Frame) int {
 // Slice returns a frame with rows i to j, analagous to Go's native
 // slice operation.
 func (f Frame) Slice(i, j int) Frame {
+	if f == nil {
+		return nil
+	}
 	g := make(Frame, len(f))
 	copy(g, f)
 	for k := range g {
@@ -130,4 +158,62 @@ func (f Frame) SetIndex(row []reflect.Value, i int) {
 	for j, v := range row {
 		f[j].Index(i).Set(v)
 	}
+}
+
+// String returns a descriptive string of the frame.
+func (f Frame) String() string {
+	types := make([]string, len(f))
+	for i := range f {
+		types[i] = f[i].Type().Elem().String()
+	}
+	return fmt.Sprintf("frame[%d]%s", f.Len(), strings.Join(types, ","))
+}
+
+// WriteTab writes the frame in tabular format to the provided io.Writer.
+func (f Frame) WriteTab(w io.Writer) {
+	var tw tabwriter.Writer
+	tw.Init(w, 4, 4, 1, ' ', 0)
+	types := make([]string, len(f))
+	for i := range f {
+		types[i] = f[i].Type().Elem().String()
+	}
+	fmt.Fprintln(&tw, strings.Join(types, "\t"))
+	var (
+		row    = make([]reflect.Value, len(f))
+		values = make([]string, len(f))
+	)
+	for i := 0; i < f.Len(); i++ {
+		f.CopyIndex(row, i)
+		for j := range row {
+			values[j] = fmt.Sprint(row[j])
+		}
+		fmt.Fprintln(&tw, strings.Join(values, "\t"))
+	}
+	tw.Flush()
+}
+
+// TabString returns a string representing the frame in tabular format.
+func (f Frame) TabString() string {
+	var b bytes.Buffer
+	f.WriteTab(&b)
+	return b.String()
+}
+
+// FrameReader implements a Reader for a single Frame.
+type frameReader struct {
+	Frame
+}
+
+func (f *frameReader) Read(ctx context.Context, out Frame) (int, error) {
+	n := out.Len()
+	max := f.Frame.Len()
+	if max < n {
+		n = max
+	}
+	CopyFrame(out, f.Frame)
+	f.Frame = f.Frame.Slice(n, max)
+	if f.Frame.Len() == 0 {
+		return n, EOF
+	}
+	return n, nil
 }

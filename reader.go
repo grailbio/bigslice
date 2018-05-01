@@ -146,3 +146,17 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 	}
 	return nil
 }
+
+// ReadFull reads the full length of the frame. ReadFull reads short
+// frames only on EOF.
+func ReadFull(ctx context.Context, r Reader, f Frame) (n int, err error) {
+	len := f.Len()
+	for n < len {
+		m, err := r.Read(ctx, f.Slice(n, len))
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}

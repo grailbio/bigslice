@@ -553,27 +553,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			err = nil
 		}
 		return err
-	case task.NumPartition == 1:
-		in := MakeFrame(task, defaultChunksize)
-		for {
-			n, err := out.Read(ctx, in)
-			if err != nil && err != EOF {
-				return err
-			}
-			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
-				return err
-			}
-			recordsOut.Add(int64(n))
-			count[0] += int64(n)
-			if err == EOF {
-				break
-			}
-		}
-	default:
+	case task.Hasher != nil:
+		// If we have a Hasher, we're expected to partition the output.
 		var (
-			partition  = make([]int, defaultChunksize)
-			partitionv = make([]Frame, task.NumPartition)
-			lens       = make([]int, task.NumPartition)
+			partition   = make([]int, defaultChunksize)
+			partitionv  = make([]Frame, task.NumPartition)
+			lens        = make([]int, task.NumPartition)
+			partitioner = newPartitioner(task.Hasher, task.NumPartition)
 		)
 		for i := range partitionv {
 			partitionv[i] = MakeFrame(task, defaultChunksize)
@@ -584,7 +570,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != EOF {
 				return err
 			}
-			task.Partitioner.Partition(in, partition, n, task.NumPartition)
+			partitioner.Partition(in, partition)
 			for i := 0; i < n; i++ {
 				p := partition[i]
 				for j, vec := range partitionv[p] {
@@ -612,6 +598,25 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 			if err := partitions[p].Encode(partitionv[p].Slice(0, n)); err != nil {
 				return err
+			}
+		}
+	default:
+		if task.NumPartition != 1 {
+			return fmt.Errorf("invalid task graph: NumPartition is %d, but no Hasher provided", task.NumPartition)
+		}
+		in := MakeFrame(task, defaultChunksize)
+		for {
+			n, err := out.Read(ctx, in)
+			if err != nil && err != EOF {
+				return err
+			}
+			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
+				return err
+			}
+			recordsOut.Add(int64(n))
+			count[0] += int64(n)
+			if err == EOF {
+				break
 			}
 		}
 	}

@@ -6,7 +6,6 @@ package bigslice
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -41,8 +40,9 @@ type Task struct {
 	// NumPartition is the number of partitions that are output by this task.
 	// If NumPartition > 1, then the task must also define a partitioner.
 	NumPartition int
-	// Partitioner is the partitioner used to partition output from this task.
-	Partitioner Partitioner
+	// Hasher is used to compute hashes of Frame rows, used to partition
+	// a Frame's output.
+	Hasher Hasher
 	// Status is a status object to which task status is reported.
 	Status *status.Task
 }
@@ -140,9 +140,6 @@ func pipeline(slice Slice) (slices []Slice) {
 // boundaries). We should at least support this use case to avoid
 // redundant computations.
 func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
-	if slice.NumDep() > 1 {
-		return nil, errors.New("invalid slice: joins are not yet supported")
-	}
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks := make([]*Task, slice.NumShard())
@@ -189,9 +186,6 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(deptasks) != len(tasks) {
-			return nil, fmt.Errorf("malformed slice: %d dependent tasks, %d shards", len(deptasks), len(tasks))
-		}
 		if !dep.Shuffle {
 			panic("non-pipelined non-shuffle dependency")
 		}
@@ -199,7 +193,7 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 		// these are properly partitioned at the time of computation.
 		for _, task := range deptasks {
 			task.NumPartition = slice.NumShard()
-			task.Partitioner = lastSlice.Partitioner()
+			task.Hasher = lastSlice.Hasher()
 		}
 		// Each shard reads different partitions from all of the previous tasks's shards.
 		for partition := range tasks {

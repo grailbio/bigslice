@@ -79,9 +79,10 @@ type Slice interface {
 	NumShard() int
 	// ShardType returns the sharding type of this Slice.
 	ShardType() ShardType
-	// Partitioner returns the partitioner to use for this slice. Partitioners
-	// are only required for slices that have shuffle dependencies.
-	Partitioner() Partitioner
+
+	// Hasher returns the hasher used to partition this slice's
+	// inputs, if any.
+	Hasher() Hasher
 
 	// NumDep returns the number of dependencies of this Slice.
 	NumDep() int
@@ -135,7 +136,7 @@ func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
-func (*constSlice) Partitioner() Partitioner { return nil }
+func (*constSlice) Hasher() Hasher           { return nil }
 
 type constReader struct {
 	op      *constSlice
@@ -246,7 +247,7 @@ func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
-func (*readerFuncSlice) Partitioner() Partitioner { return nil }
+func (*readerFuncSlice) Hasher() Hasher           { return nil }
 
 type readerFuncSliceReader struct {
 	op    *readerFuncSlice
@@ -332,7 +333,7 @@ func (*mapSlice) ShardType() ShardType     { return HashShard }
 func (m *mapSlice) Op() string             { return "map" }
 func (*mapSlice) NumDep() int              { return 1 }
 func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
-func (*mapSlice) Partitioner() Partitioner { return nil }
+func (*mapSlice) Hasher() Hasher           { return nil }
 
 type mapReader struct {
 	op     *mapSlice
@@ -512,7 +513,7 @@ func (*flatmapSlice) ShardType() ShardType     { return HashShard }
 func (*flatmapSlice) Op() string               { return "flatmap" }
 func (*flatmapSlice) NumDep() int              { return 1 }
 func (f *flatmapSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*flatmapSlice) Partitioner() Partitioner { return nil }
+func (*flatmapSlice) Hasher() Hasher           { return nil }
 
 type flatmapReader struct {
 	op     *flatmapSlice
@@ -589,11 +590,11 @@ func (f *flatmapSlice) Reader(shard int, deps []Reader) Reader {
 
 type foldSlice struct {
 	Slice
-	partitioner Partitioner
-	fval        reflect.Value
-	ftype       reflect.Type
-	out         []reflect.Type
-	dep         Dep
+	hasher Hasher
+	fval   reflect.Value
+	ftype  reflect.Type
+	out    []reflect.Type
+	dep    Dep
 }
 
 // Fold returns a slice that aggregates values by the first column
@@ -608,7 +609,7 @@ type foldSlice struct {
 // is passed the zero value of its accumulator type.
 //
 // Fold requires that the first column of the slice is partitionable.
-// See the documentation for Partition for more details.
+// See the documentation for Keyer for more details.
 //
 // Schematically:
 //
@@ -617,8 +618,8 @@ func Fold(slice Slice, fold interface{}) Slice {
 	if n := slice.NumOut(); n < 2 {
 		typePanicf(1, "Fold can be applied only for slices with at least two columns; got %d", n)
 	}
-	part := makePartitioner(slice.Out(0), 0)
-	if part == nil {
+	hasher := makeHasher(slice.Out(0), 0)
+	if hasher == nil {
 		typePanicf(1, "key type %s is not partitionable", slice.Out(0))
 	}
 	if !canMakeAccumulatorForKey(slice.Out(0)) {
@@ -626,7 +627,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 	}
 	f := new(foldSlice)
 	f.Slice = slice
-	f.partitioner = part
+	f.hasher = hasher
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
 	f.dep = Dep{slice, true}
@@ -655,12 +656,12 @@ func Fold(slice Slice, fold interface{}) Slice {
 	return f
 }
 
-func (f *foldSlice) NumOut() int              { return len(f.out) }
-func (f *foldSlice) Out(c int) reflect.Type   { return f.out[c] }
-func (f *foldSlice) Partitioner() Partitioner { return f.partitioner }
-func (f *foldSlice) Op() string               { return "fold" }
-func (*foldSlice) NumDep() int                { return 1 }
-func (f *foldSlice) Dep(i int) Dep            { return f.dep }
+func (f *foldSlice) NumOut() int            { return len(f.out) }
+func (f *foldSlice) Out(c int) reflect.Type { return f.out[c] }
+func (f *foldSlice) Hasher() Hasher         { return f.hasher }
+func (f *foldSlice) Op() string             { return "fold" }
+func (*foldSlice) NumDep() int              { return 1 }
+func (f *foldSlice) Dep(i int) Dep          { return f.dep }
 
 type foldReader struct {
 	op     *foldSlice
