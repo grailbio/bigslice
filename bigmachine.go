@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -45,6 +46,7 @@ type sliceMachine struct {
 	mu   sync.Mutex
 	disk bigmachine.DiskInfo
 	mem  bigmachine.MemInfo
+	load bigmachine.LoadInfo
 }
 
 // Go polls runtime statistics from the underlying machine until
@@ -57,6 +59,8 @@ func (s *sliceMachine) Go(ctx context.Context) error {
 			merr error
 			disk bigmachine.DiskInfo
 			derr error
+			load bigmachine.LoadInfo
+			lerr error
 		)
 		g.Go(func() error {
 			mem, merr = s.Machine.MemInfo(gctx)
@@ -64,6 +68,10 @@ func (s *sliceMachine) Go(ctx context.Context) error {
 		})
 		g.Go(func() error {
 			disk, derr = s.Machine.DiskInfo(gctx)
+			return nil
+		})
+		g.Go(func() error {
+			load, lerr = s.Machine.LoadInfo(gctx)
 			return nil
 		})
 		if err := g.Wait(); err != nil {
@@ -75,12 +83,18 @@ func (s *sliceMachine) Go(ctx context.Context) error {
 		if derr != nil {
 			log.Printf("diskinfo %s: %v", s.Machine.Addr, derr)
 		}
+		if lerr != nil {
+			log.Printf("loadinfo %s: %v", s.Machine.Addr, lerr)
+		}
 		s.mu.Lock()
 		if merr == nil {
 			s.mem = mem
 		}
 		if derr == nil {
 			s.disk = disk
+		}
+		if lerr == nil {
+			s.load = load
 		}
 		s.mu.Unlock()
 		s.UpdateStatus()
@@ -92,12 +106,17 @@ func (s *sliceMachine) Go(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// UpdateStatus update's the machine's status.
+// UpdateStatus updates the machine's status.
 func (s *sliceMachine) UpdateStatus() {
 	values := make(stats.Values)
 	s.Stats.AddAll(values)
 	s.mu.Lock()
-	s.Status.Printf("mem %s disk %s counters %s", s.mem, s.disk, values)
+	s.Status.Printf("mem %s/%s disk %s/%s load %.1f/%.1f/%.1f counters %s",
+		data.Size(s.mem.System.Used), data.Size(s.mem.System.Total),
+		data.Size(s.disk.Usage.Used), data.Size(s.disk.Usage.Total),
+		s.load.Averages.Load1, s.load.Averages.Load5, s.load.Averages.Load15,
+		values,
+	)
 	s.mu.Unlock()
 }
 
