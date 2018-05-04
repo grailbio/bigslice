@@ -120,7 +120,7 @@ func genHashImpl() {
 	"reflect"
 )`)
 	g.Printf("\n")
-	g.Printf("func makeHasherGen(typ reflect.Type, col int) Hasher {\n")
+	g.Printf("func makeFrameHasherGen(typ reflect.Type, col int) FrameHasher {\n")
 	g.Printf("	switch typ.Kind() {\n")
 	for _, typ := range types {
 		g.Printf("	case reflect.%s:\n", strings.Title(typ))
@@ -134,7 +134,7 @@ func genHashImpl() {
 	for _, typ := range types {
 		g.Printf("type %sHasher int\n", typ)
 		g.Printf("\n")
-		g.Printf("func (col %sHasher) Hash(f Frame, sum []uint32) {\n", typ)
+		g.Printf("func (col %sHasher) HashFrame(f Frame, sum []uint32) {\n", typ)
 		g.Printf("	vec := f[col].Interface().([]%s)\n", typ)
 
 		if typ == "string" {

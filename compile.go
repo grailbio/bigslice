@@ -42,7 +42,7 @@ type Task struct {
 	NumPartition int
 	// Hasher is used to compute hashes of Frame rows, used to partition
 	// a Frame's output.
-	Hasher Hasher
+	Hasher FrameHasher
 	// Status is a status object to which task status is reported.
 	Status *status.Task
 }

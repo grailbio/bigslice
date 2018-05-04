@@ -14,7 +14,7 @@ type cogroupSlice struct {
 	slices   []Slice
 	out      []reflect.Type
 	numShard int
-	hasher   Hasher
+	hasher   FrameHasher
 	sorter   Sorter
 }
 
@@ -54,7 +54,7 @@ func Cogroup(slices ...Slice) Slice {
 
 	// We need a hasher for partitioning and a sorter for sorting
 	// each partition of each slice.
-	hasher := makeHasher(keyType, 0)
+	hasher := makeFrameHasher(keyType, 0)
 	if hasher == nil {
 		typePanicf(1, "cogroup: key type %s cannot be joined", keyType)
 	}
@@ -92,7 +92,7 @@ func (c *cogroupSlice) ShardType() ShardType { return HashShard }
 
 func (c *cogroupSlice) NumOut() int            { return len(c.out) }
 func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
-func (c *cogroupSlice) Hasher() Hasher         { return c.hasher }
+func (c *cogroupSlice) Hasher() FrameHasher    { return c.hasher }
 func (c *cogroupSlice) Op() string             { return "cogroup" }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true} }
@@ -100,7 +100,7 @@ func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true} }
 type cogroupReader struct {
 	err    error
 	op     *cogroupSlice
-	hasher Hasher
+	hasher FrameHasher
 	sorter Sorter
 
 	readers []Reader

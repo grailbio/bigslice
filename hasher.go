@@ -11,18 +11,30 @@ import (
 	"reflect"
 )
 
-// Hasher implements deterministic hashing of a Frame.
+var typeOfHasher = reflect.TypeOf((*Hasher)(nil)).Elem()
+
+// Hasher is implemented by user types that wish to provide
+// their own hashing implementation.
 type Hasher interface {
-	// Hash hashes the provided frame, depositing the 32-bit hash values
-	// into the provided slice. Hashers should hash only the first
-	// len(sum) rows of frame.
-	Hash(frame Frame, sum []uint32)
+	// Hash32 returns a 32-bit hash of a value.
+	Hash32() uint32
 }
 
-// makeHasher mints a new hasher for the provided key type at the
+// A FrameHasher hashes rows in a Frame.
+type FrameHasher interface {
+	// HashFrame hashes the provided frame, depositing the 32-bit hash values
+	// into the provided slice. Hashers should hash only the first
+	// len(sum) rows of frame.
+	HashFrame(frame Frame, sum []uint32)
+}
+
+// MakeFrameHasher mints a new hasher for the provided key type at the
 // provided column. It returns nil if no such hasher can be created.
-func makeHasher(typ reflect.Type, col int) Hasher {
-	h := makeHasherGen(typ, col)
+func makeFrameHasher(typ reflect.Type, col int) FrameHasher {
+	if typ.Implements(typeOfHasher) {
+		return hashFrameHasher(col)
+	}
+	h := makeFrameHasherGen(typ, col)
 	if h != nil {
 		return h
 	}
@@ -35,14 +47,14 @@ func makeHasher(typ reflect.Type, col int) Hasher {
 
 // A partitioner uses a Hasher to partition a set of frame rows.
 type partitioner struct {
-	hasher Hasher
+	hasher FrameHasher
 	width  int
 	sum    []uint32
 }
 
 // NewPartitioner returns a partitioner that uses the provided
 // Hasher and partition width.
-func newPartitioner(h Hasher, width int) *partitioner {
+func newPartitioner(h FrameHasher, width int) *partitioner {
 	return &partitioner{hasher: h, width: width}
 }
 
@@ -52,9 +64,22 @@ func (p *partitioner) Partition(f Frame, partitions []int) {
 	if len(partitions) > cap(p.sum) {
 		p.sum = make([]uint32, len(partitions))
 	}
-	p.hasher.Hash(f, p.sum[:len(partitions)])
+	p.hasher.HashFrame(f, p.sum[:len(partitions)])
 	for i := range partitions {
 		partitions[i] = int(p.sum[i]) % p.width
+	}
+}
+
+// HashFrameHasher implements a frameHasher for column types
+// that implement Hasher.
+type hashFrameHasher int
+
+func (col hashFrameHasher) HashFrame(f Frame, sum []uint32) {
+	// TODO(marius): consider supporting a vectorized version of
+	// this so we don't have to do virtual calls and interface conversions
+	// for each row.
+	for i := range sum {
+		sum[i] = f[col].Index(i).Interface().(Hasher).Hash32()
 	}
 }
 
@@ -62,7 +87,7 @@ func (p *partitioner) Partition(f Frame, partitions []int) {
 // encoding to provide a deterministic hash.
 type binaryHasher int
 
-func (col binaryHasher) Hash(f Frame, sum []uint32) {
+func (col binaryHasher) HashFrame(f Frame, sum []uint32) {
 	var (
 		b bytes.Buffer
 		h = fnv.New32a()
