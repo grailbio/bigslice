@@ -59,7 +59,7 @@ func genSortImpl() {
 )`)
 	g.Printf("\n")
 
-	g.Printf("func makeSorter(typ reflect.Type, col int) Sorter {\n")
+	g.Printf("func makeSorterGen(typ reflect.Type, col int) Sorter {\n")
 	g.Printf("	switch typ.Kind() {\n")
 	for _, typ := range types {
 		g.Printf("	case reflect.%s:\n", strings.Title(typ))

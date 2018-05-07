@@ -95,6 +95,31 @@ func CopyFrame(dst, src Frame) int {
 	return n
 }
 
+// Columns constructs a frame from a list of slices. Each slice is a
+// column of the frame. Columns panics if any argument is not a slice
+// or if the column lengths do not match.
+func Columns(cols ...interface{}) Frame {
+	f := make(Frame, len(cols))
+	n := -1
+	for i, col := range cols {
+		val := reflect.ValueOf(col)
+		if val.Kind() != reflect.Slice {
+			typePanicf(1, "expected slice, got %v", val.Type())
+		}
+		if n < 0 {
+			n = val.Len()
+		} else if val.Len() != n {
+			typePanicf(1,
+				"inconsistent column lengths: "+
+					"column %d has length %d, previous columns have length %d",
+				i, val.Len(), n,
+			)
+		}
+		f[i] = val
+	}
+	return f
+}
+
 // Slice returns a frame with rows i to j, analagous to Go's native
 // slice operation.
 func (f Frame) Slice(i, j int) Frame {

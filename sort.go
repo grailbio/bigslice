@@ -7,6 +7,7 @@ package bigslice
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
@@ -14,9 +15,65 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"sync"
 )
 
 //go:generate go run gentype.go
+
+var (
+	lessMu        sync.RWMutex
+	makeLessFuncs = map[reflect.Type]reflect.Value{}
+)
+
+// A LessFunc is used to compare the values of two indices of column
+// slices. It is used to implement user-defined sorts.
+type LessFunc func(i, j int) bool
+
+var typeOfLessFunc = reflect.TypeOf((LessFunc)(nil))
+
+// RegisterLessFunc registers a function of the form
+//
+//	func(vals []someType) LessFunc
+//
+// that will then be used to sort and compare values of the type
+// "someType". This is required to make user-defined types work with
+// Cogroup and related operations.
+//
+// RegisterLessFunc panics if the value does not comply to the (schematic)
+// function signature
+//
+//	<t>func([]t) LessFunc
+//
+// or if a function of that type has already been registered.
+func RegisterLessFunc(lessFunc interface{}) {
+	typ := reflect.TypeOf(lessFunc)
+	bad := func() {
+		typePanicf(2, "expected func([]t) bigslice.LessFunc, got %v", typ)
+	}
+	if got, want := typ.Kind(), reflect.Func; got != want {
+		bad()
+	}
+	if got, want := typ.NumIn(), 1; got != want {
+		bad()
+	}
+	arg := typ.In(0)
+	if got, want := arg.Kind(), reflect.Slice; got != want {
+		bad()
+	}
+	if got, want := typ.NumOut(), 1; got != want {
+		bad()
+	}
+	ret := typ.Out(0)
+	if got, want := ret, typeOfLessFunc; got != want {
+		bad()
+	}
+	lessMu.Lock()
+	defer lessMu.Unlock()
+	if _, ok := makeLessFuncs[arg.Elem()]; ok {
+		panic(fmt.Sprintf("sorter for type %s already registered", arg.Elem()))
+	}
+	makeLessFuncs[arg.Elem()] = reflect.ValueOf(lessFunc)
+}
 
 // A Sorter implements a sort for a Frame schema.
 type Sorter interface {
@@ -27,6 +84,41 @@ type Sorter interface {
 	Less(f Frame, i int, g Frame, j int) bool
 	// IsSorted tells whether the provided frame is sorted.
 	IsSorted(Frame) bool
+}
+
+type lessSorter struct {
+	col      int
+	lessFunc reflect.Value
+}
+
+func (l *lessSorter) Sort(f Frame) {
+	less := l.lessFunc.Call([]reflect.Value{f[l.col]})[0].Interface().(LessFunc)
+	sortFrame(f, less)
+}
+
+func (l *lessSorter) Less(f Frame, i int, g Frame, j int) bool {
+	// TODO(marius): this is not ideal; rethink the Less interface.
+	keys := reflect.MakeSlice(reflect.SliceOf(f.Out(l.col)), 2, 2)
+	keys.Index(0).Set(f[l.col].Index(i))
+	keys.Index(1).Set(g[l.col].Index(j))
+	less := l.lessFunc.Call([]reflect.Value{keys})[0].Interface().(LessFunc)
+	return less(0, 1)
+}
+
+func (l *lessSorter) IsSorted(f Frame) bool {
+	col := f[l.col]
+	less := l.lessFunc.Call([]reflect.Value{col})[0].Interface().(LessFunc)
+	return sort.SliceIsSorted(col.Interface(), less)
+}
+
+func makeSorter(typ reflect.Type, col int) Sorter {
+	lessMu.RLock()
+	fn, ok := makeLessFuncs[typ]
+	lessMu.RUnlock()
+	if ok {
+		return &lessSorter{col, fn}
+	}
+	return makeSorterGen(typ, col)
 }
 
 type frameSorter struct {

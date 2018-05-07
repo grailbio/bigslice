@@ -160,3 +160,28 @@ func TestSortReader(t *testing.T) {
 		t.Error("output not sorted")
 	}
 }
+
+type customType struct{ val int }
+
+func TestSorterFunc(t *testing.T) {
+	RegisterLessFunc(func(vals []customType) LessFunc {
+		return func(i, j int) bool {
+			return vals[i].val < vals[j].val
+		}
+	})
+	f := Columns(
+		[]customType{{5}, {1}, {4}},
+		[]string{"five", "one", "four"},
+	)
+	sorter := makeSorter(f.Out(0), 0)
+	sorter.Sort(f)
+	if !sorter.IsSorted(f) {
+		t.Error("frame not sorted")
+	}
+	if got, want := f[0].Interface().([]customType), ([]customType{{1}, {4}, {5}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := f[1].Interface().([]string), ([]string{"one", "four", "five"}); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

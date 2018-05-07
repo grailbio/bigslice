@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-func makeSorter(typ reflect.Type, col int) Sorter {
+func makeSorterGen(typ reflect.Type, col int) Sorter {
 	switch typ.Kind() {
 	case reflect.String:
 		return stringSorter(col)
