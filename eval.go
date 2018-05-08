@@ -8,10 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 )
 

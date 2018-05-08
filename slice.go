@@ -8,10 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"reflect"
 	"runtime"
 	"strings"
+
+	"github.com/grailbio/base/log"
 )
 
 // testCalldepth is used by tests to verify the correctness of

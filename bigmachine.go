@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"runtime/debug"
 	"sync"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/stats"

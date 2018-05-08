@@ -34,13 +34,13 @@ package slicecmd
 
 import (
 	"flag"
-	"log"
 	"net/http"
 	"os"
 	"sync"
 	// Pprof is included to be exposed on the local diagnostic web server.
 	_ "net/http/pprof"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
@@ -90,6 +90,7 @@ func Main(main func(sess *bigslice.Session, args []string) error) {
 		// executors are dynamic.
 		p = flag.Int("p", 0, "target parallelism")
 	)
+	log.AddFlags()
 	flag.Parse()
 	var options []bigslice.Option
 	switch *system {
