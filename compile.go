@@ -28,6 +28,9 @@ type TaskDep struct {
 // from slices.
 type Task struct {
 	Type
+	// Invocation is the task's invocation, i.e. the Func invocation
+	// from which this task was compiled.
+	Invocation Invocation
 	// Name is the name of the task. Tasks are named universally: they
 	// should be unique among all possible tasks in a bigslice session.
 	Name string
@@ -127,19 +130,24 @@ func pipeline(slice Slice) (slices []Slice) {
 }
 
 // Compile compiles the provided slice into a set of task graphs,
-// each representing the computation for one shard of the slice.
-// Compile coalesces slice operations that can be pipelined into
-// single tasks, creating wide dependencies only at shuffle
-// boundaries. The provided namer must mint names that are unique to
-// the session. The order in which the namer is invoked is guaranteed
-// to be deterministic.
+// each representing the computation for one shard of the slice. The
+// slice is produced by the provided invocation. Compile coalesces
+// slice operations that can be pipelined into single tasks, creating
+// wide dependencies only at shuffle boundaries. The provided namer
+// must mint names that are unique to the session. The order in which
+// the namer is invoked is guaranteed to be deterministic.
 //
 // TODO(marius): we don't currently reuse tasks across compilations,
 // even though this could sometimes safely be done (when the number
 // of partitions and the kind of partitioner matches at shuffle
 // boundaries). We should at least support this use case to avoid
 // redundant computations.
-func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
+//
+// TODO(marius): an alternative model for propagating invocations is
+// to provide each actual invocation with a "root" slice from where
+// all other slices must be derived. This simplifies the
+// implementation but may make the API a little confusing.
+func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks := make([]*Task, slice.NumShard())
@@ -148,11 +156,12 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 	for i := len(slices) - 1; i >= 0; i-- {
 		ops = append(ops, slices[i].Op())
 	}
-	name := namer.Get(strings.Join(ops, "_"))
+	name := namer.New(strings.Join(ops, "_"))
 	for i := range tasks {
 		tasks[i] = &Task{
 			Type:         slices[0],
 			Name:         fmt.Sprintf("%s@%d:%d", name, len(tasks), i),
+			Invocation:   inv,
 			NumPartition: 1,
 		}
 	}
@@ -182,7 +191,7 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, err := compile(namer, dep)
+		deptasks, err := compile(namer, inv, dep)
 		if err != nil {
 			return nil, err
 		}
@@ -203,23 +212,13 @@ func compile(namer *taskNamer, slice Slice) ([]*Task, error) {
 	return tasks, nil
 }
 
-type taskNamer struct {
-	prefix string
-	names  map[string]int
-}
+type taskNamer map[string]int
 
-func newTaskNamer(prefix string) *taskNamer {
-	return &taskNamer{
-		prefix: prefix,
-		names:  make(map[string]int),
-	}
-}
-
-func (n *taskNamer) Get(name string) string {
-	c := n.names[name]
-	n.names[name]++
+func (n taskNamer) New(name string) string {
+	c := n[name]
+	n[name]++
 	if c == 0 {
-		return n.prefix + name
+		return name
 	}
-	return fmt.Sprintf("%s%s%d", n.prefix, name, c)
+	return fmt.Sprintf("%s%d", name, c)
 }

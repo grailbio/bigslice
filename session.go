@@ -6,7 +6,6 @@ package bigslice
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"reflect"
 
@@ -120,14 +119,13 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 	// if there's a collision, or maybe add a counter to name colliding
 	// applications.
 	inv := funcv.Invocation(args...)
-	key := inv.Sum64()
+	key := inv.Index
 	tasks, ok := s.tasks[key]
 	if !ok {
-		slice := funcv.Apply(args...)
+		slice := inv.Invoke()
 		// All task names are prefixed with the invocation key.
-		namer := newTaskNamer(fmt.Sprintf("%d/", key))
 		var err error
-		tasks, err = compile(namer, slice)
+		tasks, err = compile(make(taskNamer), inv, slice)
 		if err != nil {
 			return err
 		}

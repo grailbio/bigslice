@@ -5,13 +5,9 @@
 package bigslice
 
 import (
-	"encoding/binary"
 	"encoding/gob"
-	"hash/fnv"
 	"reflect"
 	"sync/atomic"
-
-	"github.com/mitchellh/hashstructure"
 )
 
 func init() {
@@ -56,7 +52,7 @@ func (f *FuncValue) Invocation(args ...interface{}) Invocation {
 			typePanicf(1, "wrong type for argument %d: expected %s, got %s", i, f.args[i], t)
 		}
 	}
-	return Invocation{uint64(f.index), args}
+	return newInvocation(uint64(f.index), args...)
 }
 
 // Apply invokes the function f with the provided arguments,
@@ -117,23 +113,26 @@ func Func(fn interface{}) *FuncValue {
 // Invocation represents an invocation of a bigslice func of the same
 // binary. Invocations can be transmitted across process boundaries
 // and thus may be invoked by remote executors.
+//
+// Each invocation carries an invocation index, which is a unique index
+// for invocations within a process namespace. It can thus be used to
+// represent a particular function invocation from a driver process.
+//
+// Invocations must be created by newInvocation.
 type Invocation struct {
-	Func uint64
-	Args []interface{}
+	Index uint64
+	Func  uint64
+	Args  []interface{}
 }
 
-// Sum64 returns a hash for this invocation.
-//
-// TODO(marius): use a collision resistant hash.
-func (i Invocation) Sum64() uint64 {
-	arghash, err := hashstructure.Hash(i.Args, nil)
-	if err != nil {
-		panic(err)
+var invocationIndex uint64
+
+func newInvocation(fn uint64, args ...interface{}) Invocation {
+	return Invocation{
+		Index: atomic.AddUint64(&invocationIndex, 1),
+		Func:  fn,
+		Args:  args,
 	}
-	h := fnv.New64()
-	binary.Write(h, binary.LittleEndian, int64(i.Func))
-	binary.Write(h, binary.LittleEndian, arghash)
-	return h.Sum64()
 }
 
 // Invoke performs the Func invocation represented by this Invocation

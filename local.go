@@ -35,11 +35,7 @@ func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	return
 }
 
-func (l *localExecutor) Run(ctx context.Context, inv Invocation, task *Task) error {
-	// Note that we don't need to manage invocations here because we
-	// have direct access to the tasks, which are already compiled for
-	// us before the evaluator calls us. All previous task outputs are available
-	// locally.
+func (l *localExecutor) Run(ctx context.Context, task *Task) error {
 	in := make([]Reader, len(task.Deps))
 	for i, dep := range task.Deps {
 		reader := new(multiReader)

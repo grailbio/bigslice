@@ -30,7 +30,7 @@ type Executor interface {
 	// the task fails. Run is called only when a task is ready to be run
 	// (i.e., its dependents are all complete). When Run succeeds,
 	// the outputs of the task are available in the executor.
-	Run(context.Context, Invocation, *Task) error
+	Run(context.Context, *Task) error
 
 	// Reader returns a locally accessible reader for the requested task.
 	Reader(context.Context, *Task, int) Reader
@@ -95,7 +95,7 @@ func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots [
 			state[task] = taskRunning
 			task.Status = group.Start(task.Name)
 			go func(task *Task) {
-				if err := executor.Run(ctx, inv, task); err != nil {
+				if err := executor.Run(ctx, task); err != nil {
 					task.Status.Printf("error %v", err)
 					errc <- err
 				} else {

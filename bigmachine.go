@@ -43,6 +43,10 @@ type sliceMachine struct {
 	Stats  *stats.Map
 	Status *status.Task
 
+	// Compiles ensures that each invocation is compiled exactly once on
+	// the machine.
+	compiles taskOnce
+
 	mu   sync.Mutex
 	disk bigmachine.DiskInfo
 	mem  bigmachine.MemInfo
@@ -184,7 +188,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 //
 // TODO(marius): provide a standardized means of propagating
 // status updates and logs.
-func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task) (err error) {
+func (b *bigmachineExecutor) Run(ctx context.Context, task *Task) (err error) {
 	task.Status.Print("waiting for a machine")
 	if err := b.initMachines(); err != nil {
 		return err
@@ -203,11 +207,30 @@ func (b *bigmachineExecutor) Run(ctx context.Context, inv Invocation, task *Task
 		m.UpdateStatus()
 	}()
 
+compile:
+	for {
+		err := m.compiles.Do(task.Invocation.Index, func() error {
+			return m.Call(ctx, "Worker.Compile", task.Invocation, nil)
+		})
+		switch {
+		case err == nil:
+			break compile
+		case ctx.Err() == nil && (err == context.Canceled || err == context.DeadlineExceeded):
+			// In this case, we've caught a context error from a prior
+			// invocation. We're going to try to run it again. Note that this
+			// is racy: the behavior remains correct but may imply additional
+			// data transfer. C'est la vie.
+			m.compiles.Forget(task.Invocation.Index)
+		default:
+			return err
+		}
+	}
+
 	// Populate the run request. Include the locations of all dependent
 	// outputs so that the receiving worker can read from them.
 	req := taskRunRequest{
 		Task:       task.Name,
-		Invocation: inv,
+		Invocation: task.Invocation.Index,
 		Locations:  make(map[string]string),
 	}
 	for _, dep := range task.Deps {
@@ -399,18 +422,17 @@ type worker struct {
 	// one exported field.
 	Exported struct{}
 
-	b *bigmachine.B
+	b     *bigmachine.B
+	store Store
 
-	mu          sync.Mutex
-	store       Store
-	invocations map[uint64]bool
-	tasks       map[string]*Task
-	stats       *stats.Map
+	mu       sync.Mutex
+	compiles taskOnce
+	tasks    map[uint64]map[string]*Task
+	stats    *stats.Map
 }
 
 func (w *worker) Init(b *bigmachine.B) error {
-	w.tasks = make(map[string]*Task)
-	w.invocations = make(map[uint64]bool)
+	w.tasks = make(map[uint64]map[string]*Task)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
 	if err != nil {
@@ -421,13 +443,38 @@ func (w *worker) Init(b *bigmachine.B) error {
 	return nil
 }
 
+// Compile compiles an invocation on the worker and stores the
+// resulting tasks. Compile is idempotent: it will compile each
+// invocation at most once.
+func (w *worker) Compile(ctx context.Context, inv Invocation, _ *struct{}) error {
+	return w.compiles.Do(inv.Index, func() error {
+		slice := inv.Invoke()
+		tasks, err := compile(make(taskNamer), inv, slice)
+		if err != nil {
+			return err
+		}
+		all := make(map[*Task]bool)
+		for _, task := range tasks {
+			task.all(all)
+		}
+		named := make(map[string]*Task)
+		for task := range all {
+			named[task.Name] = task
+		}
+		w.mu.Lock()
+		w.tasks[inv.Index] = named
+		w.mu.Unlock()
+		return nil
+	})
+}
+
 // TaskRunRequest contains all data required to run an individual task.
 type taskRunRequest struct {
-	// Task is the name of the task to be run.
-	Task string
+	// Invocation is the invocation from which the task was compiled.
+	Invocation uint64
 
-	// Invocation is the invocation from which the task was produced.
-	Invocation Invocation
+	// Task is the name of the task compiled from Invocation.
+	Task string
 
 	// Locations contains the locations of the output of each dependency.
 	Locations map[string]string
@@ -450,30 +497,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 	}()
 
-	// Perform an invocation if needed.
-	w.mu.Lock()
-	if key := req.Invocation.Sum64(); !w.invocations[key] {
-		slice := req.Invocation.Invoke()
-		namer := newTaskNamer(fmt.Sprintf("%d/", key))
-		tasks, err := compile(namer, slice)
-		if err != nil {
-			w.mu.Unlock()
-			return err
-		}
-		all := make(map[*Task]bool)
-		for _, task := range tasks {
-			task.all(all)
-		}
-		for task := range all {
-			w.tasks[task.Name] = task
-		}
-		w.invocations[key] = true
+	named := w.tasks[req.Invocation]
+	if named == nil {
+		return fmt.Errorf("invocation %x not compiled", req.Invocation)
 	}
-	task := w.tasks[req.Task]
-	w.mu.Unlock()
-
+	task := named[req.Task]
 	if task == nil {
-		return fmt.Errorf("task %s is not registered", req.Task)
+		return fmt.Errorf("task %s not found", req.Task)
 	}
 	// Gather inputs from the bigmachine cluster, dialing machines
 	// as necessary.

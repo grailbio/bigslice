@@ -67,7 +67,13 @@ func run(ctx context.Context, t *testing.T, slice Slice) map[string]*Scanner {
 			t.Errorf("executor %s error %v", name, err)
 			continue
 		}
-		tasks := sess.tasks[fn.Invocation().Sum64()]
+		// TODO(marius): This is a bit of a hack, as we're relying on the
+		// fact that we're not doing concurrent invocations. Fix this by
+		// first-class support for session readers.
+		tasks := sess.tasks[fn.Invocation().Index-1]
+		if tasks == nil {
+			t.Fatal("tasks == nil")
+		}
 		scan := &Scanner{
 			out:     ColumnTypes(slice),
 			readers: make([]Reader, len(tasks)),
