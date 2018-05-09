@@ -13,7 +13,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/base/errors"
-	"github.com/grailbio/internal/testutil"
+	"github.com/grailbio/testutil"
 )
 
 func testStore(t *testing.T, store Store) {
