@@ -201,7 +201,7 @@ func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ Type, r
 // SpillBatchSize determines the amount of batching used in each
 // spill file. A single read of a spill file produces this many rows.
 // SpillBatchSize then trades off memory footprint for encoding size.
-const spillBatchSize = 1024
+const spillBatchSize = defaultChunksize
 
 // A spiller manages a set of spill files.
 type spiller string

@@ -132,16 +132,12 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 		s.tasks[key] = tasks
 		s.types[key] = ColumnTypes(slice)
 	}
-	p := s.p
-	if p == 0 {
-		p = s.executor.Maxprocs()
-	}
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
 		group = s.status.Group("bigslice")
 	}
-	return Eval(ctx, s.executor, p, inv, tasks, group)
+	return Eval(ctx, s.executor, inv, tasks, group)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

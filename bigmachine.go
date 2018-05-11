@@ -39,9 +39,16 @@ func init() {
 // SliceMachine maintains bigslice-specific metadata to bigmachine machines.
 type sliceMachine struct {
 	*bigmachine.Machine
-	Load   int
+
+	// Curprocs is the current number of procs on the machine that have
+	// tasks assigned.
+	Curprocs int
+
 	Stats  *stats.Map
 	Status *status.Task
+
+	// index is the machine's index in the executor's priority queue.
+	index int
 
 	// Compiles ensures that each invocation is compiled exactly once on
 	// the machine.
@@ -124,17 +131,28 @@ func (s *sliceMachine) UpdateStatus() {
 	s.mu.Unlock()
 }
 
-type machineHeap []*sliceMachine
+// Load returns the machine's load, i.e., the proportion of its
+// capacity that is currently in use.
+func (s *sliceMachine) Load() float64 {
+	return float64(s.Curprocs) / float64(s.Maxprocs)
+}
 
-func (h machineHeap) Len() int           { return len(h) }
-func (h machineHeap) Less(i, j int) bool { return h[i].Load < h[j].Load }
-func (h machineHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+// MachineQ is a priority queue for sliceMachines, prioritized
+// by the machine's load, as defined by (*sliceMachine).Load()
+type machineQ []*sliceMachine
 
-func (h *machineHeap) Push(x interface{}) {
+func (h machineQ) Len() int           { return len(h) }
+func (h machineQ) Less(i, j int) bool { return h[i].Load() < h[j].Load() }
+func (h machineQ) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index, h[j].index = i, j
+}
+
+func (h *machineQ) Push(x interface{}) {
 	*h = append(*h, x.(*sliceMachine))
 }
 
-func (h *machineHeap) Pop() interface{} {
+func (h *machineQ) Pop() interface{} {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -151,12 +169,17 @@ type bigmachineExecutor struct {
 	b    *bigmachine.B
 
 	machinesOnce sync.Once
-	machines     machineHeap
+	machines     machineQ
 	machinesErr  error
 
 	status *status.Group
 
-	mu        sync.Mutex
+	mu sync.Mutex
+
+	// Waiters is the set of tasks waiting for capacity. The waitlist is
+	// FIFO: at most one gets notified for each task completion.
+	waiters []*Task
+
 	locations map[*Task]*bigmachine.Machine
 	stats     map[string]stats.Values
 }
@@ -182,21 +205,55 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	return b.b.Shutdown
 }
 
-// Run runs the task (of the provided invocation) on the least-loaded
-// bigmachine. Bigmachine workers arrange for output to be streamed
-// directly from the machines on which they were deposited.
-//
-// TODO(marius): provide a standardized means of propagating
-// status updates and logs.
-func (b *bigmachineExecutor) Run(ctx context.Context, task *Task) (err error) {
+func (b *bigmachineExecutor) Runnable(task *Task) {
+	task.Lock()
+	switch task.state {
+	case TaskWaiting, TaskRunning:
+		task.Unlock()
+		return
+	}
+	task.state = TaskWaiting
+	task.Broadcast()
+	task.Unlock()
+	go b.run(task)
+}
+
+func (b *bigmachineExecutor) run(task *Task) {
+	ctx := context.Background()
 	task.Status.Print("waiting for a machine")
 	if err := b.initMachines(); err != nil {
-		return err
+		task.Errorf("machine initialization failed: %v", err)
+		return
 	}
-	b.mu.Lock()
-	m := heap.Pop(&b.machines).(*sliceMachine)
-	m.Load++
-	heap.Push(&b.machines, m)
+
+	var m *sliceMachine
+	for {
+		b.mu.Lock()
+		if len(b.machines) == 0 {
+			b.mu.Unlock()
+			task.Errorf("no machines available")
+			return
+		}
+		m = b.machines[0]
+		// Since the priority queue is ordered by load (curprocs/maxprocs),
+		// if m.Curprocs >= m.Maxprocs, then this is true for all machines,
+		// and there is not currently excess capacity in the cluster.
+		if m.Curprocs < m.Maxprocs {
+			break
+		}
+		b.waiters = append(b.waiters, task)
+		task.Lock()
+		b.mu.Unlock()
+		if err := task.Wait(ctx); err != nil {
+			task.Unlock()
+			task.Error(err)
+			return
+		}
+		task.Unlock()
+	}
+
+	m.Curprocs++
+	heap.Fix(&b.machines, m.index)
 	b.mu.Unlock()
 
 	numTasks := m.Stats.Int("tasks")
@@ -205,8 +262,23 @@ func (b *bigmachineExecutor) Run(ctx context.Context, task *Task) (err error) {
 	defer func() {
 		numTasks.Add(-1)
 		m.UpdateStatus()
+		b.mu.Lock()
+		var waiter *Task
+		if len(b.waiters) > 0 {
+			waiter, b.waiters = b.waiters[0], b.waiters[1:]
+		}
+		m.Curprocs--
+		heap.Fix(&b.machines, m.index)
+		b.mu.Unlock()
+		if waiter != nil {
+			waiter.Lock()
+			waiter.Broadcast()
+			waiter.Unlock()
+		}
 	}()
 
+	// Make sure that the invocation has been compiled on the selected
+	// machine.
 compile:
 	for {
 		err := m.compiles.Do(task.Invocation.Index, func() error {
@@ -222,7 +294,8 @@ compile:
 			// data transfer. C'est la vie.
 			m.compiles.Forget(task.Invocation.Index)
 		default:
-			return err
+			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
+			return
 		}
 	}
 
@@ -237,7 +310,10 @@ compile:
 		for _, deptask := range dep.Tasks {
 			m := b.location(deptask)
 			if m == nil {
-				return fmt.Errorf("task %s has no location", deptask.Name)
+				// TODO(marius): make this a separate state, or a separate
+				// error type?
+				task.Errorf("task %s has no location", deptask.Name)
+				return
 			}
 			req.Locations[deptask.Name] = m.Addr
 		}
@@ -263,27 +339,23 @@ compile:
 			}
 			task.Status.Printf("%s: %s", m.Addr, vals)
 			b.mu.Lock()
-			b.stats[task.Name] = vals
+			name := fmt.Sprintf("%s(%x)", task.Name, task.Invocation.Index)
+			b.stats[name] = vals
 			b.mu.Unlock()
 			b.updateStatus()
 		}
 	}()
 
+	task.State(TaskRunning)
 	var reply taskRunReply
-	err = m.Call(ctx, "Worker.Run", req, &reply)
-	b.mu.Lock()
-	m.Load--
-	for i := range b.machines {
-		if b.machines[i] == m {
-			heap.Fix(&b.machines, i)
-			break
-		}
+	// TODO(marius): distinguish between errors that are caused by
+	// missing dependencies, lost tasks, etc.
+	if err := m.Call(ctx, "Worker.Run", req, &reply); err != nil {
+		task.Error(err)
+		return
 	}
-	b.mu.Unlock()
-	if err == nil {
-		b.setLocation(task, m.Machine)
-	}
-	return err
+	b.setLocation(task, m.Machine)
+	task.State(TaskOk)
 }
 
 func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) Reader {
@@ -446,7 +518,12 @@ func (w *worker) Init(b *bigmachine.B) error {
 // Compile compiles an invocation on the worker and stores the
 // resulting tasks. Compile is idempotent: it will compile each
 // invocation at most once.
-func (w *worker) Compile(ctx context.Context, inv Invocation, _ *struct{}) error {
+func (w *worker) Compile(ctx context.Context, inv Invocation, _ *struct{}) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("invocation panic! %v", e)
+		}
+	}()
 	return w.compiles.Do(inv.Index, func() error {
 		slice := inv.Invoke()
 		tasks, err := compile(make(taskNamer), inv, slice)

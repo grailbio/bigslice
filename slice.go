@@ -22,7 +22,7 @@ var testCalldepth = 0
 var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
 
 // DefaultChunkSize is the default size used for IO vectors throughout bigslice.
-const defaultChunksize = 1024
+const defaultChunksize = 1024 * 10
 
 // EOF is the error returned by (Reader).Read when no more data is
 // available. EOF is intended as a sentinel error: it signals a

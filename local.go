@@ -11,19 +11,25 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+
+	"github.com/grailbio/base/limiter"
 )
 
 // LocalExecutor is an executor that runs tasks in-process in
 // separate goroutines. All output is buffered in memory.
 type localExecutor struct {
 	mu      sync.Mutex
+	state   map[*Task]TaskState
 	buffers map[*Task]taskBuffer
+	limiter *limiter.Limiter
 	sess    *Session
 }
 
 func newLocalExecutor() *localExecutor {
 	return &localExecutor{
+		state:   make(map[*Task]TaskState),
 		buffers: make(map[*Task]taskBuffer),
+		limiter: limiter.New(),
 	}
 }
 
@@ -32,30 +38,50 @@ func (localExecutor) Maxprocs() int { return runtime.GOMAXPROCS(0) }
 
 func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	l.sess = sess
+	l.limiter.Release(sess.p)
 	return
 }
 
-func (l *localExecutor) Run(ctx context.Context, task *Task) error {
-	in := make([]Reader, len(task.Deps))
-	for i, dep := range task.Deps {
-		reader := new(multiReader)
-		reader.q = make([]Reader, len(dep.Tasks))
-		for j, deptask := range dep.Tasks {
-			reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
-		}
-		in[i] = reader
+func (l *localExecutor) Runnable(task *Task) {
+	task.Lock()
+	defer task.Unlock()
+	switch task.state {
+	case TaskWaiting, TaskRunning:
+		return
 	}
+	task.state = TaskWaiting
+	task.Broadcast()
 
-	// Start execution, then place output in a task buffer.
-	out := task.Do(in)
-	buf, err := bufferOutput(ctx, task, out)
-	if err != nil {
-		return err
-	}
-	l.mu.Lock()
-	l.buffers[task] = buf
-	l.mu.Unlock()
-	return nil
+	go func() {
+		ctx := context.Background()
+		l.limiter.Acquire(ctx, 1)
+		defer l.limiter.Release(1)
+		in := make([]Reader, len(task.Deps))
+		for i, dep := range task.Deps {
+			reader := new(multiReader)
+			reader.q = make([]Reader, len(dep.Tasks))
+			for j, deptask := range dep.Tasks {
+				reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
+			}
+			in[i] = reader
+		}
+		task.State(TaskRunning)
+		// Start execution, then place output in a task buffer.
+		out := task.Do(in)
+		buf, err := bufferOutput(ctx, task, out)
+		task.Lock()
+		if err == nil {
+			l.mu.Lock()
+			l.buffers[task] = buf
+			l.mu.Unlock()
+			task.state = TaskOk
+		} else {
+			task.state = TaskErr
+			task.err = err
+		}
+		task.Broadcast()
+		task.Unlock()
+	}()
 }
 
 func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) Reader {

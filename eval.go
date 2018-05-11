@@ -6,7 +6,6 @@ package bigslice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,11 +25,11 @@ type Executor interface {
 	// Start as an entry point for worker processes.
 	Start(*Session) (shutdown func())
 
-	// Run runs the given task on the executor. It returns an error if
-	// the task fails. Run is called only when a task is ready to be run
-	// (i.e., its dependents are all complete). When Run succeeds,
-	// the outputs of the task are available in the executor.
-	Run(context.Context, *Task) error
+	// Runnable marks the task as runnable. After a call to Runnable,
+	// the Task should have state >= TaskWaiting. The executor owns
+	// the task after calling Runnable, and only the executor should
+	// modify the task's state.
+	Runnable(*Task)
 
 	// Reader returns a locally accessible reader for the requested task.
 	Reader(context.Context, *Task, int) Reader
@@ -47,20 +46,15 @@ type Executor interface {
 
 // Eval simultaneously evaluates a set of task graphs from the
 // provided set of roots. Eval uses the provided executor to dispatch
-// tasks when their dependencies have been satisfied. Eval never
-// schedules more than the number of procs available from the
-// executor. Eval returns on evaluation error or else when all roots
-// are fully evaluated.
+// tasks when their dependencies have been satisfied. Eval returns on
+// evaluation error or else when all roots are fully evaluated.
 //
 // TODO(marius): consider including the invocation in the task definitions
 // themselves. This way, a task's name is entirely self contained and can
 // be interpreted without an accompanying invocation.
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
-func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots []*Task, group *status.Group) error {
-	if p == 0 {
-		return errors.New("cannot evaluate with 0 parallelism")
-	}
+func Eval(ctx context.Context, executor Executor, inv Invocation, roots []*Task, group *status.Group) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	tasks := make(map[*Task]bool)
@@ -68,58 +62,77 @@ func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots [
 		task.all(tasks)
 	}
 	var (
-		state   = make(map[*Task]taskState)
 		donec   = make(chan *Task)
 		errc    = make(chan error)
 		running int
 	)
 	for {
-		done := true
+		todo := make(map[*Task]bool)
 		for _, task := range roots {
-			todo(state, task)
-			done = done && state[task] == taskDone
+			task.Lock()
+			err := addReady(todo, task)
+			task.Unlock()
+			if err != nil {
+				return err
+			}
 		}
-		if done {
+		if len(todo) == 0 && running == 0 {
 			break
 		}
-		// Kick off ready tasks as long as we have space.
-		// Also count tasks by state.
-		var stateCounts [maxState]int
-		for task, taskState := range state {
-			if running >= p || taskState != taskReady {
-				stateCounts[taskState]++
-				continue
-			}
-			stateCounts[taskRunning]++
+
+		// Mark each ready task as runnable and keep track of them.
+		// The executor manages parallelism.
+		for task := range todo {
+			log.Debug.Printf("runnable: %s", task)
+			// TODO(marius): this will result in multiple task entries when there is
+			// concurrent evaluation, perhaps status should be managed by Task.
+			task.Status = group.Startf("%s(%x)", task.Name, inv.Index)
+			executor.Runnable(task)
 			running++
-			state[task] = taskRunning
-			task.Status = group.Start(task.Name)
 			go func(task *Task) {
-				if err := executor.Run(ctx, task); err != nil {
+				task.Lock()
+				for task.state <= TaskRunning {
+					if err := task.Wait(ctx); err != nil {
+						task.Unlock()
+						errc <- err
+						return
+					}
+				}
+				var err error
+				switch task.state {
+				default:
+					err = fmt.Errorf("unexpected task state %s", task.state)
+				case TaskOk:
+				case TaskErr:
+					err = task.err
+				case TaskLost:
+					err = ErrTaskLost
+				}
+				task.Unlock()
+				if err != nil {
 					task.Status.Printf("error %v", err)
 					errc <- err
-				} else {
-					donec <- task
+					return
 				}
-				task.Status.Done()
+				donec <- task
 			}(task)
 		}
-		// DEBUG: print all task states.
-		if false {
-			log.Print("task states:")
-			for task, taskState := range state {
-				log.Printf("task %s state %s", task.Name, taskState)
-			}
+
+		var stateCounts [maxState]int
+		for task := range tasks {
+			task.Lock()
+			stateCounts[task.state]++
+			task.Unlock()
 		}
 		states := make([]string, maxState)
-		for state := range states {
-			states[state] = fmt.Sprintf("%s=%d", taskState(state), stateCounts[state])
+		for state, count := range stateCounts {
+			states[state] = fmt.Sprintf("%s=%d", TaskState(state), count)
 		}
 		group.Printf("tasks: %s", strings.Join(states, " "))
 		select {
 		case task := <-donec:
 			running--
-			state[task] = taskDone
+			task.Status.Done()
 		case err := <-errc:
 			return err
 		}
@@ -127,47 +140,43 @@ func Eval(ctx context.Context, executor Executor, p int, inv Invocation, roots [
 	return nil
 }
 
-func todo(state map[*Task]taskState, task *Task) {
-	if state[task] >= taskReady {
-		return
+// AddReady  adds all tasks that are runnable but not yet running to
+// the provided tasks set. AddReady requires that task is locked on
+// entry.
+//
+// AddReady locks sub-tasks while traversing the graph. Since task
+// graphs are DAGs and children are always traversed in the same
+// order, concurrent addReady invocations will not deadlock.
+func addReady(tasks map[*Task]bool, task *Task) error {
+	if tasks[task] {
+		return nil
 	}
+	switch task.state {
+	case TaskInit:
+	case TaskWaiting, TaskRunning, TaskOk:
+		return nil
+	case TaskErr:
+		return task.err
+	case TaskLost:
+		return ErrTaskLost
+	default:
+		panic("unhandled task state")
+	}
+
+	ready := true
 	for _, dep := range task.Deps {
 		for _, deptask := range dep.Tasks {
-			todo(state, deptask)
-		}
-	}
-	for _, dep := range task.Deps {
-		for _, deptask := range dep.Tasks {
-			if state[deptask] < taskDone {
-				return
+			deptask.Lock()
+			err := addReady(tasks, deptask)
+			ready = ready && deptask.state == TaskOk
+			deptask.Unlock()
+			if err != nil {
+				return err
 			}
 		}
 	}
-	state[task] = taskReady
-}
-
-type taskState int
-
-const (
-	taskInit taskState = iota
-	taskReady
-	taskRunning
-	taskDone
-
-	maxState
-)
-
-func (t taskState) String() string {
-	switch t {
-	default:
-		panic("unrecognized task state")
-	case taskInit:
-		return "INIT"
-	case taskReady:
-		return "READY"
-	case taskRunning:
-		return "RUNNING"
-	case taskDone:
-		return "DONE"
+	if ready {
+		tasks[task] = true
 	}
+	return nil
 }

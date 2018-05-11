@@ -17,8 +17,13 @@ import (
 	"text/tabwriter"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
 )
+
+func init() {
+	log.AddFlags() // so they can be used in tests
+}
 
 var (
 	typeOfString  = reflect.TypeOf("")

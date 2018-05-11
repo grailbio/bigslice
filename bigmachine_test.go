@@ -5,45 +5,132 @@
 package bigslice
 
 import (
+	"container/heap"
 	"context"
 	"testing"
-	"time"
 
+	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigmachine/testsystem"
 )
 
-func TestBigmachineExecutor(t *testing.T) {
-	testFunc := Func(func() Slice {
-		time.Sleep(500 * time.Millisecond)
-		return Const(1, []int{})
-	})
+func TestMachineQ(t *testing.T) {
+	q := machineQ{
+		{Machine: &bigmachine.Machine{Maxprocs: 2}, Curprocs: 1},
+		{Machine: &bigmachine.Machine{Maxprocs: 4}, Curprocs: 1},
+		{Machine: &bigmachine.Machine{Maxprocs: 3}, Curprocs: 0},
+	}
+	heap.Init(&q)
+	if got, want := q[0].Maxprocs, 3; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	q[0].Curprocs++
+	heap.Fix(&q, 0)
+	expect := []int{4, 3, 2}
+	for _, procs := range expect {
+		if got, want := q[0].Maxprocs, procs; got != want {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		heap.Pop(&q)
+	}
+}
 
+func compileFunc(f func() Slice) []*Task {
+	fn := Func(f)
+	inv := fn.Invocation()
+	tasks, err := compile(make(taskNamer), inv, inv.Invoke())
+	if err != nil {
+		panic(err)
+	}
+	return tasks
+}
+
+func TestBigmachineExecutor(t *testing.T) {
 	sys := testsystem.New()
 	x := newBigmachineExecutor(sys)
 	defer x.Start(&Session{
 		Context: context.Background(),
-		p:       2,
+		p:       1,
 	})()
 
-	inv := testFunc.Invocation()
-	slice := inv.Invoke()
-	tasks, err := compile(make(taskNamer), inv, slice)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{} // one for the local invocation.
+	tasks := compileFunc(func() Slice {
+		<-gate
+		return Const(1, []int{})
+	})
 	if got, want := len(tasks), 1; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	// Make sure we don't hang if we have a timeout while invoking
-	// and compiling the slice remotely.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	err = x.Run(ctx, tasks[0])
-	cancel()
-	if got, want := err, context.DeadlineExceeded; got != want {
+	task := tasks[0]
+
+	// Runnable is idempotent.
+	x.Runnable(task)
+	x.Runnable(task)
+	ctx := context.Background()
+	task.Lock()
+	if got, want := task.state, TaskWaiting; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	gate <- struct{}{}
+	for task.state <= TaskRunning {
+		if err := task.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := task.state, TaskOk; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	task.Unlock()
+
+	// If we run it again, it should first enter waiting/running state, and
+	// then Ok again. There should not be a new invocation (p=1).
+	x.Runnable(task)
+	task.Lock()
+	for task.state <= TaskRunning {
+		if err := task.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := task.state, TaskOk; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	task.Unlock()
+}
+
+func TestBigmachineExecutorError(t *testing.T) {
+	sys := testsystem.New()
+	x := newBigmachineExecutor(sys)
+	defer x.Start(&Session{
+		Context: context.Background(),
+		p:       1,
+	})()
+
+	var count int
+	tasks := compileFunc(func() Slice {
+		count++
+		if count == 2 {
+			panic("hello")
+		}
+		return Const(1, []int{})
+	})
+	if got, want := len(tasks), 1; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	task := tasks[0]
+	ctx := context.Background()
+	x.Runnable(task)
+	task.Lock()
+	for task.state <= TaskRunning {
+		if err := task.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := task.state, TaskErr; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	// Otherwise, it should be run again to completion.
-	if err := x.Run(context.Background(), tasks[0]); err != nil {
-		t.Fatal(err)
+	if task.err == nil {
+		t.Error("expected error")
 	}
+	task.err = nil
+	task.Unlock()
 }
