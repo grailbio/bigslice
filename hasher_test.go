@@ -7,6 +7,8 @@ package bigslice
 import (
 	"reflect"
 	"testing"
+
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 var typeOfCustomHash = reflect.TypeOf(customHash(0))
@@ -16,7 +18,7 @@ type customHash uint32
 func (c customHash) Hash32() uint32 { return uint32(c) }
 
 func TestHasher(t *testing.T) {
-	f := MakeFrame(typeSlice{typeOfCustomHash}, 10)
+	f := MakeFrame(slicetype.New(typeOfCustomHash), 10)
 	c0 := f[0].Interface().([]customHash)
 	for i := range c0 {
 		c0[i] = customHash(i)

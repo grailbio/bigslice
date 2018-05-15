@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // FuzzFrame creates a fuzzed frame of length n, where columns
@@ -132,7 +133,7 @@ func TestSortReader(t *testing.T) {
 		fz  = fuzz.NewWithSeed(12345)
 		r   = &fuzzReader{fz, N}
 		ctx = context.Background()
-		typ = typeSlice{typeOfString, typeOfInt}
+		typ = slicetype.New(typeOfString, typeOfInt)
 	)
 	sorter := makeSorter(typeOfString, 0)
 	sorted, err := sortReader(ctx, sorter, 1<<19, typ, r)

@@ -12,34 +12,9 @@ import (
 	"reflect"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/grailbio/bigslice/slicetype"
 )
-
-// A Type is the type of a set of columns.
-type Type interface {
-	// NumOut returns the number of columns.
-	NumOut() int
-	// Out returns the data type of the ith column.
-	Out(i int) reflect.Type
-}
-
-type typeSlice []reflect.Type
-
-func (t typeSlice) NumOut() int            { return len(t) }
-func (t typeSlice) Out(i int) reflect.Type { return t[i] }
-
-// Assignable reports whether column type in can be
-// assigned to out.
-func Assignable(in, out Type) bool {
-	if in.NumOut() != out.NumOut() {
-		return false
-	}
-	for i := 0; i < in.NumOut(); i++ {
-		if !in.Out(i).AssignableTo(out.Out(i)) {
-			return false
-		}
-	}
-	return true
-}
 
 // A Frame is a list of column vectors of equal lengths (i.e., it's
 // rectangular). Each column is represented as a reflect.Value that
@@ -51,7 +26,7 @@ type Frame []reflect.Value
 // MakeFrame creates a new Frame of the given type, length, and
 // capacity. If the capacity argument is omitted, a frame with
 // capacity equal to the provided length is returned.
-func MakeFrame(types Type, frameLen int, frameCap ...int) Frame {
+func MakeFrame(types slicetype.Type, frameLen int, frameCap ...int) Frame {
 	var cap int
 	switch len(frameCap) {
 	case 0:
@@ -167,7 +142,7 @@ func (f Frame) Out(i int) reflect.Type {
 // it has enough capacity. Note that in the case that Realloc has to
 // allocate a new frame, it does not copy the contents of the frame
 // f. Realloc can be called on a zero-valued Frame.
-func (f Frame) Realloc(typ Type, len int) Frame {
+func (f Frame) Realloc(typ slicetype.Type, len int) Frame {
 	if len <= f.Cap() {
 		return f.Slice(0, len)
 	}

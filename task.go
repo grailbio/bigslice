@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // ErrTaskLost indicates that a Task was in TaskLost state.
@@ -91,7 +92,7 @@ type TaskDep struct {
 // embed a mutex for coordination and provide a context-aware
 // conditional variable to coordinate runtime state changes.
 type Task struct {
-	Type
+	slicetype.Type
 	// Invocation is the task's invocation, i.e. the Func invocation
 	// from which this task was compiled.
 	Invocation Invocation

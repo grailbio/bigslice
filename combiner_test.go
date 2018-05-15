@@ -7,10 +7,12 @@ package bigslice
 import (
 	"reflect"
 	"testing"
+
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 func TestCombiner(t *testing.T) {
-	typ := typeSlice{typeOfString, typeOfInt}
+	typ := slicetype.New(typeOfString, typeOfInt)
 	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }))
 	if f == nil {
 		t.Fatal("nil frame")

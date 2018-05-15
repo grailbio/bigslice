@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 type testStruct struct{ A, B, C int }
@@ -28,7 +29,7 @@ func TestTaskBuffer(t *testing.T) {
 	}
 	s := &Scanner{
 		readers: []Reader{b.Reader(0)},
-		out:     []reflect.Type{typeOfString},
+		out:     slicetype.New(typeOfString),
 	}
 	var (
 		i   int

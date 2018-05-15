@@ -7,6 +7,8 @@ package bigslice
 import (
 	"context"
 	"reflect"
+
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // A Scanner provides a convenient interface for reading records
@@ -20,7 +22,7 @@ import (
 //
 // Callers should not mix calls to Scan and Scanv.
 type Scanner struct {
-	out      typeSlice
+	out      slicetype.Type
 	readers  []Reader
 	err      error
 	in       Frame
@@ -35,12 +37,12 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	if s.err != nil {
 		return false
 	}
-	if len(out) != len(s.out) {
-		s.err = typeErrorf(1, "wrong arity: expected %d columns, got %d", len(s.out), len(out))
+	if len(out) != s.out.NumOut() {
+		s.err = typeErrorf(1, "wrong arity: expected %d columns, got %d", s.out.NumOut(), len(out))
 		return false
 	}
 	for i := range out {
-		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.out[i]); got != want {
+		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.out.Out(i)); got != want {
 			s.err = typeErrorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
 			return false
 		}

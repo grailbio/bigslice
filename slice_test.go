@@ -80,7 +80,7 @@ func run(ctx context.Context, t *testing.T, slice Slice) map[string]*Scanner {
 			t.Fatal("tasks == nil")
 		}
 		scan := &Scanner{
-			out:     ColumnTypes(slice),
+			out:     slice,
 			readers: make([]Reader, len(tasks)),
 		}
 		for i := range scan.readers {

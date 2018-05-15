@@ -16,6 +16,8 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 //go:generate go run gentype.go
@@ -155,7 +157,7 @@ func sortFrame(f Frame, less func(i, j int) bool) {
 // rows in order to estimate the size of future reads. The estimate
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
-func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ Type, r Reader) (Reader, error) {
+func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ slicetype.Type, r Reader) (Reader, error) {
 	spill, err := newSpiller()
 	if err != nil {
 		return nil, err
@@ -345,7 +347,7 @@ type mergeReader struct {
 // NewMergeReader returns a new mergeReader that is sorted
 // according to the provided Sorter. The readers to be merged
 // must already be sorted according to the same.
-func newMergeReader(ctx context.Context, typ Type, sorter Sorter, readers []Reader) (*mergeReader, error) {
+func newMergeReader(ctx context.Context, typ slicetype.Type, sorter Sorter, readers []Reader) (*mergeReader, error) {
 	h := new(frameBufferHeap)
 	h.Sorter = sorter
 	h.Buffers = make([]*frameBuffer, 0, len(readers))

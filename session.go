@@ -11,6 +11,7 @@ import (
 
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // Session represents a Bigslice compute session. A session shares a
@@ -130,7 +131,7 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 			return err
 		}
 		s.tasks[key] = tasks
-		s.types[key] = ColumnTypes(slice)
+		s.types[key] = slicetype.Columns(slice)
 	}
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group

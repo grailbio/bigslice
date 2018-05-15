@@ -4,7 +4,11 @@
 
 package bigslice
 
-import "reflect"
+import (
+	"reflect"
+
+	"github.com/grailbio/bigslice/slicetype"
+)
 
 // A CombiningFrame maintains a frame wherein values are continually
 // combined by a user-supplied combiner. CombingFrames have two
@@ -33,14 +37,14 @@ type CombiningFrame struct {
 
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
-func canMakeCombiningFrame(typ Type) bool {
+func canMakeCombiningFrame(typ slicetype.Type) bool {
 	return typ.NumOut() == 2 && makeIndexer(typ.Out(0)) != nil
 }
 
 // MakeCombiningFrame creates and returns a new CombiningFrame
 // with the provided type and combiner. MakeCombiningFrame panics
 // if there is type disagreement.
-func makeCombiningFrame(typ Type, combiner reflect.Value) *CombiningFrame {
+func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFrame {
 	if typ.NumOut() != 2 {
 		typePanicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}

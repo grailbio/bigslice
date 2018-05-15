@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // testCalldepth is used by tests to verify the correctness of
@@ -151,7 +152,7 @@ type constReader struct {
 }
 
 func (s *constReader) Read(ctx context.Context, out Frame) (int, error) {
-	if !Assignable(s.op, out) {
+	if !slicetype.Assignable(s.op, out) {
 		return 0, errTypeError
 	}
 	n := CopyFrame(out, s.columns)
@@ -266,7 +267,7 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out Frame) (n int, err
 	if r.err != nil {
 		return 0, r.err
 	}
-	if !Assignable(out, r.op) {
+	if !slicetype.Assignable(out, r.op) {
 		return 0, errTypeError
 	}
 	// Initialize state (on first call)
@@ -352,7 +353,7 @@ func (m *mapReader) Read(ctx context.Context, out Frame) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
-	if !Assignable(out, m.op) {
+	if !slicetype.Assignable(out, m.op) {
 		return 0, errTypeError
 	}
 	n := out.Len()
@@ -430,7 +431,7 @@ func (f *filterReader) Read(ctx context.Context, out Frame) (n int, err error) {
 	if f.err != nil {
 		return 0, f.err
 	}
-	if !Assignable(out, f.op) {
+	if !slicetype.Assignable(out, f.op) {
 		return 0, errTypeError
 	}
 	var (
@@ -532,7 +533,7 @@ type flatmapReader struct {
 }
 
 func (f *flatmapReader) Read(ctx context.Context, out Frame) (int, error) {
-	if !Assignable(out, f.op) {
+	if !slicetype.Assignable(out, f.op) {
 		return 0, errTypeError
 	}
 	args := make([]reflect.Value, f.op.Slice.NumOut())
@@ -697,7 +698,7 @@ func (f *foldReader) Read(ctx context.Context, out Frame) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
-	if !Assignable(out, f.op) {
+	if !slicetype.Assignable(out, f.op) {
 		return 0, errTypeError
 	}
 	if f.accum == nil {
@@ -777,7 +778,7 @@ type scanReader struct {
 }
 
 func (s *scanReader) Read(ctx context.Context, out Frame) (n int, err error) {
-	err = s.slice.scan(s.shard, &Scanner{out: ColumnTypes(s.slice.Slice), readers: []Reader{s.reader}})
+	err = s.slice.scan(s.shard, &Scanner{out: s.slice.Slice, readers: []Reader{s.reader}})
 	if err == nil {
 		err = EOF
 	}
@@ -786,16 +787,6 @@ func (s *scanReader) Read(ctx context.Context, out Frame) (n int, err error) {
 
 func (s scanSlice) Reader(shard int, deps []Reader) Reader {
 	return &scanReader{s, shard, deps[0]}
-}
-
-// ColumnTypes returns all column types of the provided slice
-// in a single slice.
-func ColumnTypes(slice Slice) []reflect.Type {
-	out := make([]reflect.Type, slice.NumOut())
-	for i := range out {
-		out[i] = slice.Out(i)
-	}
-	return out
 }
 
 // String returns a string describing the slice and its type.
