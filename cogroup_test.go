@@ -7,6 +7,14 @@ package bigslice
 import "testing"
 
 func TestCogroup(t *testing.T) {
+	// This test relies on orderings of slices within rows to be
+	// consistent.
+	//
+	// TODO(marius): extend assertEqual to account for this directly.
+	doShuffleReaders = false
+	defer func() {
+		doShuffleReaders = true
+	}()
 	data1 := []interface{}{
 		[]string{"z", "b", "d", "d"},
 		[]int{1, 2, 3, 4},

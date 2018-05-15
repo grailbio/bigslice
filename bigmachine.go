@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"runtime/debug"
 	"sync"
@@ -27,6 +28,10 @@ import (
 )
 
 const statsPollInterval = 5 * time.Second
+
+// DoShuffleReaders determines whether reader tasks should be
+// shuffled in order to avoid potential thundering herd issues.
+var doShuffleReaders = true
 
 func init() {
 	gob.Register(&worker{})
@@ -591,8 +596,19 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	for i, dep := range task.Deps {
 		reader := new(multiReader)
 		reader.q = make([]Reader, len(dep.Tasks))
+		// We shuffle the tasks here so that we don't encounter "thundering herd"
+		// issues were partitions are read sequentially from the same (ordered)
+		// list of machines.
+		//
+		// TODO(marius): possibly we should perform proper load balancing here
+		shuffled := rand.Perm(len(dep.Tasks))
 	Tasks:
-		for j, deptask := range dep.Tasks {
+		for j := range dep.Tasks {
+			k := j
+			if doShuffleReaders {
+				k = shuffled[j]
+			}
+			deptask := dep.Tasks[k]
 			// If we have it locally, or if we're using a shared backend store
 			// (e.g., S3), then read it directly.
 			info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
