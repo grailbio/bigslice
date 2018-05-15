@@ -364,14 +364,9 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 		return errorReader{errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))}
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
-	tp := taskPartition{task.Name, partition}
-	var rc io.ReadCloser
-	if err := m.Call(ctx, "Worker.Read", tp, &rc); err != nil {
-		return errorReader{err}
-	}
-	return &closingReader{
-		Reader: newDecodingReader(rc),
-		Closer: rc,
+	return &machineReader{
+		Machine:       m,
+		TaskPartition: taskPartition{task.Name, partition},
 	}
 }
 
@@ -623,13 +618,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err := machine.Call(ctx, "Worker.Stat", tp, &info); err != nil {
 				return err
 			}
-			var rc io.ReadCloser
-			if err := machine.Call(ctx, "Worker.Read", tp, &rc); err != nil {
-				return err
+			r := &machineReader{
+				Machine:       machine,
+				TaskPartition: tp,
 			}
-			reader.q[j] = &statsReader{newDecodingReader(rc), recordsIn}
+			reader.q[j] = &statsReader{r, recordsIn}
 			totalRecordsIn.Add(info.Records)
-			defer rc.Close()
+			defer r.Close()
 		}
 		in[i] = reader
 	}
@@ -783,4 +778,48 @@ func (w *worker) Stat(ctx context.Context, tp taskPartition, info *SliceInfo) (e
 func (w *worker) Read(ctx context.Context, tp taskPartition, rc *io.ReadCloser) (err error) {
 	*rc, err = w.store.Open(ctx, tp.Task, tp.Partition)
 	return
+}
+
+// MachineReader reads a taskPartition from a machine. It issues the
+// (streaming) read RPC on the first call to Read so that data are
+// not buffered unnecessarily. MachineReaders close themselves after
+// they have been read to completion; they should otherwise be closed
+// if they are not read to completion.
+type machineReader struct {
+	// Machine is the machine from which task data is read.
+	Machine *bigmachine.Machine
+	// TaskPartition is the task and partition that should be read.
+	TaskPartition taskPartition
+
+	closer io.Closer
+	err    error
+	reader Reader
+}
+
+func (m *machineReader) Read(ctx context.Context, f Frame) (int, error) {
+	if m.err != nil {
+		return 0, m.err
+	}
+	if m.reader == nil {
+		var rc io.ReadCloser
+		m.err = m.Machine.Call(ctx, "Worker.Read", m.TaskPartition, &rc)
+		if m.err != nil {
+			return 0, m.err
+		}
+		m.reader = newDecodingReader(rc)
+		m.closer = rc
+	}
+	n, err := m.reader.Read(ctx, f)
+	if err != nil {
+		m.Close()
+		m.closer = nil
+	}
+	return n, err
+}
+
+func (m *machineReader) Close() error {
+	if m.closer == nil {
+		return nil
+	}
+	return m.closer.Close()
 }
