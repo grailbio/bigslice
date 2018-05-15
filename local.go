@@ -56,14 +56,18 @@ func (l *localExecutor) Runnable(task *Task) {
 		ctx := context.Background()
 		l.limiter.Acquire(ctx, 1)
 		defer l.limiter.Release(1)
-		in := make([]Reader, len(task.Deps))
-		for i, dep := range task.Deps {
+		in := make([]Reader, 0, len(task.Deps))
+		for _, dep := range task.Deps {
 			reader := new(multiReader)
 			reader.q = make([]Reader, len(dep.Tasks))
 			for j, deptask := range dep.Tasks {
 				reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
 			}
-			in[i] = reader
+			if dep.Expand {
+				in = append(in, reader.q...)
+			} else {
+				in = append(in, reader)
+			}
 		}
 		task.State(TaskRunning)
 		// Start execution, then place output in a task buffer.

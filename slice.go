@@ -42,6 +42,11 @@ var errTypeError = errors.New("type error")
 type Dep struct {
 	Slice
 	Shuffle bool
+	// Expand indicates that each shard of a shuffle dependency (i.e.,
+	// all the shards of a given partition) should be expanded (i.e.,
+	// not merged) when handed to the slice implementation. This is to
+	// support merge-sorting of shards of the same partition.
+	Expand bool
 }
 
 // ShardType indicates the type of sharding used by a Slice.
@@ -631,7 +636,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 	f.hasher = hasher
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
-	f.dep = Dep{slice, true}
+	f.dep = Dep{slice, true, false}
 	f.fval = reflect.ValueOf(fold)
 	f.ftype = f.fval.Type()
 	if f.ftype.Kind() != reflect.Func {
@@ -834,5 +839,5 @@ func singleDep(i int, slice Slice, shuffle bool) Dep {
 	if i != 0 {
 		panic(fmt.Sprintf("invalid dependency %d", i))
 	}
-	return Dep{slice, shuffle}
+	return Dep{slice, shuffle, false}
 }

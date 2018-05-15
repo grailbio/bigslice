@@ -103,7 +103,7 @@ func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 		}
 		// Each shard reads different partitions from all of the previous tasks's shards.
 		for partition := range tasks {
-			tasks[partition].Deps = append(tasks[partition].Deps, TaskDep{deptasks, partition})
+			tasks[partition].Deps = append(tasks[partition].Deps, TaskDep{deptasks, partition, dep.Expand})
 		}
 	}
 	return tasks, nil

@@ -592,8 +592,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		totalRecordsIn = w.stats.Int("inrecords")
 		recordsIn = w.stats.Int("read")
 	}
-	in := make([]Reader, len(task.Deps))
-	for i, dep := range task.Deps {
+	in := make([]Reader, 0, len(task.Deps))
+	for _, dep := range task.Deps {
 		reader := new(multiReader)
 		reader.q = make([]Reader, len(dep.Tasks))
 		// We shuffle the tasks here so that we don't encounter "thundering herd"
@@ -642,7 +642,11 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			totalRecordsIn.Add(info.Records)
 			defer r.Close()
 		}
-		in[i] = reader
+		if dep.Expand {
+			in = append(in, reader.q...)
+		} else {
+			in = append(in, reader)
+		}
 	}
 
 	// Stream partition output directly to the underlying store, but

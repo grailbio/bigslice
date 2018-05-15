@@ -126,6 +126,9 @@ func (f Frame) Slice(i, j int) Frame {
 	if f == nil {
 		return nil
 	}
+	if i == 0 && j == f.Len() {
+		return f
+	}
 	g := make(Frame, len(f))
 	copy(g, f)
 	for k := range g {

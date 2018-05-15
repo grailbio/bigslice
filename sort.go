@@ -323,7 +323,9 @@ func (f *frameBufferHeap) Swap(i, j int) {
 }
 
 func (f *frameBufferHeap) Push(x interface{}) {
-	f.Buffers = append(f.Buffers, x.(*frameBuffer))
+	buf := x.(*frameBuffer)
+	buf.Index = len(f.Buffers)
+	f.Buffers = append(f.Buffers, buf)
 }
 
 func (f *frameBufferHeap) Pop() interface{} {

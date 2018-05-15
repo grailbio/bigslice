@@ -45,6 +45,7 @@ func main() {
 
 	genSortImpl()
 	genHashImpl()
+	genIndexerImpl()
 }
 
 func genSortImpl() {
@@ -169,6 +170,47 @@ func genHashImpl() {
 		log.Fatal(err)
 	}
 
+}
+
+func genIndexerImpl() {
+	var g generator
+	g.Printf("// THIS FILE WAS AUTOMATICALLY GENERATED. DO NOT EDIT.\n")
+	g.Printf("\n")
+	g.Printf("package bigslice\n")
+	g.Printf("\n")
+	g.Printf(`import "reflect"`)
+	g.Printf("\n")
+	g.Printf("func makeIndexer(typ reflect.Type) Indexer {\n")
+	g.Printf("	switch typ.Kind() {\n")
+	for _, typ := range types {
+		g.Printf("	case reflect.%s:\n", strings.Title(typ))
+		g.Printf("		return make(%sIndexer)\n", typ)
+	}
+	g.Printf("	}\n")
+	g.Printf("	return nil\n")
+	g.Printf("}\n")
+	g.Printf("\n")
+
+	for _, typ := range types {
+		g.Printf("type %sIndexer map[%s]int\n", typ, typ)
+		g.Printf("\n")
+		g.Printf("func (x %sIndexer) Index(f Frame, indices []int) {\n", typ)
+		g.Printf("	vec := f[0].Interface().([]%s)\n", typ)
+		g.Printf("	for i := range indices {\n")
+		g.Printf("		ix, ok := x[vec[i]]\n")
+		g.Printf("		if !ok {\n")
+		g.Printf("			ix = len(x)\n")
+		g.Printf("			x[vec[i]] = ix\n")
+		g.Printf("		}\n")
+		g.Printf("		indices[i] = ix\n")
+		g.Printf("	}\n")
+		g.Printf("}\n")
+	}
+
+	src := g.Gofmt()
+	if err := ioutil.WriteFile("indexerimpl.go", src, 0644); err != nil {
+		log.Fatal(err)
+	}
 }
 
 type generator struct {
