@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package ctxsync
 
 import (
 	"context"
@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-func TestTaskCond(t *testing.T) {
+func TestContextCond(t *testing.T) {
 	var (
-		task        Task
+		mu          sync.Mutex
+		cond        = NewCond(&mu)
 		start, done sync.WaitGroup
 	)
 	const N = 100
@@ -20,29 +21,32 @@ func TestTaskCond(t *testing.T) {
 	done.Add(N)
 	for i := 0; i < N; i++ {
 		go func() {
-			task.Lock()
+			mu.Lock()
 			start.Done()
-			if err := task.Wait(context.Background()); err != nil {
+			if err := cond.Wait(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			task.Unlock()
+			mu.Unlock()
 			done.Done()
 		}()
 	}
 
 	start.Wait()
-	task.Lock()
-	task.Broadcast()
-	task.Unlock()
+	mu.Lock()
+	cond.Broadcast()
+	mu.Unlock()
 	done.Wait()
 }
 
-func TestTaskCondErr(t *testing.T) {
-	var task Task
+func TestContextCondErr(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		cond = NewCond(&mu)
+	)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	task.Lock()
-	if got, want := task.Wait(ctx), context.Canceled; got != want {
+	mu.Lock()
+	if got, want := cond.Wait(ctx), context.Canceled; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }

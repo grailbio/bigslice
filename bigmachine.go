@@ -23,7 +23,9 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice/reclaimer"
 	"github.com/grailbio/bigslice/stats"
+	"github.com/shirou/gopsutil/mem"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -512,6 +514,31 @@ func (w *worker) Init(b *bigmachine.B) error {
 	}
 	w.store = &fileStore{Prefix: dir + "/"}
 	w.stats = stats.NewMap()
+
+	// Start the memory reclaimer. We reserve about 60% of the machine's
+	// memory to combine maps (and potentially other uses in the future).
+	//
+	// TODO(marius): get available memory from bigmachine instead of
+	// directly.
+	//
+	// TODO(marius): use memory reclamation in the Cogroup implementation
+	// also.
+	vm, err := mem.VirtualMemory()
+	if err != nil {
+		return err
+	}
+	// We assume that the available memory at process startup is
+	// representative of what we can expect to be able to allocate
+	// over the process lifetime.
+	var (
+		avail = vm.Available
+		lo    = (60 * avail) / 100
+		mid   = (70 * avail) / 100
+		hi    = (80 * avail) / 100
+	)
+	log.Printf("starting memory reclaimer: avail:%s lo:%s mid:%s hi:%s",
+		data.Size(avail), data.Size(lo), data.Size(mid), data.Size(hi))
+	reclaimer.StartMemoryReclaimer(context.Background(), Memory, lo, mid, hi)
 	return nil
 }
 

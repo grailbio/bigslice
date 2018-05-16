@@ -7,7 +7,18 @@ package bigslice
 import (
 	"container/heap"
 	"context"
+	"expvar"
+	"log"
 	"reflect"
+
+	"github.com/grailbio/base/data"
+	"github.com/grailbio/bigslice/slicetype"
+)
+
+var (
+	combinerKeys         = expvar.NewInt("combinerkeys")
+	combinerRecords      = expvar.NewInt("combinerrecords")
+	combinerTotalRecords = expvar.NewInt("combinertotalrecords")
 )
 
 // Reduce returns a slice that reduces elements pairwise. Reduce
@@ -75,25 +86,82 @@ type combineReader struct {
 	op       *combineSlice
 	combined Reader
 	reader   Reader
+	spiller  spiller
 	err      error
 }
 
-func (c *combineReader) compute(ctx context.Context) (Frame, error) {
-	comb := makeCombiningFrame(c.op, c.op.combiner)
+func (c *combineReader) compute(ctx context.Context) (Reader, error) {
+	spiller, err := newSpiller()
+	if err != nil {
+		return nil, err
+	}
+	var (
+		comb   = makeCombiningFrame(c.op, c.op.combiner)
+		sorter = makeSorter(c.op.Out(0), 0)
+		total  int
+	)
+	rec := Memory.Add(String(c.op))
+	defer rec.Cancel()
 	in := MakeFrame(c.op, defaultChunksize)
 	for {
+		reclaim, err := rec.ShouldReclaim(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if reclaim {
+			log.Printf("%s: spilling %d rows disk", String(c.op), comb.Frame.Len())
+			// We've been asked to reclaim memory,
+			// so we spill our in-memory frame to disk.
+			sorter.Sort(comb.Frame)
+			n, err := spiller.Spill(comb.Frame)
+			if err == nil {
+				combinerKeys.Add(-int64(comb.Frame.Len()))
+				combinerRecords.Add(-int64(total))
+				total = 0
+				comb = makeCombiningFrame(c.op, c.op.combiner)
+				log.Printf("%s: spilled %s to disk", String(c.op), data.Size(n))
+			} else {
+				log.Printf("%s: failed to spill to disk: %v", String(c.op), err)
+			}
+			rec.Done()
+		}
 		n, err := c.reader.Read(ctx, in)
 		if err != nil && err != EOF {
 			return nil, err
 		}
+		combinerRecords.Add(int64(n))
+		combinerTotalRecords.Add(int64(n))
+		total += n
+		nkeys := comb.Frame.Len()
 		comb.Combine(in.Slice(0, n))
+		combinerKeys.Add(int64(comb.Frame.Len() - nkeys))
 		if err == EOF {
 			break
 		}
 	}
-	sorter := makeSorter(c.op.Out(0), 0)
-	sorter.Sort(comb.Frame)
-	return comb.Frame, nil
+	rec.Cancel()
+	rec = nil
+
+	// Now return the actual results, merging any spilled frames.
+
+	combinerKeys.Add(-int64(comb.Frame.Len()))
+	combinerRecords.Add(-int64(total))
+	frame := comb.Frame
+	comb = nil
+	sorter.Sort(frame)
+	reader := &frameReader{frame}
+	readers, err := spiller.Readers()
+	if err != nil {
+		return nil, err
+	}
+	if len(readers) == 0 {
+		return reader, nil
+	}
+	return &reduceReader{
+		typ:      c.op,
+		combiner: c.op.combiner,
+		readers:  append(readers, reader),
+	}, nil
 }
 
 func (c *combineReader) Read(ctx context.Context, out Frame) (int, error) {
@@ -101,13 +169,10 @@ func (c *combineReader) Read(ctx context.Context, out Frame) (int, error) {
 		return 0, c.err
 	}
 	if c.combined == nil {
-		var frame Frame
-		frame, c.err = c.compute(ctx)
+		c.combined, c.err = c.compute(ctx)
 		if c.err != nil {
 			return 0, c.err
 		}
-		// TODO: destructive version of this?
-		c.combined = &frameReader{frame}
 	}
 	var n int
 	n, c.err = c.combined.Read(ctx, out)
@@ -131,9 +196,10 @@ func (*reduceSlice) NumDep() int           { return 1 }
 func (r *reduceSlice) Dep(i int) Dep       { return Dep{r.Slice, true, true} }
 
 type reduceReader struct {
-	op      *reduceSlice
-	readers []Reader
-	err     error
+	typ      slicetype.Type
+	combiner reflect.Value
+	readers  []Reader
+	err      error
 
 	sorter Sorter
 	heap   *frameBufferHeap
@@ -144,13 +210,13 @@ func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
 		return 0, r.err
 	}
 	if r.heap == nil {
-		r.sorter = makeSorter(r.op.Out(0), 0)
+		r.sorter = makeSorter(r.typ.Out(0), 0)
 		r.heap = new(frameBufferHeap)
 		r.heap.Sorter = r.sorter
 		r.heap.Buffers = make([]*frameBuffer, 0, len(r.readers))
 		for i := range r.readers {
 			buf := &frameBuffer{
-				Frame:  MakeFrame(r.op.Dep(0), defaultChunksize),
+				Frame:  MakeFrame(r.typ, defaultChunksize),
 				Reader: r.readers[i],
 				Index:  i,
 			}
@@ -186,7 +252,7 @@ func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
 				key = buf.Frame[0].Index(buf.Off)
 				val = buf.Frame[1].Index(buf.Off)
 			} else {
-				val = r.op.combiner.Call([]reflect.Value{val, buf.Frame[1].Index(buf.Off)})[0]
+				val = r.combiner.Call([]reflect.Value{val, buf.Frame[1].Index(buf.Off)})[0]
 			}
 			buf.Off++
 			if buf.Off == buf.Len {
@@ -212,5 +278,5 @@ func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
 }
 
 func (r *reduceSlice) Reader(shard int, deps []Reader) Reader {
-	return &reduceReader{op: r, readers: deps}
+	return &reduceReader{typ: r, combiner: r.combiner, readers: deps}
 }
