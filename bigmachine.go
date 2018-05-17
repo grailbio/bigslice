@@ -537,9 +537,9 @@ func (w *worker) Init(b *bigmachine.B) error {
 	// over the process lifetime.
 	var (
 		avail = vm.Available
-		lo    = (60 * avail) / 100
-		mid   = (70 * avail) / 100
-		hi    = (80 * avail) / 100
+		lo    = (40 * avail) / 100
+		mid   = (50 * avail) / 100
+		hi    = (65 * avail) / 100
 	)
 	log.Printf("starting memory reclaimer: avail:%s lo:%s mid:%s hi:%s",
 		data.Size(avail), data.Size(lo), data.Size(mid), data.Size(hi))
@@ -727,6 +727,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		return err
 	case task.Hasher != nil:
+		const psize = defaultChunksize / 10
 		// If we have a Hasher, we're expected to partition the output.
 		var (
 			partition   = make([]int, defaultChunksize)
@@ -735,7 +736,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			partitioner = newPartitioner(task.Hasher, task.NumPartition)
 		)
 		for i := range partitionv {
-			partitionv[i] = MakeFrame(task, defaultChunksize)
+			partitionv[i] = MakeFrame(task, psize)
 		}
 		in := MakeFrame(task, defaultChunksize)
 		for {
@@ -752,7 +753,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				lens[p]++
 				count[p]++
 				// Flush when we fill up.
-				if lens[p] == defaultChunksize {
+				if lens[p] == psize {
 					if err := partitions[p].Encode(partitionv[p]); err != nil {
 						return err
 					}
