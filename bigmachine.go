@@ -31,6 +31,9 @@ import (
 
 const statsPollInterval = 5 * time.Second
 
+// MaxLoad is the maximum per-machine load.
+const maxLoad = 0.95
+
 // DoShuffleReaders determines whether reader tasks should be
 // shuffled in order to avoid potential thundering herd issues.
 var doShuffleReaders = true
@@ -202,6 +205,8 @@ func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
 //
 // TODO(marius): provide fine-grained fault tolerance.
 func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
+	log.Printf("setting GC percentage to 10")
+	debug.SetGCPercent(10)
 	b.sess = sess
 	b.b = bigmachine.Start(b.system)
 	b.locations = make(map[*Task]*bigmachine.Machine)
@@ -242,10 +247,10 @@ func (b *bigmachineExecutor) run(task *Task) {
 			return
 		}
 		m = b.machines[0]
-		// Since the priority queue is ordered by load (curprocs/maxprocs),
-		// if m.Curprocs >= m.Maxprocs, then this is true for all machines,
-		// and there is not currently excess capacity in the cluster.
-		if m.Curprocs < m.Maxprocs {
+		// Since the priority queue is ordered by Load, then this is true
+		// for all machines, and there is not currently excess capacity in
+		// the cluster.
+		if m.Load() < maxLoad {
 			break
 		}
 		b.waiters = append(b.waiters, task)
