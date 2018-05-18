@@ -7,33 +7,47 @@ import "reflect"
 func makeIndexer(typ reflect.Type) Indexer {
 	switch typ.Kind() {
 	case reflect.String:
-		return make(stringIndexer)
+		ix := make(stringIndexer)
+		return &ix
 	case reflect.Uint:
-		return make(uintIndexer)
+		ix := make(uintIndexer)
+		return &ix
 	case reflect.Uint8:
-		return make(uint8Indexer)
+		ix := make(uint8Indexer)
+		return &ix
 	case reflect.Uint16:
-		return make(uint16Indexer)
+		ix := make(uint16Indexer)
+		return &ix
 	case reflect.Uint32:
-		return make(uint32Indexer)
+		ix := make(uint32Indexer)
+		return &ix
 	case reflect.Uint64:
-		return make(uint64Indexer)
+		ix := make(uint64Indexer)
+		return &ix
 	case reflect.Int:
-		return make(intIndexer)
+		ix := make(intIndexer)
+		return &ix
 	case reflect.Int8:
-		return make(int8Indexer)
+		ix := make(int8Indexer)
+		return &ix
 	case reflect.Int16:
-		return make(int16Indexer)
+		ix := make(int16Indexer)
+		return &ix
 	case reflect.Int32:
-		return make(int32Indexer)
+		ix := make(int32Indexer)
+		return &ix
 	case reflect.Int64:
-		return make(int64Indexer)
+		ix := make(int64Indexer)
+		return &ix
 	case reflect.Float32:
-		return make(float32Indexer)
+		ix := make(float32Indexer)
+		return &ix
 	case reflect.Float64:
-		return make(float64Indexer)
+		ix := make(float64Indexer)
+		return &ix
 	case reflect.Uintptr:
-		return make(uintptrIndexer)
+		ix := make(uintptrIndexer)
+		return &ix
 	}
 	return nil
 }
@@ -51,6 +65,13 @@ func (x stringIndexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *stringIndexer) Reindex(f Frame) {
+	*x = make(stringIndexer)
+	vec := f[0].Interface().([]string)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type uintIndexer map[uint]int
 
@@ -63,6 +84,13 @@ func (x uintIndexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *uintIndexer) Reindex(f Frame) {
+	*x = make(uintIndexer)
+	vec := f[0].Interface().([]uint)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -79,6 +107,13 @@ func (x uint8Indexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *uint8Indexer) Reindex(f Frame) {
+	*x = make(uint8Indexer)
+	vec := f[0].Interface().([]uint8)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type uint16Indexer map[uint16]int
 
@@ -91,6 +126,13 @@ func (x uint16Indexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *uint16Indexer) Reindex(f Frame) {
+	*x = make(uint16Indexer)
+	vec := f[0].Interface().([]uint16)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -107,6 +149,13 @@ func (x uint32Indexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *uint32Indexer) Reindex(f Frame) {
+	*x = make(uint32Indexer)
+	vec := f[0].Interface().([]uint32)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type uint64Indexer map[uint64]int
 
@@ -119,6 +168,13 @@ func (x uint64Indexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *uint64Indexer) Reindex(f Frame) {
+	*x = make(uint64Indexer)
+	vec := f[0].Interface().([]uint64)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -135,6 +191,13 @@ func (x intIndexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *intIndexer) Reindex(f Frame) {
+	*x = make(intIndexer)
+	vec := f[0].Interface().([]int)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type int8Indexer map[int8]int
 
@@ -147,6 +210,13 @@ func (x int8Indexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *int8Indexer) Reindex(f Frame) {
+	*x = make(int8Indexer)
+	vec := f[0].Interface().([]int8)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -163,6 +233,13 @@ func (x int16Indexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *int16Indexer) Reindex(f Frame) {
+	*x = make(int16Indexer)
+	vec := f[0].Interface().([]int16)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type int32Indexer map[int32]int
 
@@ -175,6 +252,13 @@ func (x int32Indexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *int32Indexer) Reindex(f Frame) {
+	*x = make(int32Indexer)
+	vec := f[0].Interface().([]int32)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -191,6 +275,13 @@ func (x int64Indexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *int64Indexer) Reindex(f Frame) {
+	*x = make(int64Indexer)
+	vec := f[0].Interface().([]int64)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type float32Indexer map[float32]int
 
@@ -203,6 +294,13 @@ func (x float32Indexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *float32Indexer) Reindex(f Frame) {
+	*x = make(float32Indexer)
+	vec := f[0].Interface().([]float32)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }
 
@@ -219,6 +317,13 @@ func (x float64Indexer) Index(f Frame, indices []int) {
 		indices[i] = ix
 	}
 }
+func (x *float64Indexer) Reindex(f Frame) {
+	*x = make(float64Indexer)
+	vec := f[0].Interface().([]float64)
+	for i := range vec {
+		(*x)[vec[i]] = i
+	}
+}
 
 type uintptrIndexer map[uintptr]int
 
@@ -231,5 +336,12 @@ func (x uintptrIndexer) Index(f Frame, indices []int) {
 			x[vec[i]] = ix
 		}
 		indices[i] = ix
+	}
+}
+func (x *uintptrIndexer) Reindex(f Frame) {
+	*x = make(uintptrIndexer)
+	vec := f[0].Interface().([]uintptr)
+	for i := range vec {
+		(*x)[vec[i]] = i
 	}
 }

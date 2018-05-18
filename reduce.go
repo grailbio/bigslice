@@ -8,10 +8,8 @@ import (
 	"container/heap"
 	"context"
 	"expvar"
-	"log"
 	"reflect"
 
-	"github.com/grailbio/base/data"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -58,129 +56,11 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if !canMakeCombiningFrame(slice) {
 		typePanicf(1, "cannot combine values for keys of type %s", slice.Out(0))
 	}
-	// Reduce outputs a pair of slices: one to perform "map side"
-	// combining; the second to perform post-shuffle reduces. The first
-	// combines values by maintaining an indexed in-memory Frame. The
-	// results from this operation are sorted and sent to the reducers,
-	// which performs a combining merge-sort.
-	slice = &combineSlice{slice, reduceval}
 	hasher := makeFrameHasher(slice.Out(0), 0)
 	if hasher == nil {
 		typePanicf(1, "key type %s is not partitionable", slice.Out(0))
 	}
-	slice = &reduceSlice{slice, reduceval, hasher}
-	return slice
-}
-
-// CombineSlice implements "map side" combining.
-type combineSlice struct {
-	Slice
-	combiner reflect.Value
-}
-
-func (c *combineSlice) Op() string    { return "combine" }
-func (c *combineSlice) NumDep() int   { return 1 }
-func (c *combineSlice) Dep(i int) Dep { return Dep{c.Slice, false, false} }
-
-type combineReader struct {
-	op       *combineSlice
-	combined Reader
-	reader   Reader
-	spiller  spiller
-	err      error
-}
-
-func (c *combineReader) compute(ctx context.Context) (Reader, error) {
-	spiller, err := newSpiller()
-	if err != nil {
-		return nil, err
-	}
-	var (
-		comb   = makeCombiningFrame(c.op, c.op.combiner)
-		sorter = makeSorter(c.op.Out(0), 0)
-		total  int
-	)
-	rec := Memory.Add(String(c.op))
-	defer rec.Cancel()
-	in := MakeFrame(c.op, defaultChunksize)
-	for {
-		reclaim, err := rec.ShouldReclaim(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if reclaim {
-			log.Printf("%s: spilling %d rows disk", String(c.op), comb.Frame.Len())
-			// We've been asked to reclaim memory,
-			// so we spill our in-memory frame to disk.
-			sorter.Sort(comb.Frame)
-			n, err := spiller.Spill(comb.Frame)
-			if err == nil {
-				combinerKeys.Add(-int64(comb.Frame.Len()))
-				combinerRecords.Add(-int64(total))
-				total = 0
-				comb = makeCombiningFrame(c.op, c.op.combiner)
-				log.Printf("%s: spilled %s to disk", String(c.op), data.Size(n))
-			} else {
-				log.Printf("%s: failed to spill to disk: %v", String(c.op), err)
-			}
-			rec.Done()
-		}
-		n, err := c.reader.Read(ctx, in)
-		if err != nil && err != EOF {
-			return nil, err
-		}
-		combinerRecords.Add(int64(n))
-		combinerTotalRecords.Add(int64(n))
-		total += n
-		nkeys := comb.Frame.Len()
-		comb.Combine(in.Slice(0, n))
-		combinerKeys.Add(int64(comb.Frame.Len() - nkeys))
-		if err == EOF {
-			break
-		}
-	}
-	rec.Cancel()
-	rec = nil
-
-	// Now return the actual results, merging any spilled frames.
-
-	combinerKeys.Add(-int64(comb.Frame.Len()))
-	combinerRecords.Add(-int64(total))
-	frame := comb.Frame
-	comb = nil
-	sorter.Sort(frame)
-	reader := &frameReader{frame}
-	readers, err := spiller.Readers()
-	if err != nil {
-		return nil, err
-	}
-	if len(readers) == 0 {
-		return reader, nil
-	}
-	return &reduceReader{
-		typ:      c.op,
-		combiner: c.op.combiner,
-		readers:  append(readers, reader),
-	}, nil
-}
-
-func (c *combineReader) Read(ctx context.Context, out Frame) (int, error) {
-	if c.err != nil {
-		return 0, c.err
-	}
-	if c.combined == nil {
-		c.combined, c.err = c.compute(ctx)
-		if c.err != nil {
-			return 0, c.err
-		}
-	}
-	var n int
-	n, c.err = c.combined.Read(ctx, out)
-	return n, c.err
-}
-
-func (c *combineSlice) Reader(shard int, deps []Reader) Reader {
-	return &combineReader{op: c, reader: deps[0]}
+	return &reduceSlice{slice, reduceval, hasher}
 }
 
 // ReduceSlice implements "post shuffle" combining merge sort.
@@ -190,10 +70,11 @@ type reduceSlice struct {
 	hasher   FrameHasher
 }
 
-func (r *reduceSlice) Hasher() FrameHasher { return r.hasher }
-func (r *reduceSlice) Op() string          { return "reduce" }
-func (*reduceSlice) NumDep() int           { return 1 }
-func (r *reduceSlice) Dep(i int) Dep       { return Dep{r.Slice, true, true} }
+func (r *reduceSlice) Hasher() FrameHasher      { return r.hasher }
+func (r *reduceSlice) Op() string               { return "reduce" }
+func (*reduceSlice) NumDep() int                { return 1 }
+func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
+func (r *reduceSlice) Combiner() *reflect.Value { return &r.combiner }
 
 type reduceReader struct {
 	typ      slicetype.Type
@@ -278,5 +159,8 @@ func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
 }
 
 func (r *reduceSlice) Reader(shard int, deps []Reader) Reader {
+	if len(deps) == 1 {
+		return deps[0]
+	}
 	return &reduceReader{typ: r, combiner: r.combiner, readers: deps}
 }

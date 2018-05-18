@@ -49,7 +49,8 @@ func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 	// pipelining the eligible computations.
 	tasks := make([]*Task, slice.NumShard())
 	slices := pipeline(slice)
-	var ops []string
+	ops := make([]string, 0, len(slices)+1)
+	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
 	for i := len(slices) - 1; i >= 0; i-- {
 		ops = append(ops, slices[i].Op())
 	}
@@ -84,7 +85,8 @@ func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 			}
 		}
 	}
-	// Now capture the dependencies; they are encoded in the last slice.
+	// Now capture the dependencies for this task set;
+	// they are encoded in the last slice.
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
@@ -95,15 +97,26 @@ func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 		if !dep.Shuffle {
 			panic("non-pipelined non-shuffle dependency")
 		}
+		var combineKey string
+		if lastSlice.Combiner() != nil {
+			combineKey = name + "_combiner"
+		}
 		// Assign a partitioner and partition width our dependencies, so that
 		// these are properly partitioned at the time of computation.
 		for _, task := range deptasks {
 			task.NumPartition = slice.NumShard()
 			task.Hasher = lastSlice.Hasher()
+			// Assign a combine key that's based on the root name of the task.
+			// This is a name that's unique in the task namespace and is used to
+			// coalesce combiners on a single machine.
+			task.Combiner = lastSlice.Combiner()
+			task.CombineKey = combineKey
 		}
+
 		// Each shard reads different partitions from all of the previous tasks's shards.
 		for partition := range tasks {
-			tasks[partition].Deps = append(tasks[partition].Deps, TaskDep{deptasks, partition, dep.Expand})
+			tasks[partition].Deps = append(tasks[partition].Deps,
+				TaskDep{deptasks, partition, dep.Expand, combineKey})
 		}
 	}
 	return tasks, nil

@@ -5,12 +5,14 @@
 package bigslice
 
 import (
+	"bytes"
 	"context"
 	"math/rand"
 	"reflect"
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 func TestDecodingReader(t *testing.T) {
@@ -48,5 +50,24 @@ func TestDecodingReader(t *testing.T) {
 	}
 	if !reflect.DeepEqual(col2, col2x) {
 		t.Error("col2 mismatch")
+	}
+}
+
+func TestEmptyDecodingReader(t *testing.T) {
+	r := newDecodingReader(bytes.NewReader(nil))
+	f := MakeFrame(slicetype.New(typeOfString, typeOfInt), 100)
+	n, err := r.Read(context.Background(), f)
+	if got, want := n, 0; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := err, EOF; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	n, err = r.Read(context.Background(), f)
+	if got, want := n, 0; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := err, EOF; got != want {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

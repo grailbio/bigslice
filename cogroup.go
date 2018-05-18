@@ -96,6 +96,7 @@ func (c *cogroupSlice) Hasher() FrameHasher    { return c.hasher }
 func (c *cogroupSlice) Op() string             { return "cogroup" }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
+func (*cogroupSlice) Combiner() *reflect.Value { return nil }
 
 type cogroupReader struct {
 	err    error

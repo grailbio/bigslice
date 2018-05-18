@@ -23,9 +23,8 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
-	"github.com/grailbio/bigslice/reclaimer"
+	"github.com/grailbio/bigslice/ctxsync"
 	"github.com/grailbio/bigslice/stats"
-	"github.com/shirou/gopsutil/mem"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -375,6 +374,9 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 	if m == nil {
 		return errorReader{errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))}
 	}
+	if task.CombineKey != "" {
+		return errorReader{fmt.Errorf("read %s: cannot read tasks with combine keys", task.Name)}
+	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return &machineReader{
 		Machine:       m,
@@ -494,6 +496,17 @@ func (b *bigmachineExecutor) updateStatus() {
 	b.status.Print(total)
 }
 
+type combinerState int
+
+const (
+	combinerNone combinerState = iota
+	combinerWriting
+	combinerCommitted
+	combinerError
+	combinerIdle
+	// States > combinerIdle are reference counts.
+)
+
 // A worker is the bigmachine service that runs individual tasks and serves
 // the results of previous runs. Currently all output is buffered in memory.
 type worker struct {
@@ -505,13 +518,22 @@ type worker struct {
 	store Store
 
 	mu       sync.Mutex
+	cond     *ctxsync.Cond
 	compiles taskOnce
 	tasks    map[uint64]map[string]*Task
 	stats    *stats.Map
+
+	// CombinerStates and combiners are used to manage shared combine
+	// buffers.
+	combinerStates map[string]combinerState
+	combiners      map[string][]*combiner
 }
 
 func (w *worker) Init(b *bigmachine.B) error {
+	w.cond = ctxsync.NewCond(&w.mu)
 	w.tasks = make(map[uint64]map[string]*Task)
+	w.combiners = make(map[string][]*combiner)
+	w.combinerStates = make(map[string]combinerState)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
 	if err != nil {
@@ -519,31 +541,6 @@ func (w *worker) Init(b *bigmachine.B) error {
 	}
 	w.store = &fileStore{Prefix: dir + "/"}
 	w.stats = stats.NewMap()
-
-	// Start the memory reclaimer. We reserve about 60% of the machine's
-	// memory to combine maps (and potentially other uses in the future).
-	//
-	// TODO(marius): get available memory from bigmachine instead of
-	// directly.
-	//
-	// TODO(marius): use memory reclamation in the Cogroup implementation
-	// also.
-	vm, err := mem.VirtualMemory()
-	if err != nil {
-		return err
-	}
-	// We assume that the available memory at process startup is
-	// representative of what we can expect to be able to allocate
-	// over the process lifetime.
-	var (
-		avail = vm.Available
-		lo    = (40 * avail) / 100
-		mid   = (50 * avail) / 100
-		hi    = (65 * avail) / 100
-	)
-	log.Printf("starting memory reclaimer: avail:%s lo:%s mid:%s hi:%s",
-		data.Size(avail), data.Size(lo), data.Size(mid), data.Size(hi))
-	reclaimer.StartMemoryReclaimer(context.Background(), Memory, lo, mid, hi)
 	return nil
 }
 
@@ -626,59 +623,117 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	}
 	in := make([]Reader, 0, len(task.Deps))
 	for _, dep := range task.Deps {
-		reader := new(multiReader)
-		reader.q = make([]Reader, len(dep.Tasks))
-		// We shuffle the tasks here so that we don't encounter "thundering herd"
-		// issues were partitions are read sequentially from the same (ordered)
-		// list of machines.
+		// If the dependency has a combine key, they are combined on the
+		// machine, and we de-dup the dependencies.
 		//
-		// TODO(marius): possibly we should perform proper load balancing here
-		shuffled := rand.Perm(len(dep.Tasks))
-	Tasks:
-		for j := range dep.Tasks {
-			k := j
-			if doShuffleReaders {
-				k = shuffled[j]
-			}
-			deptask := dep.Tasks[k]
-			// If we have it locally, or if we're using a shared backend store
-			// (e.g., S3), then read it directly.
-			info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
-			if err == nil {
-				rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
-				if err == nil {
-					defer rc.Close()
-					reader.q[j] = newDecodingReader(rc)
-					totalRecordsIn.Add(info.Records)
-					continue Tasks
+		// We first ensure that the combiner buffers are committed on
+		// each machine, and then read them.
+		g, ctx := errgroup.WithContext(ctx)
+		if dep.CombineKey != "" {
+			locations := make(map[string]bool)
+			for _, deptask := range dep.Tasks {
+				addr := req.Locations[deptask.Name]
+				if addr == "" {
+					return fmt.Errorf("no location for input task %s", deptask.Name)
 				}
+				// We only read the first combine key for each location.
+				//
+				// TODO(marius): compute some non-overlapping intersection of
+				// combine keys instead, so that we can handle error recovery
+				// properly. In particular, in the case of error recovery, we
+				// have to create new combiner keys so that they aren't written
+				// into previous combiner buffers. This suggests that combiner
+				// keys should be assigned by the executor, and not during
+				// compile time.
+				if locations[addr] {
+					continue
+				}
+				locations[addr] = true
+				machine, err := w.b.Dial(ctx, addr)
+				if err != nil {
+					return err
+				}
+				g.Go(func() error {
+					return machine.Call(ctx, "Worker.CommitCombiner", dep.CombineKey, nil)
+				})
 			}
-			// Find the location of the task.
-			addr := req.Locations[deptask.Name]
-			if addr == "" {
-				return fmt.Errorf("no location for input task %s", deptask.Name)
-			}
-			machine, err := w.b.Dial(ctx, addr)
-			if err != nil {
+			if err := g.Wait(); err != nil {
 				return err
 			}
-			tp := taskPartition{deptask.Name, dep.Partition}
-			if err := machine.Call(ctx, "Worker.Stat", tp, &info); err != nil {
-				return err
+			for addr := range locations {
+				machine, err := w.b.Dial(ctx, addr)
+				if err != nil {
+					return err
+				}
+				r := &machineReader{
+					Machine:       machine,
+					TaskPartition: taskPartition{dep.CombineKey, dep.Partition},
+				}
+				in = append(in, &statsReader{r, recordsIn})
+				defer r.Close()
 			}
-			r := &machineReader{
-				Machine:       machine,
-				TaskPartition: tp,
-			}
-			reader.q[j] = &statsReader{r, recordsIn}
-			totalRecordsIn.Add(info.Records)
-			defer r.Close()
-		}
-		if dep.Expand {
-			in = append(in, reader.q...)
 		} else {
-			in = append(in, reader)
+			reader := new(multiReader)
+			reader.q = make([]Reader, len(dep.Tasks))
+			// We shuffle the tasks here so that we don't encounter "thundering herd"
+			// issues were partitions are read sequentially from the same (ordered)
+			// list of machines.
+			//
+			// TODO(marius): possibly we should perform proper load balancing here
+			shuffled := rand.Perm(len(dep.Tasks))
+
+		Tasks:
+			for j := range dep.Tasks {
+				k := j
+				if doShuffleReaders {
+					k = shuffled[j]
+				}
+				deptask := dep.Tasks[k]
+				// If we have it locally, or if we're using a shared backend store
+				// (e.g., S3), then read it directly.
+				info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
+				if err == nil {
+					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
+					if err == nil {
+						defer rc.Close()
+						reader.q[j] = newDecodingReader(rc)
+						totalRecordsIn.Add(info.Records)
+						continue Tasks
+					}
+				}
+				// Find the location of the task.
+				addr := req.Locations[deptask.Name]
+				if addr == "" {
+					return fmt.Errorf("no location for input task %s", deptask.Name)
+				}
+				machine, err := w.b.Dial(ctx, addr)
+				if err != nil {
+					return err
+				}
+				tp := taskPartition{deptask.Name, dep.Partition}
+				if err := machine.Call(ctx, "Worker.Stat", tp, &info); err != nil {
+					return err
+				}
+				r := &machineReader{
+					Machine:       machine,
+					TaskPartition: tp,
+				}
+				reader.q[j] = &statsReader{r, recordsIn}
+				totalRecordsIn.Add(info.Records)
+				defer r.Close()
+			}
+			if dep.Expand {
+				in = append(in, reader.q...)
+			} else {
+				in = append(in, reader)
+			}
 		}
+	}
+
+	// If we have a combiner, then we partition globally for the machine
+	// into common combiners.
+	if task.Combiner != nil {
+		return w.runCombine(ctx, task, task.Do(in))
 	}
 
 	// Stream partition output directly to the underlying store, but
@@ -727,7 +782,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		return err
 	case task.Hasher != nil:
-		const psize = defaultChunksize / 10
+		const psize = defaultChunksize / 100
 		// If we have a Hasher, we're expected to partition the output.
 		var (
 			partition   = make([]int, defaultChunksize)
@@ -757,6 +812,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					if err := partitions[p].Encode(partitionv[p]); err != nil {
 						return err
 					}
+					partitionv[p].Clear()
 					lens[p] = 0
 				}
 			}
@@ -808,6 +864,91 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
+func (w *worker) runCombine(ctx context.Context, task *Task, in Reader) error {
+	w.mu.Lock()
+	switch w.combinerStates[task.CombineKey] {
+	case combinerWriting, combinerCommitted, combinerError:
+		w.mu.Unlock()
+		return fmt.Errorf("combine key %s already committed", task.CombineKey)
+	case combinerNone:
+		combiners := make([]*combiner, task.NumPartition)
+		for i := range combiners {
+			var err error
+			combiners[i], err = newCombiner(task, task.CombineKey, *task.Combiner, defaultChunksize*100)
+			if err != nil {
+				w.mu.Unlock()
+				for j := 0; j < i; j++ {
+					if err := combiners[j].Discard(); err != nil {
+						log.Error.Printf("error discarding combiner: %v", err)
+					}
+				}
+				return err
+			}
+		}
+		w.combiners[task.CombineKey] = combiners
+		w.combinerStates[task.CombineKey] = combinerIdle
+	}
+	w.combinerStates[task.CombineKey]++
+	combiners := w.combiners[task.CombineKey]
+	w.mu.Unlock()
+
+	defer func() {
+		w.mu.Lock()
+		w.combinerStates[task.CombineKey]--
+		w.mu.Unlock()
+	}()
+
+	recordsOut := w.stats.Int("write")
+	const psize = 8
+	// If we have a Hasher, we're expected to partition the output.
+	var (
+		partition   = make([]int, defaultChunksize)
+		partitionv  = make([]Frame, task.NumPartition)
+		lens        = make([]int, task.NumPartition)
+		partitioner = newPartitioner(task.Hasher, task.NumPartition)
+		out         = MakeFrame(task, defaultChunksize)
+	)
+	for i := range partitionv {
+		partitionv[i] = MakeFrame(task, psize)
+	}
+	for {
+		n, err := in.Read(ctx, out)
+		if err != nil && err != EOF {
+			return err
+		}
+		partitioner.Partition(out, partition)
+		for i := 0; i < n; i++ {
+			p := partition[i]
+			for j, vec := range partitionv[p] {
+				vec.Index(lens[p]).Set(out[j].Index(i))
+			}
+			lens[p]++
+			// Flush to the combiner when we're full.
+			if lens[p] == psize {
+				if err := combiners[p].Combine(ctx, partitionv[p]); err != nil {
+					return err
+				}
+				partitionv[p].Clear()
+				lens[p] = 0
+			}
+		}
+		recordsOut.Add(int64(n))
+		if err == EOF {
+			break
+		}
+	}
+	// Flush the remainder.
+	for p, n := range lens {
+		if n == 0 {
+			continue
+		}
+		if err := combiners[p].Combine(ctx, partitionv[p].Slice(0, n)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (w *worker) Stats(ctx context.Context, _ struct{}, values *stats.Values) error {
 	w.stats.AddAll(*values)
 	return nil
@@ -827,7 +968,72 @@ func (w *worker) Stat(ctx context.Context, tp taskPartition, info *SliceInfo) (e
 	return
 }
 
-// Read reads a slice
+// CommitCombiner commits the current combiner buffer with the
+// provided key. After successful return, its results are available via
+// Read.
+func (w *worker) CommitCombiner(ctx context.Context, key string, _ *struct{}) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for {
+		switch w.combinerStates[key] {
+		case combinerNone:
+			return fmt.Errorf("invalid combiner key %s", key)
+		case combinerWriting:
+			if err := w.cond.Wait(ctx); err != nil {
+				return err
+			}
+		case combinerCommitted:
+			return nil
+		case combinerError:
+			return errors.E("error while writing combiner")
+		case combinerIdle:
+			w.combinerStates[key] = combinerWriting
+			go w.writeCombiner(key)
+		default:
+			return fmt.Errorf("combiner key %s busy", key)
+		}
+	}
+}
+
+func (w *worker) writeCombiner(key string) {
+	g, ctx := errgroup.WithContext(context.Background())
+	for part := range w.combiners[key] {
+		part, combiner := part, w.combiners[key][part]
+		g.Go(func() error {
+			wc, err := w.store.Create(ctx, key, part)
+			if err != nil {
+				return err
+			}
+			buf := bufio.NewWriter(wc)
+			enc := NewEncoder(buf)
+			n, err := combiner.WriteTo(ctx, enc)
+			if err != nil {
+				wc.Discard(ctx)
+				return err
+			}
+			if err := buf.Flush(); err != nil {
+				wc.Discard(ctx)
+				return err
+			}
+			return wc.Commit(ctx, n)
+		})
+	}
+	err := g.Wait()
+	w.mu.Lock()
+	w.combiners[key] = nil
+	if err == nil {
+		w.combinerStates[key] = combinerCommitted
+	} else {
+		log.Error.Printf("failed to write combine buffer %s: %v", key, err)
+		w.combinerStates[key] = combinerError
+	}
+	w.cond.Broadcast()
+	w.mu.Unlock()
+}
+
+// Read reads a slice.
+//
+// TODO(marius): should we flush combined outputs explicitly?
 func (w *worker) Read(ctx context.Context, tp taskPartition, rc *io.ReadCloser) (err error) {
 	*rc, err = w.store.Open(ctx, tp.Task, tp.Partition)
 	return

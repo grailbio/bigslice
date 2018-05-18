@@ -51,41 +51,71 @@ func (l *localExecutor) Runnable(task *Task) {
 	}
 	task.state = TaskWaiting
 	task.Broadcast()
+	go l.runTask(task)
+}
 
-	go func() {
-		ctx := context.Background()
-		l.limiter.Acquire(ctx, 1)
-		defer l.limiter.Release(1)
-		in := make([]Reader, 0, len(task.Deps))
-		for _, dep := range task.Deps {
-			reader := new(multiReader)
-			reader.q = make([]Reader, len(dep.Tasks))
-			for j, deptask := range dep.Tasks {
-				reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
-			}
-			if dep.Expand {
-				in = append(in, reader.q...)
-			} else {
-				in = append(in, reader)
-			}
+func (l *localExecutor) runTask(task *Task) {
+	ctx := context.Background()
+	l.limiter.Acquire(ctx, 1)
+	defer l.limiter.Release(1)
+	in := make([]Reader, 0, len(task.Deps))
+	for _, dep := range task.Deps {
+		reader := new(multiReader)
+		reader.q = make([]Reader, len(dep.Tasks))
+		for j, deptask := range dep.Tasks {
+			reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
 		}
-		task.State(TaskRunning)
-		// Start execution, then place output in a task buffer.
-		out := task.Do(in)
-		buf, err := bufferOutput(ctx, task, out)
-		task.Lock()
-		if err == nil {
-			l.mu.Lock()
-			l.buffers[task] = buf
-			l.mu.Unlock()
-			task.state = TaskOk
+		if dep.CombineKey != "" && len(dep.Tasks) > 0 {
+			// Perform input combination in-line, one for each partition.
+			combiner, err := newCombiner(dep.Tasks[0], dep.CombineKey, *dep.Tasks[0].Combiner, defaultChunksize*100)
+			if err != nil {
+				task.Error(err)
+				return
+			}
+			buf := MakeFrame(dep.Tasks[0], defaultChunksize)
+			for {
+				n, err := reader.Read(ctx, buf)
+				if err != nil && err != EOF {
+					task.Error(err)
+					return
+				}
+				if err := combiner.Combine(ctx, buf.Slice(0, n)); err != nil {
+					task.Error(err)
+					return
+				}
+				if err == EOF {
+					break
+				}
+			}
+			reader, err := combiner.Reader()
+			if err != nil {
+				task.Error(err)
+				return
+			}
+			in = append(in, reader)
+		} else if dep.Expand {
+			in = append(in, reader.q...)
 		} else {
-			task.state = TaskErr
-			task.err = err
+			in = append(in, reader)
 		}
-		task.Broadcast()
-		task.Unlock()
-	}()
+	}
+	task.State(TaskRunning)
+
+	// Start execution, then place output in a task buffer.
+	out := task.Do(in)
+	buf, err := bufferOutput(ctx, task, out)
+	task.Lock()
+	if err == nil {
+		l.mu.Lock()
+		l.buffers[task] = buf
+		l.mu.Unlock()
+		task.state = TaskOk
+	} else {
+		task.state = TaskErr
+		task.err = err
+	}
+	task.Broadcast()
+	task.Unlock()
 }
 
 func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) Reader {

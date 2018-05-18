@@ -9,4 +9,5 @@ type Indexer interface {
 	// Index indexes the provided frame, depositing the index
 	// for each row into the provided slice of indices.
 	Index(Frame, []int)
+	Reindex(Frame)
 }

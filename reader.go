@@ -75,7 +75,7 @@ func (d *decodingReader) Read(ctx context.Context, f Frame) (n int, err error) {
 	if d.err != nil {
 		return 0, d.err
 	}
-	if d.off == d.len {
+	for d.off == d.len {
 		if d.buf == nil {
 			d.buf = make([]reflect.Value, len(f))
 			for i := range d.buf {

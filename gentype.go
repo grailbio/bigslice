@@ -184,7 +184,8 @@ func genIndexerImpl() {
 	g.Printf("	switch typ.Kind() {\n")
 	for _, typ := range types {
 		g.Printf("	case reflect.%s:\n", strings.Title(typ))
-		g.Printf("		return make(%sIndexer)\n", typ)
+		g.Printf("		ix := make(%sIndexer)\n", typ)
+		g.Printf("		return &ix\n")
 	}
 	g.Printf("	}\n")
 	g.Printf("	return nil\n")
@@ -203,6 +204,14 @@ func genIndexerImpl() {
 		g.Printf("			x[vec[i]] = ix\n")
 		g.Printf("		}\n")
 		g.Printf("		indices[i] = ix\n")
+		g.Printf("	}\n")
+		g.Printf("}\n")
+
+		g.Printf("func (x *%sIndexer) Reindex(f Frame) {\n", typ)
+		g.Printf("	*x = make(%sIndexer)\n", typ)
+		g.Printf("	vec := f[0].Interface().([]%s)\n", typ)
+		g.Printf("	for i := range vec {\n")
+		g.Printf("		(*x)[vec[i]] = i\n")
 		g.Printf("	}\n")
 		g.Printf("}\n")
 	}

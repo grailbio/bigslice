@@ -202,6 +202,33 @@ func (f Frame) TabString() string {
 	return b.String()
 }
 
+// Swapper returns a function that can be used to swap two rows in
+// the frame.
+func (f Frame) Swapper() func(i, j int) {
+	swappers := make([]func(i, j int), len(f))
+	for i := range f {
+		swappers[i] = reflect.Swapper(f[i].Interface())
+	}
+	return func(i, j int) {
+		for _, swap := range swappers {
+			swap(i, j)
+		}
+	}
+}
+
+// Clear zeros out the frame.
+func (f Frame) Clear() {
+	// TODO(marius): here we can safely use unsafe to zero out entire
+	// vectors at a time.
+	n := f.Len()
+	for i := range f {
+		zero := reflect.Zero(f.Out(i))
+		for j := 0; j < n; j++ {
+			f[i].Index(j).Set(zero)
+		}
+	}
+}
+
 // FrameReader implements a Reader for a single Frame.
 type frameReader struct {
 	Frame

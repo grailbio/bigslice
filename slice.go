@@ -96,6 +96,11 @@ type Slice interface {
 	// Dep returns the i'th dependency for this Slice.
 	Dep(i int) Dep
 
+	// Combiner is an optional function that is used to combine multiple
+	// values with the same key from the slice's output. No combination
+	// is performed if nil.
+	Combiner() *reflect.Value
+
 	// Reader returns a Reader for a shard of this Slice. The reader
 	// itself computes the shard's values on demand. The caller must
 	// provide Readers for all of this shard's dependencies, constructed
@@ -144,6 +149,7 @@ func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
 func (*constSlice) Hasher() FrameHasher      { return nil }
+func (*constSlice) Combiner() *reflect.Value { return nil }
 
 type constReader struct {
 	op      *constSlice
@@ -255,6 +261,7 @@ func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
 func (*readerFuncSlice) Hasher() FrameHasher      { return nil }
+func (*readerFuncSlice) Combiner() *reflect.Value { return nil }
 
 type readerFuncSliceReader struct {
 	op    *readerFuncSlice
@@ -341,6 +348,7 @@ func (m *mapSlice) Op() string             { return "map" }
 func (*mapSlice) NumDep() int              { return 1 }
 func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
 func (*mapSlice) Hasher() FrameHasher      { return nil }
+func (*mapSlice) Combiner() *reflect.Value { return nil }
 
 type mapReader struct {
 	op     *mapSlice
@@ -416,9 +424,10 @@ func Filter(slice Slice, pred interface{}) Slice {
 	return f
 }
 
-func (*filterSlice) Op() string      { return "filter" }
-func (*filterSlice) NumDep() int     { return 1 }
-func (f *filterSlice) Dep(i int) Dep { return singleDep(i, f.Slice, false) }
+func (*filterSlice) Op() string               { return "filter" }
+func (*filterSlice) NumDep() int              { return 1 }
+func (f *filterSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
+func (*filterSlice) Combiner() *reflect.Value { return nil }
 
 type filterReader struct {
 	op     *filterSlice
@@ -521,6 +530,7 @@ func (*flatmapSlice) Op() string               { return "flatmap" }
 func (*flatmapSlice) NumDep() int              { return 1 }
 func (f *flatmapSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
 func (*flatmapSlice) Hasher() FrameHasher      { return nil }
+func (*flatmapSlice) Combiner() *reflect.Value { return nil }
 
 type flatmapReader struct {
 	op     *flatmapSlice
@@ -669,6 +679,7 @@ func (f *foldSlice) Hasher() FrameHasher    { return f.hasher }
 func (f *foldSlice) Op() string             { return "fold" }
 func (*foldSlice) NumDep() int              { return 1 }
 func (f *foldSlice) Dep(i int) Dep          { return f.dep }
+func (*foldSlice) Combiner() *reflect.Value { return nil }
 
 type foldReader struct {
 	op     *foldSlice
@@ -728,9 +739,10 @@ func Head(slice Slice, n int) Slice {
 	return headSlice{slice, n}
 }
 
-func (h headSlice) Op() string    { return fmt.Sprintf("head(%d)", h.n) }
-func (headSlice) NumDep() int     { return 1 }
-func (h headSlice) Dep(i int) Dep { return singleDep(i, h.Slice, false) }
+func (h headSlice) Op() string             { return fmt.Sprintf("head(%d)", h.n) }
+func (headSlice) NumDep() int              { return 1 }
+func (h headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false) }
+func (headSlice) Combiner() *reflect.Value { return nil }
 
 type headReader struct {
 	reader Reader
@@ -765,11 +777,12 @@ func Scan(slice Slice, scan func(shard int, scanner *Scanner) error) Slice {
 	return scanSlice{slice, scan}
 }
 
-func (scanSlice) NumOut() int            { return 0 }
-func (scanSlice) Out(c int) reflect.Type { panic(c) }
-func (scanSlice) Op() string             { return "scan" }
-func (scanSlice) NumDep() int            { return 1 }
-func (s scanSlice) Dep(i int) Dep        { return singleDep(i, s.Slice, false) }
+func (scanSlice) NumOut() int              { return 0 }
+func (scanSlice) Out(c int) reflect.Type   { panic(c) }
+func (scanSlice) Op() string               { return "scan" }
+func (scanSlice) NumDep() int              { return 1 }
+func (s scanSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
+func (scanSlice) Combiner() *reflect.Value { return nil }
 
 type scanReader struct {
 	slice  scanSlice

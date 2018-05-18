@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -81,6 +82,13 @@ type TaskDep struct {
 	// partition should not be merged, but rather passed individually to
 	// the task implementation.
 	Expand bool
+
+	// CombineKey is an optional label that names the combination key to
+	// be used by this dependency. It is used to name a single combiner
+	// buffer from which is read a number of combined tasks.
+	//
+	// CombineKeys must be provided to tasks that contain combiners.
+	CombineKey string
 }
 
 // A Task represents a concrete computational task. Tasks form graphs
@@ -111,6 +119,12 @@ type Task struct {
 	// Hasher is used to compute hashes of Frame rows, used to partition
 	// a Frame's output.
 	Hasher FrameHasher
+
+	// Combiner specifies an (optional) combiner to use for this task's output.
+	// If a Combiner is specified, CombineKey names the combine buffer used:
+	// each combine buffer contains combiner outputs from multiple tasks.
+	Combiner   *reflect.Value
+	CombineKey string
 
 	// The following are used to coordinate runtime execution.
 

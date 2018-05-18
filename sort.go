@@ -288,6 +288,7 @@ type frameBuffer struct {
 	Reader
 	Off, Len int
 	Index    int
+	N        int
 }
 
 // Fill (re-) filles the frameBuffer when it's empty. An error
@@ -299,6 +300,7 @@ func (f *frameBuffer) Fill(ctx context.Context) error {
 	}
 	var err error
 	f.Len, err = f.Reader.Read(ctx, f.Frame)
+	f.N++
 	if err != nil && err != EOF {
 		return err
 	}
@@ -306,6 +308,9 @@ func (f *frameBuffer) Fill(ctx context.Context) error {
 		err = nil
 	}
 	f.Off = 0
+	if f.Len == 0 && err == nil {
+		err = EOF
+	}
 	return err
 }
 
