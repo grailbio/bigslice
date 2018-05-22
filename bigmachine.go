@@ -403,7 +403,7 @@ func (b *bigmachineExecutor) initMachines() error {
 		}
 		log.Printf("starting %d bigmachines (p=%d, maxprocs=%d)", n, p, maxprocs)
 		ctx := context.Background()
-		machines, err := b.b.StartN(ctx, n, bigmachine.Services{
+		machines, err := b.b.Start(ctx, n, bigmachine.Services{
 			"Worker": &worker{},
 		})
 		if err != nil {
