@@ -24,6 +24,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/ctxsync"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
 )
@@ -786,14 +787,14 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		// If we have a Hasher, we're expected to partition the output.
 		var (
 			partition   = make([]int, defaultChunksize)
-			partitionv  = make([]Frame, task.NumPartition)
+			partitionv  = make([]frame.Frame, task.NumPartition)
 			lens        = make([]int, task.NumPartition)
 			partitioner = newPartitioner(task.Hasher, task.NumPartition)
 		)
 		for i := range partitionv {
-			partitionv[i] = MakeFrame(task, psize)
+			partitionv[i] = frame.Make(task, psize)
 		}
-		in := MakeFrame(task, defaultChunksize)
+		in := frame.Make(task, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != EOF {
@@ -834,7 +835,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		if task.NumPartition != 1 {
 			return fmt.Errorf("invalid task graph: NumPartition is %d, but no Hasher provided", task.NumPartition)
 		}
-		in := MakeFrame(task, defaultChunksize)
+		in := frame.Make(task, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != EOF {
@@ -903,13 +904,13 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in Reader) error {
 	// If we have a Hasher, we're expected to partition the output.
 	var (
 		partition   = make([]int, defaultChunksize)
-		partitionv  = make([]Frame, task.NumPartition)
+		partitionv  = make([]frame.Frame, task.NumPartition)
 		lens        = make([]int, task.NumPartition)
 		partitioner = newPartitioner(task.Hasher, task.NumPartition)
-		out         = MakeFrame(task, defaultChunksize)
+		out         = frame.Make(task, defaultChunksize)
 	)
 	for i := range partitionv {
-		partitionv[i] = MakeFrame(task, psize)
+		partitionv[i] = frame.Make(task, psize)
 	}
 	for {
 		n, err := in.Read(ctx, out)
@@ -1055,7 +1056,7 @@ type machineReader struct {
 	reader Reader
 }
 
-func (m *machineReader) Read(ctx context.Context, f Frame) (int, error) {
+func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}

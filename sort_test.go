@@ -10,13 +10,14 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
 // FuzzFrame creates a fuzzed frame of length n, where columns
 // have the provided types.
-func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) Frame {
-	f := make(Frame, len(types))
+func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) frame.Frame {
+	f := make(frame.Frame, len(types))
 	for i := range f {
 		f[i] = reflect.MakeSlice(reflect.SliceOf(types[i]), n, n)
 		vp := reflect.New(types[i])
@@ -33,7 +34,7 @@ type fuzzReader struct {
 	N    int
 }
 
-func (f *fuzzReader) Read(ctx context.Context, out Frame) (int, error) {
+func (f *fuzzReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if f.N == 0 {
 		return 0, EOF
 	}
@@ -86,7 +87,7 @@ func TestMergeReader(t *testing.T) {
 
 	var (
 		sorter  = makeSorter(typeOfString, 0)
-		frames  = make([]Frame, M)
+		frames  = make([]frame.Frame, M)
 		readers = make([]Reader, M)
 	)
 	for i := range frames {
@@ -107,7 +108,7 @@ func TestMergeReader(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := MakeFrame(frames[0], N*M)
+	out := frame.Make(frames[0], N*M)
 	n, err := ReadFull(ctx, m, out)
 	if err != nil && err != EOF {
 		t.Fatal(err)
@@ -140,7 +141,7 @@ func TestSortReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := MakeFrame(typ, N)
+	out := frame.Make(typ, N)
 	n, err := ReadFull(ctx, sorted, out)
 	if err != nil && err != EOF {
 		t.Fatal(err)
@@ -149,7 +150,7 @@ func TestSortReader(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if err == nil {
-		n, err = ReadFull(ctx, sorted, MakeFrame(typ, 1))
+		n, err = ReadFull(ctx, sorted, frame.Make(typ, 1))
 		if got, want := err, EOF; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
@@ -170,7 +171,7 @@ func TestSorterFunc(t *testing.T) {
 			return vals[i].val < vals[j].val
 		}
 	})
-	f := Columns(
+	f := frame.Columns(
 		[]customType{{5}, {1}, {4}},
 		[]string{"five", "one", "four"},
 	)

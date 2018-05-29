@@ -17,6 +17,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -81,12 +82,12 @@ func RegisterLessFunc(lessFunc interface{}) {
 // A Sorter implements a sort for a Frame schema.
 type Sorter interface {
 	// Sort sorts the provided frame.
-	Sort(Frame)
+	Sort(frame.Frame)
 	// Less returns true if row i of frame f is less than
 	// row j of frame g.
-	Less(f Frame, i int, g Frame, j int) bool
+	Less(f frame.Frame, i int, g frame.Frame, j int) bool
 	// IsSorted tells whether the provided frame is sorted.
-	IsSorted(Frame) bool
+	IsSorted(frame.Frame) bool
 }
 
 type lessSorter struct {
@@ -94,12 +95,12 @@ type lessSorter struct {
 	lessFunc reflect.Value
 }
 
-func (l *lessSorter) Sort(f Frame) {
+func (l *lessSorter) Sort(f frame.Frame) {
 	less := l.lessFunc.Call([]reflect.Value{f[l.col]})[0].Interface().(LessFunc)
 	sortFrame(f, less)
 }
 
-func (l *lessSorter) Less(f Frame, i int, g Frame, j int) bool {
+func (l *lessSorter) Less(f frame.Frame, i int, g frame.Frame, j int) bool {
 	// TODO(marius): this is not ideal; rethink the Less interface.
 	keys := reflect.MakeSlice(reflect.SliceOf(f.Out(l.col)), 2, 2)
 	keys.Index(0).Set(f[l.col].Index(i))
@@ -108,7 +109,7 @@ func (l *lessSorter) Less(f Frame, i int, g Frame, j int) bool {
 	return less(0, 1)
 }
 
-func (l *lessSorter) IsSorted(f Frame) bool {
+func (l *lessSorter) IsSorted(f frame.Frame) bool {
 	col := f[l.col]
 	less := l.lessFunc.Call([]reflect.Value{col})[0].Interface().(LessFunc)
 	return sort.SliceIsSorted(col.Interface(), less)
@@ -125,7 +126,7 @@ func makeSorter(typ reflect.Type, col int) Sorter {
 }
 
 type frameSorter struct {
-	Frame
+	frame.Frame
 	swappers []func(i, j int)
 	less     func(i, j int) bool
 }
@@ -140,7 +141,7 @@ func (s frameSorter) Swap(i, j int) {
 
 // SortFrame sorts the provided frame using the provided
 // comparison function.
-func sortFrame(f Frame, less func(i, j int) bool) {
+func sortFrame(f frame.Frame, less func(i, j int) bool) {
 	var s frameSorter
 	s.Frame = f
 	s.swappers = make([]func(i, j int), len(f))
@@ -164,7 +165,7 @@ func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ slicety
 		return nil, err
 	}
 	defer spill.Cleanup()
-	f := MakeFrame(typ, 1<<14)
+	f := frame.Make(typ, 1<<14)
 	for {
 		n, err := ReadFull(ctx, r, f)
 		if err != nil && err != EOF {
@@ -190,7 +191,7 @@ func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ slicety
 			if targetRows <= f.Cap() {
 				f = f.Slice(0, targetRows)
 			} else {
-				f = MakeFrame(typ, targetRows)
+				f = frame.Make(typ, targetRows)
 			}
 		}
 	}
@@ -222,7 +223,7 @@ func newSpiller() (spiller, error) {
 // Spill spills the provided frame to a new file in the spiller.
 // Spill returns the file's encoded size, or an error. The frame
 // is encoded in batches of spillBatchSize.
-func (dir spiller) Spill(frame Frame) (int, error) {
+func (dir spiller) Spill(frame frame.Frame) (int, error) {
 	f, err := ioutil.TempFile(string(dir), "")
 	if err != nil {
 		return 0, err
@@ -285,7 +286,7 @@ func (s spiller) Cleanup() error {
 // A FrameBuffer is a buffered frame. The frame is filled from
 // a reader, and maintains a current offset and length.
 type frameBuffer struct {
-	Frame
+	frame.Frame
 	Reader
 	Off, Len int
 	Index    int
@@ -360,7 +361,7 @@ func newMergeReader(ctx context.Context, typ slicetype.Type, sorter Sorter, read
 	for i := range readers {
 		fr := &frameBuffer{
 			Reader: readers[i],
-			Frame:  MakeFrame(typ, spillBatchSize),
+			Frame:  frame.Make(typ, spillBatchSize),
 		}
 		switch err := fr.Fill(ctx); {
 		case err == EOF:
@@ -376,7 +377,7 @@ func newMergeReader(ctx context.Context, typ slicetype.Type, sorter Sorter, read
 }
 
 // Read implements Reader.
-func (m *mergeReader) Read(ctx context.Context, out Frame) (int, error) {
+func (m *mergeReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}

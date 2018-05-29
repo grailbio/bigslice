@@ -12,6 +12,7 @@ import (
 
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -33,7 +34,7 @@ var combineDiskSpills = expvar.NewInt("combinediskspills")
 type CombiningFrame struct {
 	// Frame is the data frame that is being combined. Frame is
 	// continually appended as new keys appear.
-	Frame
+	frame.Frame
 	// Indexer is used to maintain an index on the Frame's key column.
 	Indexer
 	// Combiner is a function that combines values in the frame.
@@ -73,7 +74,7 @@ func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFr
 	if f.Indexer == nil {
 		return nil
 	}
-	f.Frame = MakeFrame(typ, 0, defaultChunksize)
+	f.Frame = frame.Make(typ, 0, defaultChunksize)
 	f.Combiner = combiner
 	return f
 }
@@ -82,7 +83,7 @@ func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFr
 // values in f are combined with existing values using the
 // CombiningFrame's combiner. When no value exists for a key, the
 // value is copied directly.
-func (c *CombiningFrame) Combine(f Frame) {
+func (c *CombiningFrame) Combine(f frame.Frame) {
 	n := f.Len()
 	if cap(c.indices) < n {
 		c.indices = make([]int, n)
@@ -91,7 +92,7 @@ func (c *CombiningFrame) Combine(f Frame) {
 	for i := 0; i < n; i++ {
 		ix := c.indices[i]
 		if ix >= c.n {
-			c.Frame = AppendFrame(c.Frame, f.Slice(i, i+1))
+			c.Frame = frame.Append(c.Frame, f.Slice(i, i+1))
 			c.hits = append(c.hits, 0)
 			c.n++
 		} else {
@@ -112,7 +113,7 @@ func (c *CombiningFrame) Combine(f Frame) {
 // can retain memory residence for longer.
 //
 // TODO(marius): we could dynamically decide what the top N cutoff is.
-func (c *CombiningFrame) Compact(n int) Frame {
+func (c *CombiningFrame) Compact(n int) frame.Frame {
 	if c.swap == nil {
 		c.swap = c.Swapper()
 	}
@@ -125,7 +126,7 @@ func (c *CombiningFrame) Compact(n int) Frame {
 		c.swap(i, j)
 		c.hits[i] = c.hits[j] / 2
 	}
-	var g Frame
+	var g frame.Frame
 	c.Frame, g = c.Slice(0, n), c.Slice(n, c.Len())
 	c.Indexer.Reindex(c.Frame)
 	c.hits = c.hits[:n]
@@ -170,7 +171,7 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 	return c, nil
 }
 
-func (c *combiner) spill(f Frame) error {
+func (c *combiner) spill(f frame.Frame) error {
 	log.Debug.Printf("combiner %s: spilling %d rows disk", c.name, c.comb.Frame.Len())
 	c.sorter.Sort(f)
 	n, err := c.spiller.Spill(f)
@@ -192,7 +193,7 @@ func (c *combiner) spill(f Frame) error {
 // TODO(marius): Combine blocks until the frame has been fully spilled
 // to disk. We could copy the data and perform this spilling concurrently
 // with writing.
-func (c *combiner) Combine(ctx context.Context, f Frame) error {
+func (c *combiner) Combine(ctx context.Context, f frame.Frame) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	n := f.Len()
@@ -250,7 +251,7 @@ func (c *combiner) WriteTo(ctx context.Context, enc *Encoder) (int64, error) {
 		return 0, err
 	}
 	var total int64
-	in := MakeFrame(c, defaultChunksize)
+	in := frame.Make(c, defaultChunksize)
 	for {
 		n, err := reader.Read(ctx, in)
 		if err != nil && err != EOF {

@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/grailbio/base/limiter"
+	"github.com/grailbio/bigslice/frame"
 )
 
 // LocalExecutor is an executor that runs tasks in-process in
@@ -72,7 +73,7 @@ func (l *localExecutor) runTask(task *Task) {
 				task.Error(err)
 				return
 			}
-			buf := MakeFrame(dep.Tasks[0], defaultChunksize)
+			buf := frame.Make(dep.Tasks[0], defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
 				if err != nil && err != EOF {
@@ -140,7 +141,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 	}
 	var (
 		buf         = make(taskBuffer, task.NumPartition)
-		in          Frame
+		in          frame.Frame
 		partitions  []int
 		partitioner *partitioner
 	)
@@ -152,7 +153,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 	}
 	for {
 		if in == nil {
-			in = MakeFrame(task, defaultChunksize)
+			in = frame.Make(task, defaultChunksize)
 		}
 		n, err := out.Read(ctx, in)
 		if err != nil && err != EOF {
@@ -170,7 +171,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 				// create a new one.
 				m := len(buf[p])
 				if m == 0 || buf[p][m-1].Cap() == buf[p][m-1].Len() {
-					frame := MakeFrame(task, 0, defaultChunksize)
+					frame := frame.Make(task, 0, defaultChunksize)
 					buf[p] = append(buf[p], frame)
 					m++
 				}
@@ -195,7 +196,7 @@ type multiReader struct {
 	err error
 }
 
-func (m *multiReader) Read(ctx context.Context, out Frame) (n int, err error) {
+func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	if m.err != nil {
 		return 0, m.err
 	}

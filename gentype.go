@@ -57,6 +57,8 @@ func genSortImpl() {
 	g.Printf(`import (
 	"reflect"
 	"sort"
+	
+	"github.com/grailbio/bigslice/frame"
 )`)
 	g.Printf("\n")
 
@@ -87,16 +89,16 @@ func genSortImpl() {
 		}
 		g.Printf("type %sSorter int\n", typ)
 		g.Printf("\n")
-		g.Printf("func (col %sSorter) Sort(f Frame) {\n", typ)
+		g.Printf("func (col %sSorter) Sort(f frame.Frame) {\n", typ)
 		g.Printf("	v := f[col].Interface().([]%s)\n", typ)
 		g.Printf("	sortFrame(f, func(i, j int) bool { return v[i] < v[j] })\n")
 		g.Printf("}\n")
 		g.Printf("\n")
-		g.Printf("func (col %sSorter) Less(x Frame, i int, y Frame, j int) bool {\n", typ)
+		g.Printf("func (col %sSorter) Less(x frame.Frame, i int, y frame.Frame, j int) bool {\n", typ)
 		g.Printf("	return x[col].Index(i).%s() < y[col].Index(j).%s()\n", valueMethod, valueMethod)
 		g.Printf("}\n")
 		g.Printf("\n")
-		g.Printf("func (col %sSorter) IsSorted(f Frame) bool {\n", typ)
+		g.Printf("func (col %sSorter) IsSorted(f frame.Frame) bool {\n", typ)
 		g.Printf("	v := f[col].Interface().([]%s)\n", typ)
 		g.Printf("	return sort.SliceIsSorted(v, func(i, j int) bool { return v[i] < v[j] })\n")
 		g.Printf("}\n")
@@ -119,6 +121,8 @@ func genHashImpl() {
 	"hash/fnv"
 	"math"
 	"reflect"
+	
+	"github.com/grailbio/bigslice/frame"
 )`)
 	g.Printf("\n")
 	g.Printf("func makeFrameHasherGen(typ reflect.Type, col int) FrameHasher {\n")
@@ -135,7 +139,7 @@ func genHashImpl() {
 	for _, typ := range types {
 		g.Printf("type %sHasher int\n", typ)
 		g.Printf("\n")
-		g.Printf("func (col %sHasher) HashFrame(f Frame, sum []uint32) {\n", typ)
+		g.Printf("func (col %sHasher) HashFrame(f frame.Frame, sum []uint32) {\n", typ)
 		g.Printf("	vec := f[col].Interface().([]%s)\n", typ)
 
 		if typ == "string" {
@@ -178,7 +182,12 @@ func genIndexerImpl() {
 	g.Printf("\n")
 	g.Printf("package bigslice\n")
 	g.Printf("\n")
-	g.Printf(`import "reflect"`)
+	g.Printf(`import (
+	"reflect"
+	
+	"github.com/grailbio/bigslice/frame"
+)
+`)
 	g.Printf("\n")
 	g.Printf("func makeIndexer(typ reflect.Type) Indexer {\n")
 	g.Printf("	switch typ.Kind() {\n")
@@ -195,7 +204,7 @@ func genIndexerImpl() {
 	for _, typ := range types {
 		g.Printf("type %sIndexer map[%s]int\n", typ, typ)
 		g.Printf("\n")
-		g.Printf("func (x %sIndexer) Index(f Frame, indices []int) {\n", typ)
+		g.Printf("func (x %sIndexer) Index(f frame.Frame, indices []int) {\n", typ)
 		g.Printf("	vec := f[0].Interface().([]%s)\n", typ)
 		g.Printf("	for i := range indices {\n")
 		g.Printf("		ix, ok := x[vec[i]]\n")
@@ -207,7 +216,7 @@ func genIndexerImpl() {
 		g.Printf("	}\n")
 		g.Printf("}\n")
 
-		g.Printf("func (x *%sIndexer) Reindex(f Frame) {\n", typ)
+		g.Printf("func (x *%sIndexer) Reindex(f frame.Frame) {\n", typ)
 		g.Printf("	*x = make(%sIndexer)\n", typ)
 		g.Printf("	vec := f[0].Interface().([]%s)\n", typ)
 		g.Printf("	for i := range vec {\n")

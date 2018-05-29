@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -55,7 +56,7 @@ func TestDecodingReader(t *testing.T) {
 
 func TestEmptyDecodingReader(t *testing.T) {
 	r := newDecodingReader(bytes.NewReader(nil))
-	f := MakeFrame(slicetype.New(typeOfString, typeOfInt), 100)
+	f := frame.Make(slicetype.New(typeOfString, typeOfInt), 100)
 	n, err := r.Read(context.Background(), f)
 	if got, want := n, 0; got != want {
 		t.Errorf("got %v, want %v", got, want)

@@ -8,6 +8,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -26,7 +27,7 @@ type Scanner struct {
 	out      slicetype.Type
 	readers  []Reader
 	err      error
-	in       Frame
+	in       frame.Frame
 	beg, end int
 }
 
@@ -49,7 +50,7 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 		}
 	}
 	if s.in == nil {
-		s.in = MakeFrame(s.out, defaultChunksize)
+		s.in = frame.Make(s.out, defaultChunksize)
 		s.beg, s.end = 0, 0
 	}
 	// Read the next batch of input.

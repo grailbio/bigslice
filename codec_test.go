@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 )
 
 func TestCodec(t *testing.T) {
@@ -26,7 +27,7 @@ func TestCodec(t *testing.T) {
 
 	var b bytes.Buffer
 	enc := NewEncoder(&b)
-	in := Frame{reflect.ValueOf(c0), reflect.ValueOf(c1)}
+	in := frame.Frame{reflect.ValueOf(c0), reflect.ValueOf(c1)}
 	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}

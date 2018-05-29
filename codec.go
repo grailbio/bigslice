@@ -8,6 +8,8 @@ import (
 	"encoding/gob"
 	"io"
 	"reflect"
+
+	"github.com/grailbio/bigslice/frame"
 )
 
 // An Encoder manages transmission of slices through an underlying
@@ -26,7 +28,7 @@ func NewEncoder(w io.Writer) *Encoder {
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
-func (e *Encoder) Encode(f Frame) error {
+func (e *Encoder) Encode(f frame.Frame) error {
 	for i := range f {
 		if err := e.enc.EncodeValue(f[i]); err != nil {
 			return err

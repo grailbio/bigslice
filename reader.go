@@ -11,6 +11,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/stats"
 )
 
@@ -30,12 +31,12 @@ type Reader interface {
 	// are available.
 	//
 	// Read should not be called concurrently.
-	Read(ctx context.Context, frame Frame) (int, error)
+	Read(ctx context.Context, frame frame.Frame) (int, error)
 }
 
 type errorReader struct{ error }
 
-func (e errorReader) Read(ctx context.Context, f Frame) (int, error) {
+func (e errorReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	return 0, e.error
 }
 
@@ -44,7 +45,7 @@ type closingReader struct {
 	io.Closer
 }
 
-func (c *closingReader) Read(ctx context.Context, out Frame) (int, error) {
+func (c *closingReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	n, err := c.Reader.Read(ctx, out)
 	if err != nil {
 		c.Closer.Close()
@@ -54,7 +55,7 @@ func (c *closingReader) Read(ctx context.Context, out Frame) (int, error) {
 
 type emptyReader struct{}
 
-func (emptyReader) Read(ctx context.Context, f Frame) (int, error) {
+func (emptyReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	return 0, EOF
 }
 
@@ -71,7 +72,7 @@ type decodingReader struct {
 	err      error
 }
 
-func (d *decodingReader) Read(ctx context.Context, f Frame) (n int, err error) {
+func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	if d.err != nil {
 		return 0, d.err
 	}
@@ -108,7 +109,7 @@ type statsReader struct {
 	numRead *stats.Int
 }
 
-func (s *statsReader) Read(ctx context.Context, f Frame) (n int, err error) {
+func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	n, err = s.reader.Read(ctx, f)
 	s.numRead.Add(int64(n))
 	return
@@ -125,7 +126,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 			return errors.E(errors.Invalid, "attempted to read into non-pointer")
 		}
 	}
-	buf := make(Frame, len(columns))
+	buf := make(frame.Frame, len(columns))
 	for i := range columns {
 		typ := columnsv[i].Type().Elem()
 		buf[i] = reflect.MakeSlice(reflect.SliceOf(typ.Elem()), defaultChunksize, defaultChunksize)
@@ -149,7 +150,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 
 // ReadFull reads the full length of the frame. ReadFull reads short
 // frames only on EOF.
-func ReadFull(ctx context.Context, r Reader, f Frame) (n int, err error) {
+func ReadFull(ctx context.Context, r Reader, f frame.Frame) (n int, err error) {
 	len := f.Len()
 	for n < len {
 		m, err := r.Read(ctx, f.Slice(n, len))

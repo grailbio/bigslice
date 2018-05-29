@@ -7,11 +7,13 @@ package bigslice
 import (
 	"reflect"
 	"testing"
+
+	"github.com/grailbio/bigslice/frame"
 )
 
 func TestStringIndexer(t *testing.T) {
 	strs := []string{"x", "x", "y", "z", "x"}
-	f := Columns(strs)
+	f := frame.Columns(strs)
 	ix := make(stringIndexer)
 	indices := make([]int, len(strs))
 	ix.Index(f, indices)

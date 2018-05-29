@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/gob"
 	"reflect"
+
+	"github.com/grailbio/bigslice/frame"
 )
 
 // TaskBuffer is an in-memory buffer of task output. It has the
@@ -16,7 +18,7 @@ import (
 // records for efficiency.
 //
 // TaskBuffer layout is: partition, slices, frames.
-type taskBuffer [][]Frame
+type taskBuffer [][]frame.Frame
 
 // Slice returns column vectors for the provided partition and global
 // offset. The returned offset indicates the position of the global
@@ -28,7 +30,7 @@ type taskBuffer [][]Frame
 // linear walk through the stored vectors. We should aggregate
 // lengths so that we can perform a binary search. Alternatively, we
 // can return a cookie from Slice that enables efficient resumption.
-func (b taskBuffer) Slice(partition, off int) (Frame, int) {
+func (b taskBuffer) Slice(partition, off int) (frame.Frame, int) {
 	beg, end := partition, partition+1
 	// Find the offset.
 	var n int
@@ -49,7 +51,7 @@ type taskBufferReader struct {
 	i, j, k int
 }
 
-func (r *taskBufferReader) Read(ctx context.Context, out Frame) (int, error) {
+func (r *taskBufferReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 loop:
 	for {
 		switch {
@@ -71,7 +73,7 @@ loop:
 		n = m
 	}
 	l := r.k + n
-	CopyFrame(out, r.q[r.i][r.j].Slice(r.k, l))
+	frame.Copy(out, r.q[r.i][r.j].Slice(r.k, l))
 	r.k = l
 	return n, nil
 }

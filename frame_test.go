@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 )
 
 func TestFrameReader(t *testing.T) {
@@ -18,7 +19,7 @@ func TestFrameReader(t *testing.T) {
 		fz  = fuzz.NewWithSeed(12345)
 		f   = fuzzFrame(fz, N, typeOfString)
 		r   = &frameReader{f}
-		out = MakeFrame(f, N)
+		out = frame.Make(f, N)
 		ctx = context.Background()
 	)
 	n, err := ReadFull(ctx, r, out)
@@ -29,7 +30,7 @@ func TestFrameReader(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	if err == nil {
-		n, err := ReadFull(ctx, r, MakeFrame(f, 1))
+		n, err := ReadFull(ctx, r, frame.Make(f, 1))
 		if got, want := err, EOF; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}

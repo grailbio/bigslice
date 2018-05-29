@@ -4,7 +4,11 @@
 
 package bigslice
 
-import "reflect"
+import (
+	"reflect"
+
+	"github.com/grailbio/bigslice/frame"
+)
 
 // An Accumulator represents a stateful accumulation of values of
 // a certain type. Accumulators maintain their state in memory.
@@ -12,7 +16,7 @@ import "reflect"
 // Accumulators should be read only after accumulation is complete.
 type Accumulator interface {
 	// Accumulate the provided columns of length n.
-	Accumulate(in Frame, n int)
+	Accumulate(in frame.Frame, n int)
 	// Read a batch of accumulated values into keys and values. These
 	// are slices of the key type and accumulator type respectively.
 	Read(keys, values reflect.Value) (int, error)
@@ -59,7 +63,7 @@ type stringAccumulator struct {
 	state   map[string]reflect.Value
 }
 
-func (s *stringAccumulator) Accumulate(in Frame, n int) {
+func (s *stringAccumulator) Accumulate(in frame.Frame, n int) {
 	keys := in[0].Interface().([]string)
 	args := make([]reflect.Value, len(in))
 	for i := 0; i < n; i++ {
@@ -100,7 +104,7 @@ type intAccumulator struct {
 	state   map[int]reflect.Value
 }
 
-func (s *intAccumulator) Accumulate(in Frame, n int) {
+func (s *intAccumulator) Accumulate(in frame.Frame, n int) {
 	keys := in[0].Interface().([]int)
 	args := make([]reflect.Value, len(in))
 	for i := 0; i < n; i++ {
@@ -141,7 +145,7 @@ type int64Accumulator struct {
 	state   map[int64]reflect.Value
 }
 
-func (s *int64Accumulator) Accumulate(in Frame, n int) {
+func (s *int64Accumulator) Accumulate(in frame.Frame, n int) {
 	keys := in[0].Interface().([]int64)
 	args := make([]reflect.Value, len(in))
 	for i := 0; i < n; i++ {

@@ -6,6 +6,8 @@ import (
 	"hash/fnv"
 	"math"
 	"reflect"
+
+	"github.com/grailbio/bigslice/frame"
 )
 
 func makeFrameHasherGen(typ reflect.Type, col int) FrameHasher {
@@ -44,7 +46,7 @@ func makeFrameHasherGen(typ reflect.Type, col int) FrameHasher {
 
 type stringHasher int
 
-func (col stringHasher) HashFrame(f Frame, sum []uint32) {
+func (col stringHasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]string)
 	h := fnv.New32a()
 	for i := range sum {
@@ -56,7 +58,7 @@ func (col stringHasher) HashFrame(f Frame, sum []uint32) {
 
 type uintHasher int
 
-func (col uintHasher) HashFrame(f Frame, sum []uint32) {
+func (col uintHasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uint)
 	for i := range sum {
 		sum[i] = hash64(uint64(vec[i]))
@@ -65,7 +67,7 @@ func (col uintHasher) HashFrame(f Frame, sum []uint32) {
 
 type uint8Hasher int
 
-func (col uint8Hasher) HashFrame(f Frame, sum []uint32) {
+func (col uint8Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uint8)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -74,7 +76,7 @@ func (col uint8Hasher) HashFrame(f Frame, sum []uint32) {
 
 type uint16Hasher int
 
-func (col uint16Hasher) HashFrame(f Frame, sum []uint32) {
+func (col uint16Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uint16)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -83,7 +85,7 @@ func (col uint16Hasher) HashFrame(f Frame, sum []uint32) {
 
 type uint32Hasher int
 
-func (col uint32Hasher) HashFrame(f Frame, sum []uint32) {
+func (col uint32Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uint32)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -92,7 +94,7 @@ func (col uint32Hasher) HashFrame(f Frame, sum []uint32) {
 
 type uint64Hasher int
 
-func (col uint64Hasher) HashFrame(f Frame, sum []uint32) {
+func (col uint64Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uint64)
 	for i := range sum {
 		sum[i] = hash64(uint64(vec[i]))
@@ -101,7 +103,7 @@ func (col uint64Hasher) HashFrame(f Frame, sum []uint32) {
 
 type intHasher int
 
-func (col intHasher) HashFrame(f Frame, sum []uint32) {
+func (col intHasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]int)
 	for i := range sum {
 		sum[i] = hash64(uint64(vec[i]))
@@ -110,7 +112,7 @@ func (col intHasher) HashFrame(f Frame, sum []uint32) {
 
 type int8Hasher int
 
-func (col int8Hasher) HashFrame(f Frame, sum []uint32) {
+func (col int8Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]int8)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -119,7 +121,7 @@ func (col int8Hasher) HashFrame(f Frame, sum []uint32) {
 
 type int16Hasher int
 
-func (col int16Hasher) HashFrame(f Frame, sum []uint32) {
+func (col int16Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]int16)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -128,7 +130,7 @@ func (col int16Hasher) HashFrame(f Frame, sum []uint32) {
 
 type int32Hasher int
 
-func (col int32Hasher) HashFrame(f Frame, sum []uint32) {
+func (col int32Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]int32)
 	for i := range sum {
 		sum[i] = hash32(uint32(vec[i]))
@@ -137,7 +139,7 @@ func (col int32Hasher) HashFrame(f Frame, sum []uint32) {
 
 type int64Hasher int
 
-func (col int64Hasher) HashFrame(f Frame, sum []uint32) {
+func (col int64Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]int64)
 	for i := range sum {
 		sum[i] = hash64(uint64(vec[i]))
@@ -146,7 +148,7 @@ func (col int64Hasher) HashFrame(f Frame, sum []uint32) {
 
 type float32Hasher int
 
-func (col float32Hasher) HashFrame(f Frame, sum []uint32) {
+func (col float32Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]float32)
 	for i := range sum {
 		sum[i] = hash32(math.Float32bits(vec[i]))
@@ -155,7 +157,7 @@ func (col float32Hasher) HashFrame(f Frame, sum []uint32) {
 
 type float64Hasher int
 
-func (col float64Hasher) HashFrame(f Frame, sum []uint32) {
+func (col float64Hasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]float64)
 	for i := range sum {
 		sum[i] = hash64(math.Float64bits(vec[i]))
@@ -164,7 +166,7 @@ func (col float64Hasher) HashFrame(f Frame, sum []uint32) {
 
 type uintptrHasher int
 
-func (col uintptrHasher) HashFrame(f Frame, sum []uint32) {
+func (col uintptrHasher) HashFrame(f frame.Frame, sum []uint32) {
 	vec := f[col].Interface().([]uintptr)
 	for i := range sum {
 		sum[i] = hash64(uint64(vec[i]))

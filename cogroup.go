@@ -9,6 +9,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -111,7 +112,7 @@ type cogroupReader struct {
 	heap *frameBufferHeap
 }
 
-func (c *cogroupReader) Read(ctx context.Context, out Frame) (int, error) {
+func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if c.err != nil {
 		return 0, c.err
 	}
@@ -136,7 +137,7 @@ func (c *cogroupReader) Read(ctx context.Context, out Frame) (int, error) {
 				return 0, c.err
 			}
 			buf := &frameBuffer{
-				Frame:  MakeFrame(c.op.Dep(i), 1024),
+				Frame:  frame.Make(c.op.Dep(i), 1024),
 				Reader: sorted,
 				Index:  i,
 			}
@@ -158,14 +159,14 @@ func (c *cogroupReader) Read(ctx context.Context, out Frame) (int, error) {
 	)
 	// BUG: this is gnarly
 	for n < max && len(c.heap.Buffers) > 0 {
-		row := make([]Frame, len(c.readers))
+		row := make([]frame.Frame, len(c.readers))
 		var (
 			key  reflect.Value
 			last = -1
 		)
 		for last < 0 || len(c.heap.Buffers) > 0 && !c.sorter.Less(row[last], 0, c.heap.Buffers[0].Frame, c.heap.Buffers[0].Off) {
 			buf := c.heap.Buffers[0]
-			row[buf.Index] = AppendFrame(row[buf.Index], buf.Slice(buf.Off, buf.Off+1))
+			row[buf.Index] = frame.Append(row[buf.Index], buf.Slice(buf.Off, buf.Off+1))
 			buf.Off++
 			if last < 0 {
 				key = row[buf.Index][0].Index(0)

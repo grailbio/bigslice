@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"reflect"
+
+	"github.com/grailbio/bigslice/frame"
 )
 
 var typeOfHasher = reflect.TypeOf((*Hasher)(nil)).Elem()
@@ -25,10 +27,10 @@ type FrameHasher interface {
 	// HashFrame hashes the provided frame, depositing the 32-bit hash values
 	// into the provided slice. Hashers should hash only the first
 	// len(sum) rows of frame.
-	HashFrame(frame Frame, sum []uint32)
+	HashFrame(frame frame.Frame, sum []uint32)
 }
 
-// MakeFrameHasher mints a new hasher for the provided key type at the
+// frame.MakeHasher mints a new hasher for the provided key type at the
 // provided column. It returns nil if no such hasher can be created.
 func makeFrameHasher(typ reflect.Type, col int) FrameHasher {
 	if typ.Implements(typeOfHasher) {
@@ -60,7 +62,7 @@ func newPartitioner(h FrameHasher, width int) *partitioner {
 
 // Partition assigns rows of f into partitions. The first
 // len(partition) rows of f are read.
-func (p *partitioner) Partition(f Frame, partitions []int) {
+func (p *partitioner) Partition(f frame.Frame, partitions []int) {
 	if len(partitions) > cap(p.sum) {
 		p.sum = make([]uint32, len(partitions))
 	}
@@ -74,7 +76,7 @@ func (p *partitioner) Partition(f Frame, partitions []int) {
 // that implement Hasher.
 type hashFrameHasher int
 
-func (col hashFrameHasher) HashFrame(f Frame, sum []uint32) {
+func (col hashFrameHasher) HashFrame(f frame.Frame, sum []uint32) {
 	// TODO(marius): consider supporting a vectorized version of
 	// this so we don't have to do virtual calls and interface conversions
 	// for each row.
@@ -87,7 +89,7 @@ func (col hashFrameHasher) HashFrame(f Frame, sum []uint32) {
 // encoding to provide a deterministic hash.
 type binaryHasher int
 
-func (col binaryHasher) HashFrame(f Frame, sum []uint32) {
+func (col binaryHasher) HashFrame(f frame.Frame, sum []uint32) {
 	var (
 		b bytes.Buffer
 		h = fnv.New32a()

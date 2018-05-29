@@ -10,6 +10,7 @@ import (
 	"expvar"
 	"reflect"
 
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -83,7 +84,7 @@ type reduceReader struct {
 	heap   *frameBufferHeap
 }
 
-func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
+func (r *reduceReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
@@ -94,7 +95,7 @@ func (r *reduceReader) Read(ctx context.Context, out Frame) (int, error) {
 		r.heap.Buffers = make([]*frameBuffer, 0, len(r.readers))
 		for i := range r.readers {
 			buf := &frameBuffer{
-				Frame:  MakeFrame(r.typ, defaultChunksize),
+				Frame:  frame.Make(r.typ, defaultChunksize),
 				Reader: r.readers[i],
 				Index:  i,
 			}

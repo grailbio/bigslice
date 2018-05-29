@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -111,7 +112,7 @@ type Slice interface {
 
 type constSlice struct {
 	slicetype.Type
-	columns Frame
+	columns frame.Frame
 	nshard  int
 }
 
@@ -127,7 +128,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 	if s.nshard < 1 {
 		typecheck.Panic(1, "const: shard must be >= 1")
 	}
-	s.columns = make(Frame, len(columns))
+	s.columns = make(frame.Frame, len(columns))
 	var ok bool
 	s.Type, ok = typecheck.Slices(columns...)
 	if !ok {
@@ -152,15 +153,15 @@ func (*constSlice) Combiner() *reflect.Value { return nil }
 
 type constReader struct {
 	op      *constSlice
-	columns Frame
+	columns frame.Frame
 	shard   int
 }
 
-func (s *constReader) Read(ctx context.Context, out Frame) (int, error) {
+func (s *constReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if !slicetype.Assignable(s.op, out) {
 		return 0, errTypeError
 	}
-	n := CopyFrame(out, s.columns)
+	n := frame.Copy(out, s.columns)
 	m := s.columns.Len()
 	s.columns = s.columns.Slice(n, m)
 	if m == 0 {
@@ -187,7 +188,7 @@ func (s *constSlice) Reader(shard int, deps []Reader) Reader {
 	}
 	r := &constReader{
 		op:      s,
-		columns: make(Frame, len(s.columns)),
+		columns: make(frame.Frame, len(s.columns)),
 		shard:   shard,
 	}
 	for i := range r.columns {
@@ -257,7 +258,7 @@ type readerFuncSliceReader struct {
 	err   error
 }
 
-func (r *readerFuncSliceReader) Read(ctx context.Context, out Frame) (n int, err error) {
+func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	if r.err != nil {
 		return 0, r.err
 	}
@@ -328,12 +329,12 @@ func (*mapSlice) Combiner() *reflect.Value { return nil }
 
 type mapReader struct {
 	op     *mapSlice
-	reader Reader // parent reader
-	in     Frame  // buffer for input column vectors
+	reader Reader      // parent reader
+	in     frame.Frame // buffer for input column vectors
 	err    error
 }
 
-func (m *mapReader) Read(ctx context.Context, out Frame) (int, error) {
+func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
@@ -403,11 +404,11 @@ func (*filterSlice) Combiner() *reflect.Value { return nil }
 type filterReader struct {
 	op     *filterSlice
 	reader Reader
-	in     Frame
+	in     frame.Frame
 	err    error
 }
 
-func (f *filterReader) Read(ctx context.Context, out Frame) (n int, err error) {
+func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -495,13 +496,13 @@ type flatmapReader struct {
 	op     *flatmapSlice
 	reader Reader // underlying reader
 
-	in           Frame // buffer of inputs
+	in           frame.Frame // buffer of inputs
 	begIn, endIn int
-	out          Frame // buffer of outputs
+	out          frame.Frame // buffer of outputs
 	eof          bool
 }
 
-func (f *flatmapReader) Read(ctx context.Context, out Frame) (int, error) {
+func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if !slicetype.Assignable(out, f.op) {
 		return 0, errTypeError
 	}
@@ -514,7 +515,7 @@ func (f *flatmapReader) Read(ctx context.Context, out Frame) (int, error) {
 	}
 	// Add buffered output from last call, if any.
 	if f.out != nil {
-		n := CopyFrame(out, f.out)
+		n := frame.Copy(out, f.out)
 		begOut += n
 		if n == f.out.Len() {
 			f.out = nil
@@ -541,8 +542,8 @@ func (f *flatmapReader) Read(ctx context.Context, out Frame) (int, error) {
 		// output buffer.
 		for ; f.begIn < f.endIn && begOut < endOut; f.begIn++ {
 			f.in.CopyIndex(args, f.begIn)
-			result := Frame(f.op.fval.Call(args))
-			n := CopyFrame(out.Slice(begOut, endOut), result)
+			result := frame.Frame(f.op.fval.Call(args))
+			n := frame.Copy(out.Slice(begOut, endOut), result)
 			begOut += n
 			// We've run out of output space. In this case, stash the rest of
 			// our output into f.out, if any.
@@ -642,7 +643,7 @@ type foldReader struct {
 // Compute accumulates values across all keys in this shard. The entire
 // output is buffered in memory.
 func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
-	in := MakeFrame(f.op.dep, defaultChunksize)
+	in := frame.Make(f.op.dep, defaultChunksize)
 	accum := makeAccumulator(f.op.dep.Out(0), f.op.out.Out(1), f.op.fval)
 	for {
 		n, err := f.reader.Read(ctx, in)
@@ -656,7 +657,7 @@ func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 	}
 }
 
-func (f *foldReader) Read(ctx context.Context, out Frame) (int, error) {
+func (f *foldReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if f.err != nil {
 		return 0, f.err
 	}
@@ -704,7 +705,7 @@ func (h headSlice) Reader(shard int, deps []Reader) Reader {
 	return &headReader{deps[0], h.n}
 }
 
-func (h *headReader) Read(ctx context.Context, out Frame) (n int, err error) {
+func (h *headReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	if h.n <= 0 {
 		return 0, EOF
 	}
@@ -741,7 +742,7 @@ type scanReader struct {
 	reader Reader
 }
 
-func (s *scanReader) Read(ctx context.Context, out Frame) (n int, err error) {
+func (s *scanReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	err = s.slice.scan(s.shard, &Scanner{out: s.slice.Slice, readers: []Reader{s.reader}})
 	if err == nil {
 		err = EOF
