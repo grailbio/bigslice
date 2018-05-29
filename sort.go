@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 //go:generate go run gentype.go
@@ -50,7 +51,7 @@ var typeOfLessFunc = reflect.TypeOf((LessFunc)(nil))
 func RegisterLessFunc(lessFunc interface{}) {
 	typ := reflect.TypeOf(lessFunc)
 	bad := func() {
-		typePanicf(2, "expected func([]t) bigslice.LessFunc, got %v", typ)
+		typecheck.Panicf(2, "expected func([]t) bigslice.LessFunc, got %v", typ)
 	}
 	if got, want := typ.Kind(), reflect.Func; got != want {
 		bad()

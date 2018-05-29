@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 // A Scanner provides a convenient interface for reading records
@@ -38,12 +39,12 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 		return false
 	}
 	if len(out) != s.out.NumOut() {
-		s.err = typeErrorf(1, "wrong arity: expected %d columns, got %d", s.out.NumOut(), len(out))
+		s.err = typecheck.Errorf(1, "wrong arity: expected %d columns, got %d", s.out.NumOut(), len(out))
 		return false
 	}
 	for i := range out {
 		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.out.Out(i)); got != want {
-			s.err = typeErrorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
+			s.err = typecheck.Errorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
 			return false
 		}
 	}

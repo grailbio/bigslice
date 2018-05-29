@@ -8,6 +8,8 @@ import (
 	"encoding/gob"
 	"reflect"
 	"sync/atomic"
+
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 func init() {
@@ -45,11 +47,11 @@ func (f *FuncValue) In(i int) reflect.Type { return f.args[i] }
 // error if the provided arguments do not match in type or arity.
 func (f *FuncValue) Invocation(args ...interface{}) Invocation {
 	if len(args) != len(f.args) {
-		typePanicf(1, "wrong number of arguments: function takes %d arguments, got %d", len(f.args), len(args))
+		typecheck.Panicf(1, "wrong number of arguments: function takes %d arguments, got %d", len(f.args), len(args))
 	}
 	for i := range args {
 		if t := reflect.TypeOf(args[i]); t != f.args[i] {
-			typePanicf(1, "wrong type for argument %d: expected %s, got %s", i, f.args[i], t)
+			typecheck.Panicf(1, "wrong type for argument %d: expected %s, got %s", i, f.args[i], t)
 		}
 	}
 	return newInvocation(uint64(f.index), args...)
@@ -68,11 +70,11 @@ func (f *FuncValue) Apply(args ...interface{}) Slice {
 
 func (f *FuncValue) applyValue(args []reflect.Value) Slice {
 	if len(args) != len(f.args) {
-		typePanicf(1, "wrong number of arguments: expected %v, got %v", len(f.args), len(args))
+		typecheck.Panicf(1, "wrong number of arguments: expected %v, got %v", len(f.args), len(args))
 	}
 	for i := range f.args {
 		if f.args[i] != args[i].Type() {
-			typePanicf(1, "wrong type for argument %d: expected %v, got %v", i, f.args[i], args[i].Type())
+			typecheck.Panicf(1, "wrong type for argument %d: expected %v, got %v", i, f.args[i], args[i].Type())
 		}
 	}
 	out := f.fn.Call(args)
@@ -88,10 +90,10 @@ func Func(fn interface{}) *FuncValue {
 	fv := reflect.ValueOf(fn)
 	ftype := fv.Type()
 	if ftype.Kind() != reflect.Func {
-		typePanicf(1, "argument to reflect.Func is a %T, not a func", fn)
+		typecheck.Panicf(1, "argument to reflect.Func is a %T, not a func", fn)
 	}
 	if ftype.NumOut() != 1 || ftype.Out(0) != typeOfSlice {
-		typePanicf(1, "reflect.Func must return a single bigslice.Slice")
+		typecheck.Panicf(1, "reflect.Func must return a single bigslice.Slice")
 	}
 	v := new(FuncValue)
 	v.fn = fv

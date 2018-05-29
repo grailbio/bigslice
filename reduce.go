@@ -11,6 +11,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 var (
@@ -39,28 +40,24 @@ var (
 // definitions so that we can combine-read all partitions on one machine
 // simultaneously.
 func Reduce(slice Slice, reduce interface{}) Slice {
+	arg, ret, ok := typecheck.Func(reduce)
+	if !ok {
+		typecheck.Panicf(1, "reduce: invalid reduce function %T", reduce)
+	}
 	if slice.NumOut() != 2 {
-		typePanicf(1, "Reduce expects two columns, got %v", slice.NumOut())
+		typecheck.Panic(1, "reduce: input slice must have exactly two columns")
 	}
-	reduceval := reflect.ValueOf(reduce)
-	reducetyp := reduceval.Type()
-	if reducetyp.Kind() != reflect.Func {
-		typePanicf(1, "reduce must be of type func(x, y %s) %s, not %s", slice.Out(1), slice.Out(1), reducetyp)
-	}
-	if reducetyp.NumIn() != 2 || reducetyp.In(0) != reducetyp.In(1) || reducetyp.In(1) != slice.Out(1) {
-		typePanicf(1, "reduce must be of type func(x, y %s) %s, not %s", slice.Out(1), slice.Out(1), reducetyp)
-	}
-	if reducetyp.NumOut() != 1 || reducetyp.Out(0) != slice.Out(1) {
-		typePanicf(1, "reduce must be of type func(x, y %s) %s, not %s", slice.Out(1), slice.Out(1), reducetyp)
+	if arg.NumOut() != 2 || arg.Out(0) != slice.Out(1) || arg.Out(1) != slice.Out(1) || ret.NumOut() != 1 || ret.Out(0) != slice.Out(1) {
+		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, slice.Out(1), slice.Out(1), slice.Out(1))
 	}
 	if !canMakeCombiningFrame(slice) {
-		typePanicf(1, "cannot combine values for keys of type %s", slice.Out(0))
+		typecheck.Panicf(1, "cannot combine values for keys of type %s", slice.Out(0))
 	}
 	hasher := makeFrameHasher(slice.Out(0), 0)
 	if hasher == nil {
-		typePanicf(1, "key type %s is not partitionable", slice.Out(0))
+		typecheck.Panicf(1, "key type %s is not partitionable", slice.Out(0))
 	}
-	return &reduceSlice{slice, reduceval, hasher}
+	return &reduceSlice{slice, reflect.ValueOf(reduce), hasher}
 }
 
 // ReduceSlice implements "post shuffle" combining merge sort.

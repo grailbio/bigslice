@@ -19,6 +19,7 @@ import (
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 func init() {
@@ -178,28 +179,29 @@ func assertEqual(t *testing.T, slice Slice, sort bool, expect ...interface{}) {
 
 func expectTypeError(t *testing.T, message string, fn func()) {
 	t.Helper()
-	testCalldepth = 2
+	typecheck.TestCalldepth = 2
 	_, file, line, ok := runtime.Caller(1)
 	if !ok {
 		t.Fatal("runtime.Caller error")
 	}
 	defer func() {
-		testCalldepth = 0
+		t.Helper()
+		typecheck.TestCalldepth = 0
 		e := recover()
 		if e == nil {
 			t.Fatal("expected error")
 		}
-		err, ok := e.(typeError)
+		err, ok := e.(*typecheck.Error)
 		if !ok {
 			t.Fatalf("expected typeError, got %T", e)
 		}
-		if got, want := err.file, file; got != want {
+		if got, want := err.File, file; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
-		if got, want := err.line, line; got != want {
+		if got, want := err.Line, line; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
-		if got, want := err.err.Error(), message; got != want {
+		if got, want := err.Err.Error(), message; got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	}()
@@ -224,7 +226,7 @@ func TestConst(t *testing.T) {
 }
 
 func TestConstError(t *testing.T) {
-	expectTypeError(t, "invalid column 0: expected slice, got int", func() { Const(1, 123) })
+	expectTypeError(t, "const: invalid slice inputs", func() { Const(1, 123) })
 }
 
 func TestReaderFunc(t *testing.T) {
@@ -265,11 +267,11 @@ func TestReaderFunc(t *testing.T) {
 }
 
 func TestReaderFuncError(t *testing.T) {
-	expectTypeError(t, "reader functions need at least a shard argument, a state, and at least one column", func() { ReaderFunc(1, func() {}) })
-	expectTypeError(t, "expected a function, got string", func() { ReaderFunc(1, "invalid") })
-	expectTypeError(t, "reader functions must have an integer shard number as its first argument", func() { ReaderFunc(1, func(shard string, state string, x []int) (int, error) { panic("") }) })
-	expectTypeError(t, "reader function must return (int, error), got func(int, string, []int) error", func() { ReaderFunc(1, func(shard int, state string, x []int) error { panic("") }) })
-	expectTypeError(t, "reader functions need at least a shard argument, a state, and at least one column", func() { ReaderFunc(1, func(shard int, state string) (int, error) { panic("") }) })
+	expectTypeError(t, "readerfunc: invalid reader function type func()", func() { ReaderFunc(1, func() {}) })
+	expectTypeError(t, "readerfunc: invalid reader function type string", func() { ReaderFunc(1, "invalid") })
+	expectTypeError(t, "readerfunc: invalid reader function type func(string, string, []int) (int, error)", func() { ReaderFunc(1, func(shard string, state string, x []int) (int, error) { panic("") }) })
+	expectTypeError(t, "readerfunc: function func(int, string, []int) error does not return (int, error)", func() { ReaderFunc(1, func(shard int, state string, x []int) error { panic("") }) })
+	expectTypeError(t, "readerfunc: invalid reader function type func(int, string) (int, error)", func() { ReaderFunc(1, func(shard int, state string) (int, error) { panic("") }) })
 
 }
 
@@ -288,10 +290,10 @@ func TestMap(t *testing.T) {
 
 func TestMapError(t *testing.T) {
 	input := Const(1, []string{"x", "y"})
-	expectTypeError(t, "expected a function, got int", func() { Map(input, 123) })
-	expectTypeError(t, "expected type string for argument 0, got int", func() { Map(input, func(x int) string { return "" }) })
-	expectTypeError(t, "expected 1 argument, got 2", func() { Map(input, func(x, y int) string { return "" }) })
-	expectTypeError(t, "map functions need at least one output column", func() { Map(input, func(x string) {}) })
+	expectTypeError(t, "map: invalid map function int", func() { Map(input, 123) })
+	expectTypeError(t, "map: function func(int) string does not match input slice type slice[]string", func() { Map(input, func(x int) string { return "" }) })
+	expectTypeError(t, "map: function func(int, int) string does not match input slice type slice[]string", func() { Map(input, func(x, y int) string { return "" }) })
+	expectTypeError(t, "map: need at least one output column", func() { Map(input, func(x string) {}) })
 }
 
 func TestFilter(t *testing.T) {
@@ -326,12 +328,12 @@ func TestFilter(t *testing.T) {
 
 func TestFilterError(t *testing.T) {
 	input := Const(1, []string{"x", "y"})
-	expectTypeError(t, "expected a function, got int", func() { Filter(input, 123) })
-	expectTypeError(t, "wrong type for argument 0: expected string, not int", func() { Filter(input, func(x int) bool { return false }) })
-	expectTypeError(t, "expected 1 arguments, got 2", func() { Filter(input, func(x, y int) string { return "" }) })
-	expectTypeError(t, "predicates should return a single boolean value", func() { Filter(input, func(x string) {}) })
-	expectTypeError(t, "predicates should return a single boolean value", func() { Filter(input, func(x string) int { return 0 }) })
-	expectTypeError(t, "predicates should return a single boolean value", func() { Filter(input, func(x string) (bool, int) { return false, 0 }) })
+	expectTypeError(t, "filter: invalid predicate function int", func() { Filter(input, 123) })
+	expectTypeError(t, "filter: function func(int) bool does not match input slice type slice[]string", func() { Filter(input, func(x int) bool { return false }) })
+	expectTypeError(t, "filter: function func(int, int) string does not match input slice type slice[]string", func() { Filter(input, func(x, y int) string { return "" }) })
+	expectTypeError(t, "filter: predicate must return a single boolean value", func() { Filter(input, func(x string) {}) })
+	expectTypeError(t, "filter: predicate must return a single boolean value", func() { Filter(input, func(x string) int { return 0 }) })
+	expectTypeError(t, "filter: predicate must return a single boolean value", func() { Filter(input, func(x string) (bool, int) { return false, 0 }) })
 }
 
 func TestFlatmap(t *testing.T) {
@@ -390,10 +392,10 @@ func TestFlatmap(t *testing.T) {
 
 func TestFlatmapError(t *testing.T) {
 	input := Const(1, []int{1, 2, 3})
-	expectTypeError(t, "expected a function, got int", func() { Flatmap(input, 123) })
-	expectTypeError(t, "expected type int for argument 0, got string", func() { Flatmap(input, func(s string) []int { return nil }) })
-	expectTypeError(t, "output argument 0 must be a slice, not int", func() { Flatmap(input, func(i int) int { return 0 }) })
-	expectTypeError(t, "expected 1 arguments, got 2", func() { Flatmap(input, func(i, j int) []int { return nil }) })
+	expectTypeError(t, "flatmap: invalid flatmap function int", func() { Flatmap(input, 123) })
+	expectTypeError(t, "flatmap: flatmap function func(string) []int does not match input slice type slice[]int", func() { Flatmap(input, func(s string) []int { return nil }) })
+	expectTypeError(t, "flatmap: flatmap function func(int) int is not vectorized", func() { Flatmap(input, func(i int) int { return 0 }) })
+	expectTypeError(t, "flatmap: flatmap function func(int, int) []int does not match input slice type slice[]int", func() { Flatmap(input, func(i, j int) []int { return nil }) })
 
 }
 
@@ -443,12 +445,12 @@ func TestFoldError(t *testing.T) {
 	input := Const(1, []int{1, 2, 3})
 	floatInput := Map(input, func(x int) (float64, int) { return 0, 0 })
 	intInput := Map(input, func(x int) (int, int) { return 0, 0 })
-	expectTypeError(t, "key type float64 cannot be accumulated", func() { Fold(floatInput, func(x int) int { return 0 }) })
+	expectTypeError(t, "fold: key type float64 cannot be accumulated", func() { Fold(floatInput, func(x int) int { return 0 }) })
 	expectTypeError(t, "Fold can be applied only for slices with at least two columns; got 1", func() { Fold(input, func(x int) int { return 0 }) })
-	expectTypeError(t, "expected 2 arguments, got 1", func() { Fold(intInput, func(x int) int { return 0 }) })
-	expectTypeError(t, "expected output type int, got string", func() { Fold(intInput, func(a, x int) string { return "" }) })
-	expectTypeError(t, "accumulators must return a single value, not 2", func() { Fold(intInput, func(a, x int) (int, int) { return 0, 0 }) })
-	expectTypeError(t, "wrong type for argument 1: expected int, not string", func() { Fold(intInput, func(a int, x string) int { return 0 }) })
+	expectTypeError(t, "fold: expected func(acc, t2, t3, ..., tn), got func(int) int", func() { Fold(intInput, func(x int) int { return 0 }) })
+	expectTypeError(t, "fold: expected func(acc, t2, t3, ..., tn), got func(int, int) string", func() { Fold(intInput, func(a, x int) string { return "" }) })
+	expectTypeError(t, "fold: fold functions must return exactly one value", func() { Fold(intInput, func(a, x int) (int, int) { return 0, 0 }) })
+	expectTypeError(t, "fold: expected func(acc, t2, t3, ..., tn), got func(int, string) int", func() { Fold(intInput, func(a int, x string) int { return 0 }) })
 }
 
 func TestHead(t *testing.T) {

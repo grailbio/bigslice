@@ -8,6 +8,8 @@ import (
 	"container/heap"
 	"context"
 	"reflect"
+
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 type cogroupSlice struct {
@@ -38,17 +40,17 @@ type cogroupSlice struct {
 // encoding functionality also know how to read scanner values.
 func Cogroup(slices ...Slice) Slice {
 	if len(slices) == 0 {
-		typePanicf(1, "cogroup: exected at least one slice")
+		typecheck.Panic(1, "cogroup: expected at least one slice")
 	}
 	var keyType reflect.Type
 	for i, slice := range slices {
 		if slice.NumOut() == 0 {
-			typePanicf(1, "cogroup: slice %d has no columns", i)
+			typecheck.Panicf(1, "cogroup: slice %d has no columns", i)
 		}
 		if i == 0 {
 			keyType = slice.Out(0)
 		} else if got, want := slice.Out(0), keyType; got != want {
-			typePanicf(1, "cogroup: key column type mismatch: expected %s but got %s", want, got)
+			typecheck.Panicf(1, "cogroup: key column type mismatch: expected %s but got %s", want, got)
 		}
 	}
 
@@ -56,11 +58,11 @@ func Cogroup(slices ...Slice) Slice {
 	// each partition of each slice.
 	hasher := makeFrameHasher(keyType, 0)
 	if hasher == nil {
-		typePanicf(1, "cogroup: key type %s cannot be joined", keyType)
+		typecheck.Panicf(1, "cogroup: key type %s cannot be joined", keyType)
 	}
 	sorter := makeSorter(keyType, 0)
 	if sorter == nil {
-		typePanicf(1, "cogroup: key type %s cannot be joined", keyType)
+		typecheck.Panicf(1, "cogroup: key type %s cannot be joined", keyType)
 	}
 	out := []reflect.Type{keyType}
 	for _, slice := range slices {

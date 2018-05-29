@@ -13,6 +13,7 @@ import (
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 // TODO(marius): use ARC or something similary adaptive when
@@ -65,7 +66,7 @@ func canMakeCombiningFrame(typ slicetype.Type) bool {
 // if there is type disagreement.
 func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFrame {
 	if typ.NumOut() != 2 {
-		typePanicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
+		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}
 	f := new(CombiningFrame)
 	f.Indexer = makeIndexer(typ.Out(0))

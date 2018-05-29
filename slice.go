@@ -14,6 +14,7 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 // testCalldepth is used by tests to verify the correctness of
@@ -109,8 +110,8 @@ type Slice interface {
 }
 
 type constSlice struct {
+	slicetype.Type
 	columns Frame
-	types   []reflect.Type
 	nshard  int
 }
 
@@ -119,30 +120,28 @@ type constSlice struct {
 // type. The value is split into nshard shards.
 func Const(nshard int, columns ...interface{}) Slice {
 	if len(columns) == 0 {
-		typePanicf(1, "const slice takes at least one column")
+		typecheck.Panic(1, "const: must have at least one column")
 	}
 	s := new(constSlice)
 	s.nshard = nshard
 	if s.nshard < 1 {
-		typePanicf(1, "const slices need at least one shard")
+		typecheck.Panic(1, "const: shard must be >= 1")
 	}
 	s.columns = make(Frame, len(columns))
-	s.types = make([]reflect.Type, len(columns))
+	var ok bool
+	s.Type, ok = typecheck.Slices(columns...)
+	if !ok {
+		typecheck.Panic(1, "const: invalid slice inputs")
+	}
 	for i := range s.columns {
 		s.columns[i] = reflect.ValueOf(columns[i])
-		if s.columns[i].Kind() != reflect.Slice {
-			typePanicf(1, "invalid column %d: expected slice, got %T", i, columns[i])
-		}
-		s.types[i] = s.columns[i].Type().Elem()
 		if i > 0 && s.columns[i].Len() != s.columns[i-1].Len() {
-			typePanicf(1, "column %d length does not match column %d", i, i-1)
+			typecheck.Panicf(1, "const: column %d length does not match column %d", i, i-1)
 		}
 	}
 	return s
 }
 
-func (s *constSlice) NumOut() int            { return len(s.columns) }
-func (s *constSlice) Out(c int) reflect.Type { return s.types[c] }
 func (*constSlice) Op() string               { return "const" }
 func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
@@ -198,10 +197,10 @@ func (s *constSlice) Reader(shard int, deps []Reader) Reader {
 }
 
 type readerFuncSlice struct {
+	slicetype.Type
 	nshard    int
 	read      reflect.Value
 	stateType reflect.Type
-	out       []reflect.Type
 }
 
 // ReaderFunc returns a Slice that uses the provided function to read
@@ -228,33 +227,21 @@ func ReaderFunc(nshard int, read interface{}) Slice {
 	s := new(readerFuncSlice)
 	s.nshard = nshard
 	s.read = reflect.ValueOf(read)
-	ftype := s.read.Type()
-	if ftype.Kind() != reflect.Func {
-		typePanicf(1, "expected a function, got %T", read)
+	arg, ret, ok := typecheck.Func(read)
+	if !ok || arg.NumOut() < 3 || arg.Out(0).Kind() != reflect.Int {
+		typecheck.Panicf(1, "readerfunc: invalid reader function type %T", read)
 	}
-	if ftype.NumIn() < 3 {
-		typePanicf(1, "reader functions need at least a shard argument, a state, and at least one column")
+	if ret.Out(0).Kind() != reflect.Int || ret.Out(1) != typeOfError {
+		typecheck.Panicf(1, "readerfunc: function %T does not return (int, error)", read)
 	}
-	if ftype.In(0).Kind() != reflect.Int {
-		typePanicf(1, "reader functions must have an integer shard number as its first argument")
-	}
-	s.stateType = ftype.In(1)
-	s.out = make([]reflect.Type, ftype.NumIn()-2)
-	for i := range s.out {
-		argType := ftype.In(i + 2)
-		if argType.Kind() != reflect.Slice {
-			typePanicf(1, "wrong type for argument %d: expected a slice, got %s", i+2, argType)
-		}
-		s.out[i] = argType.Elem()
-	}
-	if ftype.NumOut() != 2 || ftype.Out(0).Kind() != reflect.Int || ftype.Out(1) != typeOfError {
-		typePanicf(1, "reader function must return (int, error), got %s", ftype)
+	s.stateType = arg.Out(1)
+	arg = slicetype.Slice(arg, 2, arg.NumOut())
+	if s.Type, ok = typecheck.Devectorize(arg); !ok {
+		typecheck.Panicf(1, "readerfunc: function %T is not vectorized", read)
 	}
 	return s
 }
 
-func (r *readerFuncSlice) NumOut() int            { return len(r.out) }
-func (r *readerFuncSlice) Out(c int) reflect.Type { return r.out[c] }
 func (*readerFuncSlice) Op() string               { return "reader" }
 func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
@@ -300,7 +287,7 @@ func (r *readerFuncSlice) Reader(shard int, reader []Reader) Reader {
 type mapSlice struct {
 	Slice
 	fval reflect.Value
-	out  []reflect.Type
+	out  slicetype.Type
 }
 
 // Map transforms a slice by invoking a function for each record. The
@@ -316,33 +303,22 @@ func Map(slice Slice, fn interface{}) Slice {
 	m := new(mapSlice)
 	m.Slice = slice
 	m.fval = reflect.ValueOf(fn)
-	ftype := m.fval.Type()
-	if ftype.Kind() != reflect.Func {
-		typePanicf(1, "expected a function, got %T", fn)
+	arg, ret, ok := typecheck.Func(fn)
+	if !ok {
+		typecheck.Panicf(1, "map: invalid map function %T", fn)
 	}
-	if got, want := ftype.NumIn(), slice.NumOut(); got != want {
-		if want == 1 {
-			typePanicf(1, "expected 1 argument, got %d", got)
-		}
-		typePanicf(1, "expected %d arguments, got %d", want, got)
+	if !typecheck.Equal(slice, arg) {
+		typecheck.Panicf(1, "map: function %T does not match input slice type %s", fn, slicetype.String(slice))
 	}
-	for i := 0; i < ftype.NumIn(); i++ {
-		if got, want := ftype.In(i), slice.Out(i); got != want {
-			typePanicf(1, "expected type %v for argument %d, got %v", want, i, got)
-		}
+	if ret.NumOut() == 0 {
+		typecheck.Panicf(1, "map: need at least one output column")
 	}
-	if ftype.NumOut() == 0 {
-		typePanicf(1, "map functions need at least one output column")
-	}
-	m.out = make([]reflect.Type, ftype.NumOut())
-	for i := range m.out {
-		m.out[i] = ftype.Out(i)
-	}
+	m.out = ret
 	return m
 }
 
-func (m *mapSlice) NumOut() int            { return len(m.out) }
-func (m *mapSlice) Out(c int) reflect.Type { return m.out[c] }
+func (m *mapSlice) NumOut() int            { return m.out.NumOut() }
+func (m *mapSlice) Out(c int) reflect.Type { return m.out.Out(c) }
 func (*mapSlice) ShardType() ShardType     { return HashShard }
 func (m *mapSlice) Op() string             { return "map" }
 func (*mapSlice) NumDep() int              { return 1 }
@@ -406,20 +382,15 @@ func Filter(slice Slice, pred interface{}) Slice {
 	f := new(filterSlice)
 	f.Slice = slice
 	f.pred = reflect.ValueOf(pred)
-	ftype := f.pred.Type()
-	if ftype.Kind() != reflect.Func {
-		typePanicf(1, "expected a function, got %T", pred)
+	arg, ret, ok := typecheck.Func(pred)
+	if !ok {
+		typecheck.Panicf(1, "filter: invalid predicate function %T", pred)
 	}
-	if got, want := ftype.NumIn(), slice.NumOut(); got != want {
-		typePanicf(1, "expected %d arguments, got %d", want, got)
+	if !typecheck.Equal(slice, arg) {
+		typecheck.Panicf(1, "filter: function %T does not match input slice type %s", pred, slicetype.String(slice))
 	}
-	if ftype.NumOut() != 1 || ftype.Out(0).Kind() != reflect.Bool {
-		typePanicf(1, "predicates should return a single boolean value")
-	}
-	for i := 0; i < ftype.NumIn(); i++ {
-		if got, want := ftype.In(i), slice.Out(i); got != want {
-			typePanicf(1, "wrong type for argument %d: expected %s, not %s", i, want, got)
-		}
+	if ret.NumOut() != 1 || ret.Out(0).Kind() != reflect.Bool {
+		typecheck.Panic(1, "filter: predicate must return a single boolean value")
 	}
 	return f
 }
@@ -477,7 +448,7 @@ type flatmapSlice struct {
 	file string
 	line int
 	fval reflect.Value
-	out  []reflect.Type
+	out  slicetype.Type
 }
 
 // Flatmap returns a Slice that applies the function fn to each
@@ -493,29 +464,17 @@ func Flatmap(slice Slice, fn interface{}) Slice {
 	f := new(flatmapSlice)
 	f.Slice = slice
 	f.fval = reflect.ValueOf(fn)
-	ftype := f.fval.Type()
-	if ftype.Kind() != reflect.Func {
-		typePanicf(1, "expected a function, got %T", fn)
+	arg, ret, ok := typecheck.Func(fn)
+	if !ok {
+		typecheck.Panicf(1, "flatmap: invalid flatmap function %T", fn)
 	}
-	if got, want := ftype.NumIn(), slice.NumOut(); got != want {
-		typePanicf(1, "expected %d arguments, got %v", want, got)
+	if !typecheck.Equal(slice, arg) {
+		typecheck.Panicf(1, "flatmap: flatmap function %T does not match input slice type %s", fn, slicetype.String(slice))
 	}
-	for i := 0; i < slice.NumOut(); i++ {
-		if got, want := ftype.In(i), slice.Out(i); got != want {
-			typePanicf(1, "expected type %v for argument %d, got %v", want, i, got)
-		}
+	f.out, ok = typecheck.Devectorize(ret)
+	if !ok {
+		typecheck.Panicf(1, "flatmap: flatmap function %T is not vectorized", fn)
 	}
-	if ftype.NumOut() == 0 {
-		typePanicf(1, "flatmap functions must have at least one output parameter")
-	}
-	f.out = make([]reflect.Type, ftype.NumOut())
-	for i := 0; i < ftype.NumOut(); i++ {
-		if ftype.Out(i).Kind() != reflect.Slice {
-			typePanicf(1, "output argument %d must be a slice, not %s", i, ftype.Out(i))
-		}
-		f.out[i] = ftype.Out(i).Elem()
-	}
-	var ok bool
 	_, f.file, f.line, ok = runtime.Caller(1)
 	if !ok {
 		log.Print("bigslice.Flatmap: failed to retrieve caller location")
@@ -523,8 +482,8 @@ func Flatmap(slice Slice, fn interface{}) Slice {
 	return f
 }
 
-func (f *flatmapSlice) NumOut() int            { return len(f.out) }
-func (f *flatmapSlice) Out(c int) reflect.Type { return f.out[c] }
+func (f *flatmapSlice) NumOut() int            { return f.out.NumOut() }
+func (f *flatmapSlice) Out(c int) reflect.Type { return f.out.Out(c) }
 func (*flatmapSlice) ShardType() ShardType     { return HashShard }
 func (*flatmapSlice) Op() string               { return "flatmap" }
 func (*flatmapSlice) NumDep() int              { return 1 }
@@ -609,8 +568,7 @@ type foldSlice struct {
 	Slice
 	hasher FrameHasher
 	fval   reflect.Value
-	ftype  reflect.Type
-	out    []reflect.Type
+	out    slicetype.Type
 	dep    Dep
 }
 
@@ -633,14 +591,14 @@ type foldSlice struct {
 //	Fold(Slice<t1, t2, ..., tn>, func(accum acctype, v2 t2, ..., vn tn) acctype) Slice<t1, acctype>
 func Fold(slice Slice, fold interface{}) Slice {
 	if n := slice.NumOut(); n < 2 {
-		typePanicf(1, "Fold can be applied only for slices with at least two columns; got %d", n)
+		typecheck.Panicf(1, "Fold can be applied only for slices with at least two columns; got %d", n)
 	}
 	hasher := makeFrameHasher(slice.Out(0), 0)
 	if hasher == nil {
-		typePanicf(1, "key type %s is not partitionable", slice.Out(0))
+		typecheck.Panicf(1, "fold: key type %s is not partitionable", slice.Out(0))
 	}
 	if !canMakeAccumulatorForKey(slice.Out(0)) {
-		typePanicf(1, "key type %s cannot be accumulated", slice.Out(0))
+		typecheck.Panicf(1, "fold: key type %s cannot be accumulated", slice.Out(0))
 	}
 	f := new(foldSlice)
 	f.Slice = slice
@@ -649,32 +607,25 @@ func Fold(slice Slice, fold interface{}) Slice {
 	// TODO(marius): allow deps to express shuffling by other columns.
 	f.dep = Dep{slice, true, false}
 	f.fval = reflect.ValueOf(fold)
-	f.ftype = f.fval.Type()
-	if f.ftype.Kind() != reflect.Func {
-		typePanicf(1, "expected a function, got %T", fold)
+
+	arg, ret, ok := typecheck.Func(fold)
+	if !ok {
+		typecheck.Panicf(1, "fold: invalid fold function %T", fold)
 	}
-	// Accumulator plus remainder of columns
-	if got, want := f.ftype.NumIn(), slice.NumOut(); got != want {
-		typePanicf(1, "expected %d arguments, got %d", want, got)
+	if ret.NumOut() != 1 {
+		typecheck.Panicf(1, "fold: fold functions must return exactly one value")
 	}
-	if n := f.ftype.NumOut(); n != 1 {
-		typePanicf(1, "accumulators must return a single value, not %d", n)
+	// func(acc, t2, t3, ..., tn)
+	if got, want := arg, slicetype.Append(ret, slicetype.Slice(slice, 1, slice.NumOut())); !typecheck.Equal(got, want) {
+		typecheck.Panicf(1, "fold: expected func(acc, t2, t3, ..., tn), got %T", fold)
 	}
-	if got, want := f.ftype.Out(0), f.ftype.In(0); got != want {
-		typePanicf(1, "expected output type %s, got %s", want, got)
-	}
-	for i := 1; i < f.ftype.NumIn(); i++ {
-		if got, want := f.ftype.In(i), slice.Out(i); got != want {
-			typePanicf(1, "wrong type for argument %d: expected %s, not %s", i, want, got)
-		}
-	}
-	// Output: key, accumulated.
-	f.out = []reflect.Type{slice.Out(0), f.ftype.Out(0)}
+	// output: key, accumulator
+	f.out = slicetype.New(slice.Out(0), ret.Out(0))
 	return f
 }
 
-func (f *foldSlice) NumOut() int            { return len(f.out) }
-func (f *foldSlice) Out(c int) reflect.Type { return f.out[c] }
+func (f *foldSlice) NumOut() int            { return f.out.NumOut() }
+func (f *foldSlice) Out(c int) reflect.Type { return f.out.Out(c) }
 func (f *foldSlice) Hasher() FrameHasher    { return f.hasher }
 func (f *foldSlice) Op() string             { return "fold" }
 func (*foldSlice) NumDep() int              { return 1 }
@@ -692,7 +643,7 @@ type foldReader struct {
 // output is buffered in memory.
 func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 	in := MakeFrame(f.op.dep, defaultChunksize)
-	accum := makeAccumulator(f.op.dep.Out(0), f.op.out[1], f.op.fval)
+	accum := makeAccumulator(f.op.dep.Out(0), f.op.out.Out(1), f.op.fval)
 	for {
 		n, err := f.reader.Read(ctx, in)
 		if err != nil && err != EOF {
@@ -809,34 +760,6 @@ func String(slice Slice) string {
 		types[i] = fmt.Sprint(slice.Out(i))
 	}
 	return fmt.Sprintf("%s<%s>", slice.Op(), strings.Join(types, ", "))
-}
-
-type typeError struct {
-	err  error
-	file string
-	line int
-}
-
-func newTypeError(calldepth int, err error) typeError {
-	e := typeError{err: err}
-	var ok bool
-	_, e.file, e.line, ok = runtime.Caller(calldepth + 1 + testCalldepth)
-	if !ok {
-		e.file = "<unknown>"
-	}
-	return e
-}
-
-func typeErrorf(calldepth int, format string, args ...interface{}) typeError {
-	return newTypeError(calldepth+1, fmt.Errorf(format, args...))
-}
-
-func typePanicf(calldepth int, format string, args ...interface{}) {
-	panic(typeErrorf(calldepth+1, format, args...))
-}
-
-func (err typeError) Error() string {
-	return fmt.Sprintf("%s:%d: %v", err.file, err.line, err.err)
 }
 
 func singleDep(i int, slice Slice, shuffle bool) Dep {

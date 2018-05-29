@@ -7,7 +7,10 @@
 // slicetype.Types.
 package slicetype
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+)
 
 // A Type is the type of a set of columns.
 type Type interface {
@@ -51,4 +54,62 @@ func Columns(typ Type) []reflect.Type {
 		out[i] = typ.Out(i)
 	}
 	return out
+}
+
+func Concat(types ...Type) Type {
+	var t typeSlice
+	for _, typ := range types {
+		t = append(t, Columns(typ)...)
+	}
+	return t
+}
+
+func String(typ Type) string {
+	elems := make([]string, typ.NumOut())
+	for i := range elems {
+		elems[i] = typ.Out(i).String()
+	}
+	return "slice[]" + strings.Join(elems, ",")
+}
+
+type appendType struct {
+	t1, t2 Type
+}
+
+func (a appendType) NumOut() int {
+	return a.t1.NumOut() + a.t2.NumOut()
+}
+
+func (a appendType) Out(i int) reflect.Type {
+	if i < a.t1.NumOut() {
+		return a.t1.Out(i)
+	}
+	return a.t2.Out(i - a.t1.NumOut())
+}
+
+func Append(t1, t2 Type) Type {
+	return appendType{t1, t2}
+}
+
+type sliceType struct {
+	t    Type
+	i, j int
+}
+
+func (s sliceType) NumOut() int {
+	return s.j - s.i
+}
+
+func (s sliceType) Out(i int) reflect.Type {
+	if i >= s.NumOut() {
+		panic("invalid index")
+	}
+	return s.t.Out(s.i + i)
+}
+
+func Slice(t Type, i, j int) Type {
+	if i < 0 || i > t.NumOut() || j < i || j > t.NumOut() {
+		panic("slice: invalid argument")
+	}
+	return sliceType{t, i, j}
 }

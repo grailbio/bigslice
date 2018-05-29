@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 // A Frame is a list of column vectors of equal lengths (i.e., it's
@@ -79,12 +80,12 @@ func Columns(cols ...interface{}) Frame {
 	for i, col := range cols {
 		val := reflect.ValueOf(col)
 		if val.Kind() != reflect.Slice {
-			typePanicf(1, "expected slice, got %v", val.Type())
+			typecheck.Panicf(1, "expected slice, got %v", val.Type())
 		}
 		if n < 0 {
 			n = val.Len()
 		} else if val.Len() != n {
-			typePanicf(1,
+			typecheck.Panicf(1,
 				"inconsistent column lengths: "+
 					"column %d has length %d, previous columns have length %d",
 				i, val.Len(), n,
