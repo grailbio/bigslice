@@ -11,6 +11,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -54,8 +55,8 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if !canMakeCombiningFrame(slice) {
 		typecheck.Panicf(1, "cannot combine values for keys of type %s", slice.Out(0))
 	}
-	hasher := makeFrameHasher(slice.Out(0), 0)
-	if hasher == nil {
+	var hasher kernel.Hasher
+	if !kernel.Lookup(slice.Out(0), &hasher) {
 		typecheck.Panicf(1, "key type %s is not partitionable", slice.Out(0))
 	}
 	return &reduceSlice{slice, reflect.ValueOf(reduce), hasher}
@@ -65,10 +66,10 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 type reduceSlice struct {
 	Slice
 	combiner reflect.Value
-	hasher   FrameHasher
+	hasher   kernel.Hasher
 }
 
-func (r *reduceSlice) Hasher() FrameHasher      { return r.hasher }
+func (r *reduceSlice) Hasher() kernel.Hasher    { return r.hasher }
 func (r *reduceSlice) Op() string               { return "reduce" }
 func (*reduceSlice) NumDep() int                { return 1 }
 func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
@@ -80,7 +81,7 @@ type reduceReader struct {
 	readers  []Reader
 	err      error
 
-	sorter Sorter
+	sorter kernel.Sorter
 	heap   *frameBufferHeap
 }
 
@@ -89,7 +90,9 @@ func (r *reduceReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		return 0, r.err
 	}
 	if r.heap == nil {
-		r.sorter = makeSorter(r.typ.Out(0), 0)
+		if !kernel.Lookup(r.typ.Out(0), &r.sorter) {
+			panic("bigslice.Reducer: invalid reduce type")
+		}
 		r.heap = new(frameBufferHeap)
 		r.heap.Sorter = r.sorter
 		r.heap.Buffers = make([]*frameBuffer, 0, len(r.readers))

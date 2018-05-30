@@ -11,6 +11,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -62,7 +63,10 @@ func TestSort(t *testing.T) {
 	for i := 0; i < f.Len(); i++ {
 		f[2].Index(i).SetString(f[0].Index(i).String() + f[1].Index(i).String())
 	}
-	sorter := makeSorter(typeOfString, 0)
+	var sorter kernel.Sorter
+	if !kernel.Lookup(typeOfString, &sorter) {
+		t.Fatal("no sorter")
+	}
 	if sorter.IsSorted(f) {
 		t.Fatal("unlikely")
 	}
@@ -86,10 +90,13 @@ func TestMergeReader(t *testing.T) {
 	)
 
 	var (
-		sorter  = makeSorter(typeOfString, 0)
+		sorter  kernel.Sorter
 		frames  = make([]frame.Frame, M)
 		readers = make([]Reader, M)
 	)
+	if !kernel.Lookup(typeOfString, &sorter) {
+		t.Fatal("no kernel")
+	}
 	for i := range frames {
 		f := fuzzFrame(fz, N, typeOfString, typeOfString, typeOfString)
 		// Replace the third column with the concatenation of the two first
@@ -136,7 +143,10 @@ func TestSortReader(t *testing.T) {
 		ctx = context.Background()
 		typ = slicetype.New(typeOfString, typeOfInt)
 	)
-	sorter := makeSorter(typeOfString, 0)
+	var sorter kernel.Sorter
+	if !kernel.Lookup(typeOfString, &sorter) {
+		t.Fatal("no sorter")
+	}
 	sorted, err := sortReader(ctx, sorter, 1<<19, typ, r)
 	if err != nil {
 		t.Fatal(err)
@@ -160,30 +170,5 @@ func TestSortReader(t *testing.T) {
 	}
 	if !sorter.IsSorted(out) {
 		t.Error("output not sorted")
-	}
-}
-
-type customType struct{ val int }
-
-func TestSorterFunc(t *testing.T) {
-	RegisterLessFunc(func(vals []customType) LessFunc {
-		return func(i, j int) bool {
-			return vals[i].val < vals[j].val
-		}
-	})
-	f := frame.Columns(
-		[]customType{{5}, {1}, {4}},
-		[]string{"five", "one", "four"},
-	)
-	sorter := makeSorter(f.Out(0), 0)
-	sorter.Sort(f)
-	if !sorter.IsSorted(f) {
-		t.Error("frame not sorted")
-	}
-	if got, want := f[0].Interface().([]customType), ([]customType{{1}, {4}, {5}}); !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	if got, want := f[1].Interface().([]string), ([]string{"one", "four", "five"}); !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
 	}
 }

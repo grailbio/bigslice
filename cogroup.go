@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -17,8 +18,8 @@ type cogroupSlice struct {
 	slices   []Slice
 	out      []reflect.Type
 	numShard int
-	hasher   FrameHasher
-	sorter   Sorter
+	hasher   kernel.Hasher
+	sorter   kernel.Sorter
 }
 
 // Cogroup returns a slice that, for each key in any slice, contains
@@ -57,13 +58,13 @@ func Cogroup(slices ...Slice) Slice {
 
 	// We need a hasher for partitioning and a sorter for sorting
 	// each partition of each slice.
-	hasher := makeFrameHasher(keyType, 0)
-	if hasher == nil {
+	var hasher kernel.Hasher
+	if !kernel.Lookup(keyType, &hasher) {
 		typecheck.Panicf(1, "cogroup: key type %s cannot be joined", keyType)
 	}
-	sorter := makeSorter(keyType, 0)
-	if sorter == nil {
-		typecheck.Panicf(1, "cogroup: key type %s cannot be joined", keyType)
+	var sorter kernel.Sorter
+	if !kernel.Lookup(keyType, &sorter) {
+		typecheck.Panicf(1, "cogroup: no kernel.Sorter for key type %s", keyType)
 	}
 	out := []reflect.Type{keyType}
 	for _, slice := range slices {
@@ -95,7 +96,7 @@ func (c *cogroupSlice) ShardType() ShardType { return HashShard }
 
 func (c *cogroupSlice) NumOut() int            { return len(c.out) }
 func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
-func (c *cogroupSlice) Hasher() FrameHasher    { return c.hasher }
+func (c *cogroupSlice) Hasher() kernel.Hasher  { return c.hasher }
 func (c *cogroupSlice) Op() string             { return "cogroup" }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
@@ -104,8 +105,8 @@ func (*cogroupSlice) Combiner() *reflect.Value { return nil }
 type cogroupReader struct {
 	err    error
 	op     *cogroupSlice
-	hasher FrameHasher
-	sorter Sorter
+	hasher kernel.Hasher
+	sorter kernel.Sorter
 
 	readers []Reader
 

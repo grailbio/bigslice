@@ -14,6 +14,7 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -91,7 +92,7 @@ type Slice interface {
 
 	// Hasher returns the hasher used to partition this slice's
 	// inputs, if any.
-	Hasher() FrameHasher
+	Hasher() kernel.Hasher
 
 	// NumDep returns the number of dependencies of this Slice.
 	NumDep() int
@@ -148,7 +149,7 @@ func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
-func (*constSlice) Hasher() FrameHasher      { return nil }
+func (*constSlice) Hasher() kernel.Hasher    { return nil }
 func (*constSlice) Combiner() *reflect.Value { return nil }
 
 type constReader struct {
@@ -248,7 +249,7 @@ func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
-func (*readerFuncSlice) Hasher() FrameHasher      { return nil }
+func (*readerFuncSlice) Hasher() kernel.Hasher    { return nil }
 func (*readerFuncSlice) Combiner() *reflect.Value { return nil }
 
 type readerFuncSliceReader struct {
@@ -324,7 +325,7 @@ func (*mapSlice) ShardType() ShardType     { return HashShard }
 func (m *mapSlice) Op() string             { return "map" }
 func (*mapSlice) NumDep() int              { return 1 }
 func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
-func (*mapSlice) Hasher() FrameHasher      { return nil }
+func (*mapSlice) Hasher() kernel.Hasher    { return nil }
 func (*mapSlice) Combiner() *reflect.Value { return nil }
 
 type mapReader struct {
@@ -489,7 +490,7 @@ func (*flatmapSlice) ShardType() ShardType     { return HashShard }
 func (*flatmapSlice) Op() string               { return "flatmap" }
 func (*flatmapSlice) NumDep() int              { return 1 }
 func (f *flatmapSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*flatmapSlice) Hasher() FrameHasher      { return nil }
+func (*flatmapSlice) Hasher() kernel.Hasher    { return nil }
 func (*flatmapSlice) Combiner() *reflect.Value { return nil }
 
 type flatmapReader struct {
@@ -567,7 +568,7 @@ func (f *flatmapSlice) Reader(shard int, deps []Reader) Reader {
 
 type foldSlice struct {
 	Slice
-	hasher FrameHasher
+	hasher kernel.Hasher
 	fval   reflect.Value
 	out    slicetype.Type
 	dep    Dep
@@ -594,8 +595,8 @@ func Fold(slice Slice, fold interface{}) Slice {
 	if n := slice.NumOut(); n < 2 {
 		typecheck.Panicf(1, "Fold can be applied only for slices with at least two columns; got %d", n)
 	}
-	hasher := makeFrameHasher(slice.Out(0), 0)
-	if hasher == nil {
+	var hasher kernel.Hasher
+	if !kernel.Lookup(slice.Out(0), &hasher) {
 		typecheck.Panicf(1, "fold: key type %s is not partitionable", slice.Out(0))
 	}
 	if !canMakeAccumulatorForKey(slice.Out(0)) {
@@ -627,7 +628,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 
 func (f *foldSlice) NumOut() int            { return f.out.NumOut() }
 func (f *foldSlice) Out(c int) reflect.Type { return f.out.Out(c) }
-func (f *foldSlice) Hasher() FrameHasher    { return f.hasher }
+func (f *foldSlice) Hasher() kernel.Hasher  { return f.hasher }
 func (f *foldSlice) Op() string             { return "fold" }
 func (*foldSlice) NumDep() int              { return 1 }
 func (f *foldSlice) Dep(i int) Dep          { return f.dep }

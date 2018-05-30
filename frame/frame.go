@@ -219,6 +219,13 @@ func (f Frame) Swapper() func(i, j int) {
 	}
 }
 
+// Swap swaps the rows i and j in frame f. Frequent users of swapping
+// should create a reusable swapper through Frame.Swapper instead of
+// calling Swap repeatedly.
+func (f Frame) Swap(i, j int) {
+	f.Swapper()(i, j)
+}
+
 // Clear zeros out the frame.
 func (f Frame) Clear() {
 	// TODO(marius): here we can safely use unsafe to zero out entire

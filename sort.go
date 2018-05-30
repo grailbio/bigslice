@@ -7,150 +7,17 @@ package bigslice
 import (
 	"container/heap"
 	"context"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
-	"sync"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
-	"github.com/grailbio/bigslice/typecheck"
 )
-
-//go:generate go run gentype.go
-
-var (
-	lessMu        sync.RWMutex
-	makeLessFuncs = map[reflect.Type]reflect.Value{}
-)
-
-// A LessFunc is used to compare the values of two indices of column
-// slices. It is used to implement user-defined sorts.
-type LessFunc func(i, j int) bool
-
-var typeOfLessFunc = reflect.TypeOf((LessFunc)(nil))
-
-// RegisterLessFunc registers a function of the form
-//
-//	func(vals []someType) LessFunc
-//
-// that will then be used to sort and compare values of the type
-// "someType". This is required to make user-defined types work with
-// Cogroup and related operations.
-//
-// RegisterLessFunc panics if the value does not comply to the (schematic)
-// function signature
-//
-//	<t>func([]t) LessFunc
-//
-// or if a function of that type has already been registered.
-func RegisterLessFunc(lessFunc interface{}) {
-	typ := reflect.TypeOf(lessFunc)
-	bad := func() {
-		typecheck.Panicf(2, "expected func([]t) bigslice.LessFunc, got %v", typ)
-	}
-	if got, want := typ.Kind(), reflect.Func; got != want {
-		bad()
-	}
-	if got, want := typ.NumIn(), 1; got != want {
-		bad()
-	}
-	arg := typ.In(0)
-	if got, want := arg.Kind(), reflect.Slice; got != want {
-		bad()
-	}
-	if got, want := typ.NumOut(), 1; got != want {
-		bad()
-	}
-	ret := typ.Out(0)
-	if got, want := ret, typeOfLessFunc; got != want {
-		bad()
-	}
-	lessMu.Lock()
-	defer lessMu.Unlock()
-	if _, ok := makeLessFuncs[arg.Elem()]; ok {
-		panic(fmt.Sprintf("sorter for type %s already registered", arg.Elem()))
-	}
-	makeLessFuncs[arg.Elem()] = reflect.ValueOf(lessFunc)
-}
-
-// A Sorter implements a sort for a Frame schema.
-type Sorter interface {
-	// Sort sorts the provided frame.
-	Sort(frame.Frame)
-	// Less returns true if row i of frame f is less than
-	// row j of frame g.
-	Less(f frame.Frame, i int, g frame.Frame, j int) bool
-	// IsSorted tells whether the provided frame is sorted.
-	IsSorted(frame.Frame) bool
-}
-
-type lessSorter struct {
-	col      int
-	lessFunc reflect.Value
-}
-
-func (l *lessSorter) Sort(f frame.Frame) {
-	less := l.lessFunc.Call([]reflect.Value{f[l.col]})[0].Interface().(LessFunc)
-	sortFrame(f, less)
-}
-
-func (l *lessSorter) Less(f frame.Frame, i int, g frame.Frame, j int) bool {
-	// TODO(marius): this is not ideal; rethink the Less interface.
-	keys := reflect.MakeSlice(reflect.SliceOf(f.Out(l.col)), 2, 2)
-	keys.Index(0).Set(f[l.col].Index(i))
-	keys.Index(1).Set(g[l.col].Index(j))
-	less := l.lessFunc.Call([]reflect.Value{keys})[0].Interface().(LessFunc)
-	return less(0, 1)
-}
-
-func (l *lessSorter) IsSorted(f frame.Frame) bool {
-	col := f[l.col]
-	less := l.lessFunc.Call([]reflect.Value{col})[0].Interface().(LessFunc)
-	return sort.SliceIsSorted(col.Interface(), less)
-}
-
-func makeSorter(typ reflect.Type, col int) Sorter {
-	lessMu.RLock()
-	fn, ok := makeLessFuncs[typ]
-	lessMu.RUnlock()
-	if ok {
-		return &lessSorter{col, fn}
-	}
-	return makeSorterGen(typ, col)
-}
-
-type frameSorter struct {
-	frame.Frame
-	swappers []func(i, j int)
-	less     func(i, j int) bool
-}
-
-func (s frameSorter) Less(i, j int) bool { return s.less(i, j) }
-
-func (s frameSorter) Swap(i, j int) {
-	for _, swap := range s.swappers {
-		swap(i, j)
-	}
-}
-
-// SortFrame sorts the provided frame using the provided
-// comparison function.
-func sortFrame(f frame.Frame, less func(i, j int) bool) {
-	var s frameSorter
-	s.Frame = f
-	s.swappers = make([]func(i, j int), len(f))
-	for i := range f {
-		s.swappers[i] = reflect.Swapper(f[i].Interface())
-	}
-	s.less = less
-	sort.Sort(s)
-}
 
 // SortReader sorts a Reader using the provided Sorter. SortReader
 // may spill to disk, in which case it targets spill file sizes of
@@ -159,7 +26,7 @@ func sortFrame(f frame.Frame, less func(i, j int) bool) {
 // rows in order to estimate the size of future reads. The estimate
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
-func sortReader(ctx context.Context, sorter Sorter, spillTarget int, typ slicetype.Type, r Reader) (Reader, error) {
+func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r Reader) (Reader, error) {
 	spill, err := newSpiller()
 	if err != nil {
 		return nil, err
@@ -320,7 +187,7 @@ func (f *frameBuffer) Fill(ctx context.Context) error {
 // ordered by the provided sorter.
 type frameBufferHeap struct {
 	Buffers []*frameBuffer
-	Sorter  Sorter
+	Sorter  kernel.Sorter
 }
 
 func (f *frameBufferHeap) Len() int { return len(f.Buffers) }
@@ -354,7 +221,7 @@ type mergeReader struct {
 // NewMergeReader returns a new mergeReader that is sorted
 // according to the provided Sorter. The readers to be merged
 // must already be sorted according to the same.
-func newMergeReader(ctx context.Context, typ slicetype.Type, sorter Sorter, readers []Reader) (*mergeReader, error) {
+func newMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []Reader) (*mergeReader, error) {
 	h := new(frameBufferHeap)
 	h.Sorter = sorter
 	h.Buffers = make([]*frameBuffer, 0, len(readers))

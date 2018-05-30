@@ -1,0 +1,121 @@
+// THIS FILE WAS AUTOMATICALLY GENERATED. DO NOT EDIT.
+
+package kernel
+
+import (
+	"sort"
+	"math"
+	"reflect"
+	"hash/fnv"
+
+	"github.com/grailbio/bigslice/frame"
+)
+
+func init() {
+	{{range .}}Register(reflect.TypeOf((*{{.Type}})(nil)).Elem(), {{.Type}}Kernel{})
+	{{end}}}
+
+{{range .}}
+
+type {{.Type}}Kernel struct{}
+
+var (
+	_ Sorter = {{.Type}}Kernel{}
+	_ Hasher = {{.Type}}Kernel{}
+	_ Indexer = {{.Type}}Kernel{}
+)
+
+func ({{.Type}}Kernel) Sort(f frame.Frame) {
+	v := f[0].Interface().([]{{.Type}})
+	sortFrame(f, func(i, j int) bool { return v[i] < v[j] })
+}
+
+func ({{.Type}}Kernel) Less(x frame.Frame, i int, y frame.Frame, j int) bool {
+	return x[0].Index(i).{{.ValueMethod}}() < y[0].Index(j).{{.ValueMethod}}()
+}
+
+func ({{.Type}}Kernel) IsSorted(f frame.Frame) bool {
+	v := f[0].Interface().([]{{.Type}})
+	return sort.SliceIsSorted(v, func(i, j int) bool { return v[i] < v[j] })
+}
+
+func ({{.Type}}Kernel) HashFrame(f frame.Frame, sum []uint32) {
+	vec := f[0].Interface().([]{{.Type}})
+	{{if eq .Type "string" }}h := fnv.New32a()
+	for i := range sum {
+		h.Write([]byte(vec[i]))
+		sum[i] = h.Sum32()
+		h.Reset()
+	}{{else}}for i := range sum {
+		{{ if eq .Type "float32" }}sum[i] = hash32(math.Float32bits(vec[i]))
+		{{ else if eq .Type "uint8" "uint16" "uint32" "int8" "int16" "int32"}}sum[i] = hash32(uint32(vec[i]))
+		{{ else if eq .Type "float64" }}sum[i] = hash64(math.Float64bits(vec[i]))
+		{{ else if eq .Type "uint" "int" "uint64" "int64" "uintptr" }}sum[i] = hash64(uint64(vec[i]))
+	{{end}}}{{end}}
+}
+
+type {{.Type}}Index map[{{.Type}}]int
+
+func (x {{.Type}}Index) Index(f frame.Frame, indices []int) {
+	vec := f[0].Interface().([]{{.Type}})
+	for i := range indices {
+		ix, ok := x[vec[i]]
+		if !ok {
+			ix = len(x)
+			x[vec[i]] = ix
+		}
+		indices[i] = ix
+	}
+}
+
+func ({{.Type}}Kernel) Index(f frame.Frame) Index {
+	vec := f[0].Interface().([]{{.Type}})
+	x := make({{.Type}}Index, len(vec))
+	for _, key := range vec {
+		if _, ok := x[key]; ok {
+			continue
+		}
+		x[key] = len(x)
+	}
+	return x
+}
+
+{{end}}
+
+type frameSorter struct {
+	frame.Frame
+	swap func(i, j int)
+	less     func(i, j int) bool
+}
+
+func (s frameSorter) Less(i, j int) bool { return s.less(i, j) }
+func (s frameSorter) Swap(i, j int) { s.swap(i, j) }
+
+// SortFrame sorts the provided frame using the provided
+// comparison function.
+func sortFrame(f frame.Frame, less func(i, j int) bool) {
+	sort.Sort(frameSorter{
+		Frame: f,
+		swap: f.Swapper(),
+		less: less,
+	})
+}
+
+// Hash32 is the 32-bit integer hashing function from
+// http://burtleburtle.net/bob/hash/integer.html. (Public domain.)
+func hash32(x uint32) uint32 {
+	x = (x + 0x7ed55d16) + (x << 12)
+	x = (x ^ 0xc761c23c) ^ (x >> 19)
+	x = (x + 0x165667b1) + (x << 5)
+	x = (x + 0xd3a2646c) ^ (x << 9)
+	x = (x + 0xfd7046c5) + (x << 3)
+	x = (x ^ 0xb55a4f09) ^ (x >> 16)
+	return x
+}
+
+// Hash64 uses hash32 to compute a 64-bit integer hash.
+func hash64(x uint64) uint32 {
+	lo := hash32(uint32(x))
+	hi := hash32(uint32(x >> 32))
+	return lo ^ hi
+}

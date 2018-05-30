@@ -17,6 +17,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -118,7 +119,7 @@ type Task struct {
 	NumPartition int
 	// Hasher is used to compute hashes of Frame rows, used to partition
 	// a Frame's output.
-	Hasher FrameHasher
+	Hasher kernel.Hasher
 
 	// Combiner specifies an (optional) combiner to use for this task's output.
 	// If a Combiner is specified, CombineKey names the combine buffer used:

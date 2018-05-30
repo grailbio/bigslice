@@ -13,6 +13,7 @@ import (
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -35,8 +36,6 @@ type CombiningFrame struct {
 	// Frame is the data frame that is being combined. Frame is
 	// continually appended as new keys appear.
 	frame.Frame
-	// Indexer is used to maintain an index on the Frame's key column.
-	Indexer
 	// Combiner is a function that combines values in the frame.
 	// It should have the signature func(x, y t) t, where t is the type
 	// of Frame[1].
@@ -44,6 +43,10 @@ type CombiningFrame struct {
 
 	// Swap swaps two elements of Frame.
 	swap func(i, j int)
+
+	// Index stores the index on the frame's Frame's key column.
+	index   kernel.Index
+	indexer kernel.Indexer
 
 	// Hits stores the hit count per index.
 	hits []int
@@ -59,7 +62,7 @@ type CombiningFrame struct {
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
 func canMakeCombiningFrame(typ slicetype.Type) bool {
-	return typ.NumOut() == 2 && makeIndexer(typ.Out(0)) != nil
+	return typ.NumOut() == 2 && kernel.Implements(typ.Out(0), kernel.IndexerInterface)
 }
 
 // MakeCombiningFrame creates and returns a new CombiningFrame
@@ -70,8 +73,7 @@ func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFr
 		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}
 	f := new(CombiningFrame)
-	f.Indexer = makeIndexer(typ.Out(0))
-	if f.Indexer == nil {
+	if !kernel.Lookup(typ.Out(0), &f.indexer) {
 		return nil
 	}
 	f.Frame = frame.Make(typ, 0, defaultChunksize)
@@ -88,7 +90,10 @@ func (c *CombiningFrame) Combine(f frame.Frame) {
 	if cap(c.indices) < n {
 		c.indices = make([]int, n)
 	}
-	c.Index(f, c.indices[:n])
+	if c.index == nil {
+		c.index = c.indexer.Index(f)
+	}
+	c.index.Index(f, c.indices[:n])
 	for i := 0; i < n; i++ {
 		ix := c.indices[i]
 		if ix >= c.n {
@@ -128,7 +133,7 @@ func (c *CombiningFrame) Compact(n int) frame.Frame {
 	}
 	var g frame.Frame
 	c.Frame, g = c.Slice(0, n), c.Slice(n, c.Len())
-	c.Indexer.Reindex(c.Frame)
+	c.index = c.indexer.Index(c.Frame)
 	c.hits = c.hits[:n]
 	c.n = n
 	return g
@@ -143,7 +148,7 @@ type combiner struct {
 
 	targetSize int
 	comb       *CombiningFrame
-	sorter     Sorter
+	sorter     kernel.Sorter
 	combiner   reflect.Value
 	spiller    spiller
 	name       string
@@ -167,7 +172,9 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 		return nil, err
 	}
 	c.comb = makeCombiningFrame(c, comb)
-	c.sorter = makeSorter(typ.Out(0), 0)
+	if !kernel.Lookup(typ.Out(0), &c.sorter) {
+		typecheck.Panicf(1, "bigslice.newCombiner: no sorter kernel for type %s", typ.Out(0))
+	}
 	return c, nil
 }
 

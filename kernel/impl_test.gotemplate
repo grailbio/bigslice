@@ -1,0 +1,88 @@
+// THIS FILE WAS AUTOMATICALLY GENERATED. DO NOT EDIT.
+
+package kernel
+
+import (
+	"reflect"
+	"testing"
+
+	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicetype"
+)
+
+var (
+	{{range .}}typeOf{{.TypeCap}} = reflect.TypeOf((*{{.Type}})(nil)).Elem()
+	{{end}})
+
+{{range .}}
+
+func Test{{.TypeCap}}Implements(t *testing.T) {
+	interfaces := []reflect.Type{
+		SorterInterface,
+		HasherInterface,
+		IndexerInterface,
+	}
+	for _, iface := range interfaces {
+		if !Implements(typeOf{{.TypeCap}}, iface) {
+			t.Errorf("interface %s not implemented", iface)
+		}
+	}
+}
+
+func Test{{.TypeCap}}Sort(t *testing.T) {
+	const N = 1000
+	var sorter Sorter
+	if !Lookup(typeOf{{.TypeCap}}, &sorter) {	
+		t.Fatal("no implementation")
+	}
+	f := frame.Make(slicetype.New(typeOf{{.TypeCap}}), N)
+	fuzzFrame(f)
+	sorter.Sort(f)
+	if !sorter.IsSorted(f) {
+		t.Error("not sorted")
+	}
+	for i := 1; i < N; i++ {
+		if sorter.Less(f, i, f, i-1) {
+			t.Errorf("sorter.Less: %d", i)
+		}
+	}
+}
+
+
+func Test{{.TypeCap}}Hasher(t *testing.T) {
+	var hasher Hasher
+	if !Lookup(typeOf{{.TypeCap}}, &hasher) {
+		t.Fatal("no implementation")
+	}
+}
+
+func Test{{.TypeCap}}Index(t *testing.T) {
+	const N = 1000
+	var indexer Indexer
+	if !Lookup(typeOf{{.TypeCap}}, &indexer) {
+		t.Fatal("no implementation")
+	}
+	f := frame.Make(slicetype.New(typeOf{{.TypeCap}}), N)
+	fuzzFrame(f)
+	index := indexer.Index(f)
+	ix := make([]int, f.Len())
+	index.Index(f, ix)
+	for _, i := range ix {
+		if i >= f.Len() {
+			t.Errorf("invalid index %v", i)
+		}
+	}
+}
+
+{{end}}
+
+func fuzzFrame(f frame.Frame) {
+	fz := fuzz.New()
+	fz.NilChance(0)
+	for _, col := range f {
+		for i := 0; i < f.Len(); i++ {
+			fz.Fuzz(col.Index(i).Addr().Interface())
+		}
+	}
+}
