@@ -14,6 +14,7 @@ import (
 
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 // LocalExecutor is an executor that runs tasks in-process in
@@ -59,10 +60,10 @@ func (l *localExecutor) runTask(task *Task) {
 	ctx := context.Background()
 	l.limiter.Acquire(ctx, 1)
 	defer l.limiter.Release(1)
-	in := make([]Reader, 0, len(task.Deps))
+	in := make([]sliceio.Reader, 0, len(task.Deps))
 	for _, dep := range task.Deps {
 		reader := new(multiReader)
-		reader.q = make([]Reader, len(dep.Tasks))
+		reader.q = make([]sliceio.Reader, len(dep.Tasks))
 		for j, deptask := range dep.Tasks {
 			reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
 		}
@@ -76,7 +77,7 @@ func (l *localExecutor) runTask(task *Task) {
 			buf := frame.Make(dep.Tasks[0], defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
-				if err != nil && err != EOF {
+				if err != nil && err != sliceio.EOF {
 					task.Error(err)
 					return
 				}
@@ -84,7 +85,7 @@ func (l *localExecutor) runTask(task *Task) {
 					task.Error(err)
 					return
 				}
-				if err == EOF {
+				if err == sliceio.EOF {
 					break
 				}
 			}
@@ -119,7 +120,7 @@ func (l *localExecutor) runTask(task *Task) {
 	task.Unlock()
 }
 
-func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) Reader {
+func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) sliceio.Reader {
 	l.mu.Lock()
 	buf := l.buffers[task]
 	l.mu.Unlock()
@@ -131,10 +132,10 @@ func (*localExecutor) HandleDebug(*http.ServeMux) {}
 // BufferOutput reads the output from reader and places it in a
 // task buffer. If the output is partitioned, bufferOutput invokes
 // the task's partitioner in order to determine the correct partition.
-func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, error) {
+func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuffer, error) {
 	if task.NumOut() == 0 {
 		_, err := out.Read(ctx, nil)
-		if err == EOF {
+		if err == sliceio.EOF {
 			err = nil
 		}
 		return nil, err
@@ -156,7 +157,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 			in = frame.Make(task, defaultChunksize)
 		}
 		n, err := out.Read(ctx, in)
-		if err != nil && err != EOF {
+		if err != nil && err != sliceio.EOF {
 			return nil, err
 		}
 		// If the output needs to be partitioned, we ask the partitioner to
@@ -184,7 +185,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 			buf[0] = append(buf[0], in)
 			in = nil
 		}
-		if err == EOF {
+		if err == sliceio.EOF {
 			break
 		}
 	}
@@ -192,7 +193,7 @@ func bufferOutput(ctx context.Context, task *Task, out Reader) (taskBuffer, erro
 }
 
 type multiReader struct {
-	q   []Reader
+	q   []sliceio.Reader
 	err error
 }
 
@@ -203,7 +204,7 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 	for len(m.q) > 0 {
 		n, err := m.q[0].Read(ctx, out)
 		switch {
-		case err == EOF:
+		case err == sliceio.EOF:
 			err = nil
 			m.q = m.q[1:]
 		case err != nil:
@@ -213,5 +214,5 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 			return n, err
 		}
 	}
-	return 0, EOF
+	return 0, sliceio.EOF
 }

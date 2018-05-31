@@ -15,6 +15,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -27,12 +28,6 @@ var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
 
 // DefaultChunkSize is the default size used for IO vectors throughout bigslice.
 const defaultChunksize = 1024
-
-// EOF is the error returned by (Reader).Read when no more data is
-// available. EOF is intended as a sentinel error: it signals a
-// graceful end of output. If output terminates unexpectedly, a
-// different error should be returned.
-var EOF = errors.New("EOF")
 
 var errTypeError = errors.New("type error")
 
@@ -108,7 +103,7 @@ type Slice interface {
 	// itself computes the shard's values on demand. The caller must
 	// provide Readers for all of this shard's dependencies, constructed
 	// according to the dependency type (see Dep).
-	Reader(shard int, deps []Reader) Reader
+	Reader(shard int, deps []sliceio.Reader) sliceio.Reader
 }
 
 type constSlice struct {
@@ -166,15 +161,15 @@ func (s *constReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	m := s.columns.Len()
 	s.columns = s.columns.Slice(n, m)
 	if m == 0 {
-		return n, EOF
+		return n, sliceio.EOF
 	}
 	return n, nil
 }
 
-func (s *constSlice) Reader(shard int, deps []Reader) Reader {
+func (s *constSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	n := s.columns[0].Len()
 	if n == 0 {
-		return emptyReader{}
+		return sliceio.EmptyReader{}
 	}
 	// The last shard gets truncated when the data cannot be split
 	// evenly.
@@ -182,7 +177,7 @@ func (s *constSlice) Reader(shard int, deps []Reader) Reader {
 	beg := shardn * shard
 	end := beg + shardn
 	if beg >= n {
-		return emptyReader{}
+		return sliceio.EmptyReader{}
 	}
 	if end >= n {
 		end = n
@@ -282,7 +277,7 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 	return n, r.err
 }
 
-func (r *readerFuncSlice) Reader(shard int, reader []Reader) Reader {
+func (r *readerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Reader {
 	return &readerFuncSliceReader{op: r, shard: shard}
 }
 
@@ -330,8 +325,8 @@ func (*mapSlice) Combiner() *reflect.Value { return nil }
 
 type mapReader struct {
 	op     *mapSlice
-	reader Reader      // parent reader
-	in     frame.Frame // buffer for input column vectors
+	reader sliceio.Reader // parent reader
+	in     frame.Frame    // buffer for input column vectors
 	err    error
 }
 
@@ -361,7 +356,7 @@ func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	return n, m.err
 }
 
-func (m *mapSlice) Reader(shard int, deps []Reader) Reader {
+func (m *mapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &mapReader{op: m, reader: deps[0]}
 }
 
@@ -404,7 +399,7 @@ func (*filterSlice) Combiner() *reflect.Value { return nil }
 
 type filterReader struct {
 	op     *filterSlice
-	reader Reader
+	reader sliceio.Reader
 	in     frame.Frame
 	err    error
 }
@@ -441,7 +436,7 @@ func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err er
 	return m, f.err
 }
 
-func (f *filterSlice) Reader(shard int, deps []Reader) Reader {
+func (f *filterSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &filterReader{op: f, reader: deps[0]}
 }
 
@@ -495,7 +490,7 @@ func (*flatmapSlice) Combiner() *reflect.Value { return nil }
 
 type flatmapReader struct {
 	op     *flatmapSlice
-	reader Reader // underlying reader
+	reader sliceio.Reader // underlying reader
 
 	in           frame.Frame // buffer of inputs
 	begIn, endIn int
@@ -533,11 +528,11 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			// dynamically keep track of the average input:output ratio?
 			f.in = f.in.Realloc(f.op.Slice, out.Len())
 			n, err := f.reader.Read(ctx, f.in)
-			if err != nil && err != EOF {
+			if err != nil && err != sliceio.EOF {
 				return 0, err
 			}
 			f.begIn, f.endIn = 0, n
-			f.eof = err == EOF
+			f.eof = err == sliceio.EOF
 		}
 		// Consume one input at a time, as long as we have space in our
 		// output buffer.
@@ -557,12 +552,12 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 	// We're EOF if we've encountered an EOF from the underlying
 	// reader, there's no buffered output, and no buffered input.
 	if f.eof && f.out == nil && f.begIn == f.endIn {
-		err = EOF
+		err = sliceio.EOF
 	}
 	return begOut, err
 }
 
-func (f *flatmapSlice) Reader(shard int, deps []Reader) Reader {
+func (f *flatmapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &flatmapReader{op: f, reader: deps[0]}
 }
 
@@ -636,7 +631,7 @@ func (*foldSlice) Combiner() *reflect.Value { return nil }
 
 type foldReader struct {
 	op     *foldSlice
-	reader Reader
+	reader sliceio.Reader
 	accum  Accumulator
 	err    error
 }
@@ -648,11 +643,11 @@ func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 	accum := makeAccumulator(f.op.dep.Out(0), f.op.out.Out(1), f.op.fval)
 	for {
 		n, err := f.reader.Read(ctx, in)
-		if err != nil && err != EOF {
+		if err != nil && err != sliceio.EOF {
 			return nil, err
 		}
 		accum.Accumulate(in, n)
-		if err == EOF {
+		if err == sliceio.EOF {
 			return accum, nil
 		}
 	}
@@ -676,7 +671,7 @@ func (f *foldReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	return n, f.err
 }
 
-func (f *foldSlice) Reader(shard int, deps []Reader) Reader {
+func (f *foldSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &foldReader{op: f, reader: deps[0]}
 }
 
@@ -698,17 +693,17 @@ func (h headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false)
 func (headSlice) Combiner() *reflect.Value { return nil }
 
 type headReader struct {
-	reader Reader
+	reader sliceio.Reader
 	n      int
 }
 
-func (h headSlice) Reader(shard int, deps []Reader) Reader {
+func (h headSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &headReader{deps[0], h.n}
 }
 
 func (h *headReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
 	if h.n <= 0 {
-		return 0, EOF
+		return 0, sliceio.EOF
 	}
 	n, err = h.reader.Read(ctx, out)
 	h.n -= n
@@ -720,13 +715,13 @@ func (h *headReader) Read(ctx context.Context, out frame.Frame) (n int, err erro
 
 type scanSlice struct {
 	Slice
-	scan func(shard int, scanner *Scanner) error
+	scan func(shard int, scanner *sliceio.Scanner) error
 }
 
 // Scan invokes a function for each shard of the input Slice.
 // It returns a unit Slice: Scan is inteded to be used for its side
 // effects.
-func Scan(slice Slice, scan func(shard int, scanner *Scanner) error) Slice {
+func Scan(slice Slice, scan func(shard int, scanner *sliceio.Scanner) error) Slice {
 	return scanSlice{slice, scan}
 }
 
@@ -740,18 +735,18 @@ func (scanSlice) Combiner() *reflect.Value { return nil }
 type scanReader struct {
 	slice  scanSlice
 	shard  int
-	reader Reader
+	reader sliceio.Reader
 }
 
 func (s *scanReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
-	err = s.slice.scan(s.shard, &Scanner{out: s.slice.Slice, readers: []Reader{s.reader}})
+	err = s.slice.scan(s.shard, &sliceio.Scanner{Type: s.slice.Slice, Reader: s.reader})
 	if err == nil {
-		err = EOF
+		err = sliceio.EOF
 	}
 	return 0, err
 }
 
-func (s scanSlice) Reader(shard int, deps []Reader) Reader {
+func (s scanSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &scanReader{s, shard, deps[0]}
 }
 

@@ -12,6 +12,7 @@ import (
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -37,7 +38,7 @@ type fuzzReader struct {
 
 func (f *fuzzReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if f.N == 0 {
-		return 0, EOF
+		return 0, sliceio.EOF
 	}
 	n := out.Len()
 	if f.N < n {
@@ -92,7 +93,7 @@ func TestMergeReader(t *testing.T) {
 	var (
 		sorter  kernel.Sorter
 		frames  = make([]frame.Frame, M)
-		readers = make([]Reader, M)
+		readers = make([]sliceio.Reader, M)
 	)
 	if !kernel.Lookup(typeOfString, &sorter) {
 		t.Fatal("no kernel")
@@ -106,7 +107,7 @@ func TestMergeReader(t *testing.T) {
 		}
 		sorter.Sort(f)
 		frames[i] = f
-		readers[i] = &frameReader{f}
+		readers[i] = sliceio.FrameReader(f)
 	}
 
 	ctx := context.Background()
@@ -116,8 +117,8 @@ func TestMergeReader(t *testing.T) {
 	}
 
 	out := frame.Make(frames[0], N*M)
-	n, err := ReadFull(ctx, m, out)
-	if err != nil && err != EOF {
+	n, err := sliceio.ReadFull(ctx, m, out)
+	if err != nil && err != sliceio.EOF {
 		t.Fatal(err)
 	}
 	if got, want := n, N*M; got != want {
@@ -126,8 +127,8 @@ func TestMergeReader(t *testing.T) {
 	if !sorter.IsSorted(out) {
 		t.Error("frame not sorted")
 	}
-	n, err = ReadFull(ctx, m, out)
-	if got, want := err, EOF; got != want {
+	n, err = sliceio.ReadFull(ctx, m, out)
+	if got, want := err, sliceio.EOF; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if got, want := n, 0; got != want {
@@ -152,16 +153,16 @@ func TestSortReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := frame.Make(typ, N)
-	n, err := ReadFull(ctx, sorted, out)
-	if err != nil && err != EOF {
+	n, err := sliceio.ReadFull(ctx, sorted, out)
+	if err != nil && err != sliceio.EOF {
 		t.Fatal(err)
 	}
 	if got, want := n, N; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if err == nil {
-		n, err = ReadFull(ctx, sorted, frame.Make(typ, 1))
-		if got, want := err, EOF; got != want {
+		n, err = sliceio.ReadFull(ctx, sorted, frame.Make(typ, 1))
+		if got, want := err, sliceio.EOF; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
 		if got, want := n, 0; got != want {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -111,7 +112,7 @@ type Task struct {
 	// Do starts computation for this task, returning a reader that
 	// computes batches of values on demand. Do is invoked with readers
 	// for the task's dependencies.
-	Do func([]Reader) Reader
+	Do func([]sliceio.Reader) sliceio.Reader
 	// Deps are the task's dependencies. See TaskDep for details.
 	Deps []TaskDep
 	// NumPartition is the number of partitions that are output by this task.

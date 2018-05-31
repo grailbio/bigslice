@@ -5,12 +5,10 @@
 package bigslice
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
-	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 // TaskBuffer is an in-memory buffer of task output. It has the
@@ -56,7 +54,7 @@ loop:
 	for {
 		switch {
 		case len(r.q) == r.i:
-			return 0, EOF
+			return 0, sliceio.EOF
 		case len(r.q[r.i]) == r.j:
 			r.i++
 			r.j, r.k = 0, 0
@@ -79,45 +77,9 @@ loop:
 }
 
 // Reader returns a Reader for a partition of the taskBuffer.
-func (b taskBuffer) Reader(partition int) Reader {
+func (b taskBuffer) Reader(partition int) sliceio.Reader {
 	if len(b) == 0 {
-		return emptyReader{}
+		return sliceio.EmptyReader{}
 	}
 	return &taskBufferReader{q: b[partition : partition+1]}
-}
-
-// SliceBuffer buffers serialized slice output in memory. The data are stored
-// as a gob-stream where records are as batches in column-major form.
-type sliceBuffer struct {
-	bytes.Buffer
-
-	enc *gob.Encoder
-	dec *gob.Decoder
-}
-
-// WriteColumns serializes a batch of records into the buffer.
-func (s *sliceBuffer) WriteColumns(columns ...reflect.Value) error {
-	if s.enc == nil {
-		s.enc = gob.NewEncoder(&s.Buffer)
-	}
-	for i := range columns {
-		if err := s.enc.EncodeValue(columns[i]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ReadColumns deserializes a batch of records into the provided column
-// pointers. This interface is provided for testing.
-func (s *sliceBuffer) ReadColumns(columnptrs ...reflect.Value) error {
-	if s.dec == nil {
-		s.dec = gob.NewDecoder(&s.Buffer)
-	}
-	for i := range columnptrs {
-		if err := s.dec.DecodeValue(columnptrs[i]); err != nil {
-			return err
-		}
-	}
-	return nil
 }

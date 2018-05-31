@@ -27,6 +27,7 @@ import (
 	"github.com/grailbio/bigmachine/ec2system"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/slicecmd"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 func init() {
@@ -54,7 +55,7 @@ var domainCounts = bigslice.Func(func(files []string, prefix string) bigslice.Sl
 		for i := range urls {
 			fields, err := state.reader.Read()
 			if err == io.EOF {
-				return i, bigslice.EOF
+				return i, sliceio.EOF
 			}
 			if err != nil {
 				return i, err
@@ -76,7 +77,7 @@ var domainCounts = bigslice.Func(func(files []string, prefix string) bigslice.Sl
 		return
 	})
 	slice = bigslice.Fold(slice, func(a, e int) int { return a + e })
-	slice = bigslice.Scan(slice, func(shard int, scan *bigslice.Scanner) error {
+	slice = bigslice.Scan(slice, func(shard int, scan *sliceio.Scanner) error {
 		f, err := file.Create(ctx, fmt.Sprintf("%s-%03d-of-%03d", prefix, shard, len(files)))
 		if err != nil {
 			return err

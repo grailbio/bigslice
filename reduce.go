@@ -12,6 +12,7 @@ import (
 
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -78,7 +79,7 @@ func (r *reduceSlice) Combiner() *reflect.Value { return &r.combiner }
 type reduceReader struct {
 	typ      slicetype.Type
 	combiner reflect.Value
-	readers  []Reader
+	readers  []sliceio.Reader
 	err      error
 
 	sorter kernel.Sorter
@@ -103,7 +104,7 @@ func (r *reduceReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 				Index:  i,
 			}
 			switch err := buf.Fill(ctx); {
-			case err == EOF:
+			case err == sliceio.EOF:
 				// No data. Skip.
 			case err != nil:
 				r.err = err
@@ -138,7 +139,7 @@ func (r *reduceReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 			}
 			buf.Off++
 			if buf.Off == buf.Len {
-				if err := buf.Fill(ctx); err != nil && err != EOF {
+				if err := buf.Fill(ctx); err != nil && err != sliceio.EOF {
 					r.err = err
 					return n, err
 				} else if err == nil {
@@ -154,12 +155,12 @@ func (r *reduceReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	}
 	var err error
 	if len(r.heap.Buffers) == 0 {
-		err = EOF
+		err = sliceio.EOF
 	}
 	return n, err
 }
 
-func (r *reduceSlice) Reader(shard int, deps []Reader) Reader {
+func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	if len(deps) == 1 {
 		return deps[0]
 	}

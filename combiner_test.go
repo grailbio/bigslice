@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -98,16 +99,16 @@ func TestCombiner(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	n, err := c.WriteTo(ctx, NewEncoder(&b))
+	n, err := c.WriteTo(ctx, sliceio.NewEncoder(&b))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := n, int64(4); got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	r := newDecodingReader(&b)
+	r := sliceio.NewDecodingReader(&b)
 	g := frame.Make(f, int(n))
-	m, err := ReadFull(ctx, r, g)
+	m, err := sliceio.ReadFull(ctx, r, g)
 	if err != nil {
 		t.Fatal(err)
 	}

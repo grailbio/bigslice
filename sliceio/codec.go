@@ -2,9 +2,10 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package sliceio
 
 import (
+	"context"
 	"encoding/gob"
 	"io"
 	"reflect"
@@ -60,4 +61,52 @@ func (d *Decoder) Decode(columnptrs ...reflect.Value) error {
 		}
 	}
 	return nil
+}
+
+// DecodingReader provides a Reader on top of a gob stream
+// encoded with batches of rows stored in column-major order.
+type decodingReader struct {
+	dec      *gob.Decoder
+	off, len int
+	buf      []reflect.Value // points to slices
+	err      error
+}
+
+// NewDecodingReader returns a new Reader that decodes values from
+// the provided stream. Since values are streamed in vectors, decoding
+// reader must buffer values until they are read by the consumer.
+func NewDecodingReader(r io.Reader) Reader {
+	return &decodingReader{dec: gob.NewDecoder(r)}
+}
+
+func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
+	if d.err != nil {
+		return 0, d.err
+	}
+	for d.off == d.len {
+		if d.buf == nil {
+			d.buf = make([]reflect.Value, len(f))
+			for i := range d.buf {
+				d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
+			}
+		}
+		// Read the next batch.
+		for i := range f {
+			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
+				if d.err == io.EOF {
+					d.err = EOF
+				}
+				return 0, d.err
+			}
+		}
+		d.off = 0
+		d.len = d.buf[0].Elem().Len()
+	}
+	if d.len > 0 {
+		for i := range f {
+			n = reflect.Copy(f[i], d.buf[i].Elem().Slice(d.off, d.len))
+		}
+		d.off += n
+	}
+	return n, nil
 }

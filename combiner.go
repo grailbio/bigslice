@@ -14,6 +14,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -230,7 +231,7 @@ func (c *combiner) Discard() error {
 
 // Reader returns a reader that streams the contents of this combiner.
 // A call to Reader invalidates the combiner.
-func (c *combiner) Reader() (Reader, error) {
+func (c *combiner) Reader() (sliceio.Reader, error) {
 	defer c.spiller.Cleanup()
 	readers, err := c.spiller.Readers()
 	if err != nil {
@@ -239,7 +240,7 @@ func (c *combiner) Reader() (Reader, error) {
 	f := c.comb.Frame
 	c.comb = nil
 	c.sorter.Sort(f)
-	readers = append(readers, &frameReader{f})
+	readers = append(readers, sliceio.FrameReader(f))
 	return &reduceReader{
 		typ:      c,
 		combiner: c.combiner,
@@ -251,7 +252,7 @@ func (c *combiner) Reader() (Reader, error) {
 // encoder. A call to WriteTo invalidates the combiner. WriteTo
 // merges content from the spilled combiner frames together with the
 // current in-memory frame.
-func (c *combiner) WriteTo(ctx context.Context, enc *Encoder) (int64, error) {
+func (c *combiner) WriteTo(ctx context.Context, enc *sliceio.Encoder) (int64, error) {
 	// TODO: this should be a generic encoder routine..
 	reader, err := c.Reader()
 	if err != nil {
@@ -261,14 +262,14 @@ func (c *combiner) WriteTo(ctx context.Context, enc *Encoder) (int64, error) {
 	in := frame.Make(c, defaultChunksize)
 	for {
 		n, err := reader.Read(ctx, in)
-		if err != nil && err != EOF {
+		if err != nil && err != sliceio.EOF {
 			return total, err
 		}
 		total += int64(n)
 		if err := enc.Encode(in.Slice(0, n)); err != nil {
 			return total, err
 		}
-		if err == EOF {
+		if err == sliceio.EOF {
 			break
 		}
 	}

@@ -7,6 +7,8 @@ package bigslice
 import (
 	"fmt"
 	"strings"
+
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 // Pipeline returns the sequence of slices that may be pipelined
@@ -74,13 +76,13 @@ func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
 			)
 			if prev == nil {
 				// First frame reads the input directly.
-				tasks[shard].Do = func(readers []Reader) Reader {
+				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					return reader(shard, readers)
 				}
 			} else {
 				// Subsequent frames read the previous frame's output.
-				tasks[shard].Do = func(readers []Reader) Reader {
-					return reader(shard, []Reader{prev(readers)})
+				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+					return reader(shard, []sliceio.Reader{prev(readers)})
 				}
 			}
 		}

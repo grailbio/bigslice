@@ -25,6 +25,7 @@ import (
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/ctxsync"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
 )
@@ -370,13 +371,13 @@ compile:
 	task.State(TaskOk)
 }
 
-func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) Reader {
+func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) sliceio.Reader {
 	m := b.location(task)
 	if m == nil {
-		return errorReader{errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))}
+		return sliceio.ErrReader(errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name)))
 	}
 	if task.CombineKey != "" {
-		return errorReader{fmt.Errorf("read %s: cannot read tasks with combine keys", task.Name)}
+		return sliceio.ErrReader(fmt.Errorf("read %s: cannot read tasks with combine keys", task.Name))
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return &machineReader{
@@ -622,7 +623,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		totalRecordsIn = w.stats.Int("inrecords")
 		recordsIn = w.stats.Int("read")
 	}
-	in := make([]Reader, 0, len(task.Deps))
+	in := make([]sliceio.Reader, 0, len(task.Deps))
 	for _, dep := range task.Deps {
 		// If the dependency has a combine key, they are combined on the
 		// machine, and we de-dup the dependencies.
@@ -675,7 +676,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 		} else {
 			reader := new(multiReader)
-			reader.q = make([]Reader, len(dep.Tasks))
+			reader.q = make([]sliceio.Reader, len(dep.Tasks))
 			// We shuffle the tasks here so that we don't encounter "thundering herd"
 			// issues were partitions are read sequentially from the same (ordered)
 			// list of machines.
@@ -697,7 +698,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
 					if err == nil {
 						defer rc.Close()
-						reader.q[j] = newDecodingReader(rc)
+						reader.q[j] = sliceio.NewDecodingReader(rc)
 						totalRecordsIn.Add(info.Records)
 						continue Tasks
 					}
@@ -747,7 +748,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	type partition struct {
 		wc  WriteCommitter
 		buf *bufio.Writer
-		*Encoder
+		*sliceio.Encoder
 	}
 	partitions := make([]*partition, task.NumPartition)
 	for p := range partitions {
@@ -759,7 +760,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		part := new(partition)
 		part.wc = wc
 		part.buf = bufio.NewWriter(wc)
-		part.Encoder = NewEncoder(part.buf)
+		part.Encoder = sliceio.NewEncoder(part.buf)
 		partitions[p] = part
 	}
 	defer func() {
@@ -778,7 +779,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	case task.NumOut() == 0:
 		// If there are no output columns, just drive the computation.
 		_, err := out.Read(ctx, nil)
-		if err == EOF {
+		if err == sliceio.EOF {
 			err = nil
 		}
 		return err
@@ -797,7 +798,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		in := frame.Make(task, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
-			if err != nil && err != EOF {
+			if err != nil && err != sliceio.EOF {
 				return err
 			}
 			partitioner.Partition(in, partition)
@@ -818,7 +819,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				}
 			}
 			recordsOut.Add(int64(n))
-			if err == EOF {
+			if err == sliceio.EOF {
 				break
 			}
 		}
@@ -838,7 +839,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		in := frame.Make(task, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
-			if err != nil && err != EOF {
+			if err != nil && err != sliceio.EOF {
 				return err
 			}
 			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
@@ -846,7 +847,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 			recordsOut.Add(int64(n))
 			count[0] += int64(n)
-			if err == EOF {
+			if err == sliceio.EOF {
 				break
 			}
 		}
@@ -865,7 +866,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
-func (w *worker) runCombine(ctx context.Context, task *Task, in Reader) error {
+func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) error {
 	w.mu.Lock()
 	switch w.combinerStates[task.CombineKey] {
 	case combinerWriting, combinerCommitted, combinerError:
@@ -914,7 +915,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in Reader) error {
 	}
 	for {
 		n, err := in.Read(ctx, out)
-		if err != nil && err != EOF {
+		if err != nil && err != sliceio.EOF {
 			return err
 		}
 		partitioner.Partition(out, partition)
@@ -934,7 +935,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in Reader) error {
 			}
 		}
 		recordsOut.Add(int64(n))
-		if err == EOF {
+		if err == sliceio.EOF {
 			break
 		}
 	}
@@ -1006,7 +1007,7 @@ func (w *worker) writeCombiner(key string) {
 				return err
 			}
 			buf := bufio.NewWriter(wc)
-			enc := NewEncoder(buf)
+			enc := sliceio.NewEncoder(buf)
 			n, err := combiner.WriteTo(ctx, enc)
 			if err != nil {
 				wc.Discard(ctx)
@@ -1053,7 +1054,7 @@ type machineReader struct {
 
 	closer io.Closer
 	err    error
-	reader Reader
+	reader sliceio.Reader
 }
 
 func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
@@ -1066,7 +1067,7 @@ func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 		if m.err != nil {
 			return 0, m.err
 		}
-		m.reader = newDecodingReader(rc)
+		m.reader = sliceio.NewDecodingReader(rc)
 		m.closer = rc
 	}
 	n, err := m.reader.Read(ctx, f)
@@ -1082,4 +1083,15 @@ func (m *machineReader) Close() error {
 		return nil
 	}
 	return m.closer.Close()
+}
+
+type statsReader struct {
+	reader  sliceio.Reader
+	numRead *stats.Int
+}
+
+func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
+	n, err = s.reader.Read(ctx, f)
+	s.numRead.Add(int64(n))
+	return
 }

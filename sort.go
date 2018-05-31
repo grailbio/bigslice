@@ -16,6 +16,7 @@ import (
 
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -26,7 +27,7 @@ import (
 // rows in order to estimate the size of future reads. The estimate
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
-func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r Reader) (Reader, error) {
+func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
 	spill, err := newSpiller()
 	if err != nil {
 		return nil, err
@@ -34,11 +35,11 @@ func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 	defer spill.Cleanup()
 	f := frame.Make(typ, 1<<14)
 	for {
-		n, err := ReadFull(ctx, r, f)
-		if err != nil && err != EOF {
+		n, err := sliceio.ReadFull(ctx, r, f)
+		if err != nil && err != sliceio.EOF {
 			return nil, err
 		}
-		eof := err == EOF
+		eof := err == sliceio.EOF
 		g := f.Slice(0, n)
 		sorter.Sort(g)
 		size, err := spill.Spill(g)
@@ -96,7 +97,7 @@ func (dir spiller) Spill(frame frame.Frame) (int, error) {
 		return 0, err
 	}
 	// TODO(marius): buffer?
-	enc := NewEncoder(f)
+	enc := sliceio.NewEncoder(f)
 	for frame.Len() > 0 {
 		n := spillBatchSize
 		m := frame.Len()
@@ -119,7 +120,7 @@ func (dir spiller) Spill(frame frame.Frame) (int, error) {
 }
 
 // Readers returns a reader for each spiller file.
-func (s spiller) Readers() ([]Reader, error) {
+func (s spiller) Readers() ([]sliceio.Reader, error) {
 	dir, err := os.Open(string(s))
 	if err != nil {
 		return nil, err
@@ -128,7 +129,7 @@ func (s spiller) Readers() ([]Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	readers := make([]Reader, len(infos))
+	readers := make([]sliceio.Reader, len(infos))
 	closers := make([]io.Closer, len(infos))
 	for i := range infos {
 		f, err := os.Open(filepath.Join(string(s), infos[i].Name()))
@@ -139,7 +140,7 @@ func (s spiller) Readers() ([]Reader, error) {
 			return nil, err
 		}
 		closers[i] = f
-		readers[i] = &closingReader{newDecodingReader(f), f}
+		readers[i] = &sliceio.ClosingReader{sliceio.NewDecodingReader(f), f}
 	}
 	return readers, nil
 }
@@ -154,7 +155,7 @@ func (s spiller) Cleanup() error {
 // a reader, and maintains a current offset and length.
 type frameBuffer struct {
 	frame.Frame
-	Reader
+	sliceio.Reader
 	Off, Len int
 	Index    int
 	N        int
@@ -170,15 +171,15 @@ func (f *frameBuffer) Fill(ctx context.Context) error {
 	var err error
 	f.Len, err = f.Reader.Read(ctx, f.Frame)
 	f.N++
-	if err != nil && err != EOF {
+	if err != nil && err != sliceio.EOF {
 		return err
 	}
-	if err == EOF && f.Len > 0 {
+	if err == sliceio.EOF && f.Len > 0 {
 		err = nil
 	}
 	f.Off = 0
 	if f.Len == 0 && err == nil {
-		err = EOF
+		err = sliceio.EOF
 	}
 	return err
 }
@@ -221,7 +222,7 @@ type mergeReader struct {
 // NewMergeReader returns a new mergeReader that is sorted
 // according to the provided Sorter. The readers to be merged
 // must already be sorted according to the same.
-func newMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []Reader) (*mergeReader, error) {
+func newMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []sliceio.Reader) (*mergeReader, error) {
 	h := new(frameBufferHeap)
 	h.Sorter = sorter
 	h.Buffers = make([]*frameBuffer, 0, len(readers))
@@ -231,7 +232,7 @@ func newMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorte
 			Frame:  frame.Make(typ, spillBatchSize),
 		}
 		switch err := fr.Fill(ctx); {
-		case err == EOF:
+		case err == sliceio.EOF:
 			// No data. Skip.
 		case err != nil:
 			return nil, err
@@ -259,10 +260,10 @@ func (m *mergeReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		n++
 		m.heap.Buffers[0].Off++
 		if m.heap.Buffers[0].Off == m.heap.Buffers[0].Len {
-			if err := m.heap.Buffers[0].Fill(ctx); err != nil && err != EOF {
+			if err := m.heap.Buffers[0].Fill(ctx); err != nil && err != sliceio.EOF {
 				m.err = err
 				return 0, err
-			} else if err == EOF {
+			} else if err == sliceio.EOF {
 				heap.Remove(m.heap, 0)
 			} else {
 				heap.Fix(m.heap, 0)
@@ -272,7 +273,7 @@ func (m *mergeReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		}
 	}
 	if n == 0 {
-		m.err = EOF
+		m.err = sliceio.EOF
 	}
 	return n, m.err
 }

@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package sliceio
 
 import (
 	"context"
@@ -24,8 +24,9 @@ import (
 //
 // Callers should not mix calls to Scan and Scanv.
 type Scanner struct {
-	out      slicetype.Type
-	readers  []Reader
+	Reader Reader
+	Type   slicetype.Type
+
 	err      error
 	in       frame.Frame
 	beg, end int
@@ -39,34 +40,34 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	if s.err != nil {
 		return false
 	}
-	if len(out) != s.out.NumOut() {
-		s.err = typecheck.Errorf(1, "wrong arity: expected %d columns, got %d", s.out.NumOut(), len(out))
+	if len(out) != s.Type.NumOut() {
+		s.err = typecheck.Errorf(1, "wrong arity: expected %d columns, got %d", s.Type.NumOut(), len(out))
 		return false
 	}
 	for i := range out {
-		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.out.Out(i)); got != want {
+		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.Type.Out(i)); got != want {
 			s.err = typecheck.Errorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
 			return false
 		}
 	}
 	if s.in == nil {
-		s.in = frame.Make(s.out, defaultChunksize)
+		s.in = frame.Make(s.Type, defaultChunksize)
 		s.beg, s.end = 0, 0
 	}
 	// Read the next batch of input.
 	for s.beg == s.end {
-		if len(s.readers) == 0 {
+		if s.Reader == nil {
 			s.err = EOF
 			return false
 		}
-		n, err := s.readers[0].Read(ctx, s.in)
+		n, err := s.Reader.Read(ctx, s.in)
 		if err != nil && err != EOF {
 			s.err = err
 			return false
 		}
 		s.beg, s.end = 0, n
 		if err == EOF {
-			s.readers = s.readers[1:]
+			s.Reader = nil
 		}
 	}
 	for i, col := range out {

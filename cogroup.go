@@ -11,6 +11,7 @@ import (
 
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -108,7 +109,7 @@ type cogroupReader struct {
 	hasher kernel.Hasher
 	sorter kernel.Sorter
 
-	readers []Reader
+	readers []sliceio.Reader
 
 	heap *frameBufferHeap
 }
@@ -129,7 +130,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			// TODO(marius): make spill sizes configurable, or dependent
 			// on the environment: for example, we could pass down a memory
 			// allotment to each task from the scheduler.
-			var sorted Reader
+			var sorted sliceio.Reader
 			sorted, c.err = sortReader(ctx, c.sorter, 1<<29, c.op.Dep(i), c.readers[i])
 			if c.err != nil {
 				// TODO(marius): in case this fails, we may leave open file
@@ -143,7 +144,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				Index:  i,
 			}
 			switch err := buf.Fill(ctx); {
-			case err == EOF:
+			case err == sliceio.EOF:
 				// No data. Skip.
 			case err != nil:
 				c.err = err
@@ -174,10 +175,10 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			}
 			last = buf.Index
 			if buf.Off == buf.Len {
-				if err := buf.Fill(ctx); err != nil && err != EOF {
+				if err := buf.Fill(ctx); err != nil && err != sliceio.EOF {
 					c.err = err
 					return n, err
-				} else if err == EOF {
+				} else if err == sliceio.EOF {
 					heap.Remove(c.heap, 0)
 				} else {
 					heap.Fix(c.heap, 0)
@@ -212,12 +213,12 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		n++
 	}
 	if n == 0 {
-		c.err = EOF
+		c.err = sliceio.EOF
 	}
 	return n, c.err
 }
 
-func (c *cogroupSlice) Reader(shard int, deps []Reader) Reader {
+func (c *cogroupSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &cogroupReader{
 		op:      c,
 		readers: deps,

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -27,9 +28,9 @@ func TestTaskBuffer(t *testing.T) {
 		col := reflect.ValueOf(batch)
 		b[0] = append(b[0], []reflect.Value{col})
 	}
-	s := &Scanner{
-		readers: []Reader{b.Reader(0)},
-		out:     slicetype.New(typeOfString),
+	s := &sliceio.Scanner{
+		Reader: b.Reader(0),
+		Type:   slicetype.New(typeOfString),
 	}
 	var (
 		i   int

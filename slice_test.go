@@ -19,6 +19,7 @@ import (
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -61,8 +62,8 @@ var executors = map[string]Option{
 	"Bigmachine.Test": Bigmachine(testsystem.New()),
 }
 
-func run(ctx context.Context, t *testing.T, slice Slice) map[string]*Scanner {
-	results := make(map[string]*Scanner)
+func run(ctx context.Context, t *testing.T, slice Slice) map[string]*sliceio.Scanner {
+	results := make(map[string]*sliceio.Scanner)
 	fn := Func(func() Slice { return slice })
 
 	for name, opt := range executors {
@@ -80,12 +81,13 @@ func run(ctx context.Context, t *testing.T, slice Slice) map[string]*Scanner {
 		if tasks == nil {
 			t.Fatal("tasks == nil")
 		}
-		scan := &Scanner{
-			out:     slice,
-			readers: make([]Reader, len(tasks)),
+		readers := make([]sliceio.Reader, len(tasks))
+		for i := range readers {
+			readers[i] = sess.executor.Reader(ctx, tasks[i], 0)
 		}
-		for i := range scan.readers {
-			scan.readers[i] = sess.executor.Reader(ctx, tasks[i], 0)
+		scan := &sliceio.Scanner{
+			Type:   slice,
+			Reader: sliceio.MultiReader(readers...),
 		}
 		results[name] = scan
 	}
@@ -256,7 +258,7 @@ func TestReaderFunc(t *testing.T) {
 		}
 		state.total += n
 		if state.total >= N {
-			return n - (state.total - N), EOF
+			return n - (state.total - N), sliceio.EOF
 		}
 		return n, nil
 	})
@@ -471,7 +473,7 @@ func TestScan(t *testing.T) {
 	output := make([]int, N)
 	shards := make([]int, Nshard)
 	slice := Const(Nshard, input)
-	slice = Scan(slice, func(shard int, scan *Scanner) error {
+	slice = Scan(slice, func(shard int, scan *sliceio.Scanner) error {
 		mu.Lock()
 		defer mu.Unlock()
 		shards[shard]++

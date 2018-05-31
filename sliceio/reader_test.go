@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package sliceio
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func TestFrameReader(t *testing.T) {
 	var (
 		fz  = fuzz.NewWithSeed(12345)
 		f   = fuzzFrame(fz, N, typeOfString)
-		r   = &frameReader{f}
+		r   = FrameReader(f)
 		out = frame.Make(f, N)
 		ctx = context.Background()
 	)
@@ -42,4 +42,19 @@ func TestFrameReader(t *testing.T) {
 	if !reflect.DeepEqual(f[0].Interface().([]string), out[0].Interface().([]string)) {
 		t.Error("frames do not match")
 	}
+}
+
+// FuzzFrame creates a fuzzed frame of length n, where columns
+// have the provided types.
+func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) frame.Frame {
+	f := make(frame.Frame, len(types))
+	for i := range f {
+		f[i] = reflect.MakeSlice(reflect.SliceOf(types[i]), n, n)
+		vp := reflect.New(types[i])
+		for j := 0; j < n; j++ {
+			fz.Fuzz(vp.Interface())
+			f[i].Index(j).Set(vp.Elem())
+		}
+	}
+	return f
 }

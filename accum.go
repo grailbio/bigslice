@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 // An Accumulator represents a stateful accumulation of values of
@@ -92,7 +93,7 @@ func (s *stringAccumulator) Read(keys, values reflect.Value) (n int, err error) 
 		n++
 	}
 	if len(s.state) == 0 {
-		return n, EOF
+		return n, sliceio.EOF
 	}
 	return n, nil
 }
@@ -133,7 +134,7 @@ func (s *intAccumulator) Read(keys, values reflect.Value) (n int, err error) {
 		n++
 	}
 	if len(s.state) == 0 {
-		return n, EOF
+		return n, sliceio.EOF
 	}
 	return n, nil
 }
@@ -174,7 +175,7 @@ func (s *int64Accumulator) Read(keys, values reflect.Value) (n int, err error) {
 		n++
 	}
 	if len(s.state) == 0 {
-		return n, EOF
+		return n, sliceio.EOF
 	}
 	return n, nil
 }

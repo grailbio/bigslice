@@ -12,6 +12,7 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 // Executor defines an interface used to provide implementations of
@@ -32,7 +33,7 @@ type Executor interface {
 	Runnable(*Task)
 
 	// Reader returns a locally accessible reader for the requested task.
-	Reader(context.Context, *Task, int) Reader
+	Reader(context.Context, *Task, int) sliceio.Reader
 
 	// Maxprocs returns the number of available processors in this executor.
 	// It determines the amount of available physical parallelism.

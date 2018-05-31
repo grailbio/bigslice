@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 var accumulableTypes = []reflect.Type{typeOfString, typeOfInt, typeOfInt64}
@@ -44,7 +45,7 @@ outer:
 					t.Errorf("odd count for key %v", keys.Index(i))
 				}
 			}
-			if err == EOF {
+			if err == sliceio.EOF {
 				break
 			} else if err != nil {
 				t.Errorf("unexpected error %v", err)
