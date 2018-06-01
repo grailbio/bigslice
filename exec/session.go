@@ -6,6 +6,7 @@ package exec
 
 import (
 	"context"
+	"encoding/gob"
 	"net/http"
 
 	"github.com/grailbio/base/status"
@@ -14,6 +15,10 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
+
+func init() {
+	gob.Register(&Result{})
+}
 
 // Session represents a Bigslice compute session. A session shares a
 // binary and executor, and is valid for the run of the binary. A
@@ -38,7 +43,7 @@ import (
 //
 //	// Possibly in another package:
 //	func main() {
-//		sess := bigslice.Start()
+//		sess := exec.Start()
 //		if err := sess.Run(ctx, Computation, args...); err != nil {
 //			log.Fatal(err)
 //		}
@@ -116,55 +121,26 @@ func Start(options ...Option) *Session {
 // on error. It is not safe to make concurrent calls to Run. Instead,
 // parallelism should be expressed in the bigslice computation
 // itself.
-func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) error {
-	_, _, err := s.run(ctx, funcv, args...)
-	return err
-}
-
-// Scan evaluates the slice returned by the Bigslice func funcv
-// applied to the provided arguments. Tasks are run by the session's
-// executor. On success, Scan returns a Scanner for the result of the
-// evaluated slice.
-func (s *Session) Scan(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*sliceio.Scanner, error) {
-	tasks, typ, err := s.run(ctx, funcv, args...)
+func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
+	inv := funcv.Invocation(args...)
+	slice := inv.Invoke()
+	tasks, err := compile(make(taskNamer), inv, slice)
 	if err != nil {
 		return nil, err
 	}
-
-	readers := make([]sliceio.Reader, len(tasks))
-	for i := range readers {
-		readers[i] = s.executor.Reader(ctx, tasks[i], 0)
-	}
-	return &sliceio.Scanner{
-		Type:   typ,
-		Reader: sliceio.MultiReader(readers...),
-	}, nil
-}
-
-func (s *Session) run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) ([]*Task, slicetype.Type, error) {
-	// TODO(marius): perform structural equality checking too, and panic
-	// if there's a collision, or maybe add a counter to name colliding
-	// applications.
-	inv := funcv.Invocation(args...)
-	key := inv.Index
-	tasks, ok := s.tasks[key]
-	if !ok {
-		slice := inv.Invoke()
-		// All task names are prefixed with the invocation key.
-		var err error
-		tasks, err = compile(make(taskNamer), inv, slice)
-		if err != nil {
-			return nil, nil, err
-		}
-		s.tasks[key] = tasks
-		s.types[key] = slice
-	}
+	s.tasks[inv.Index] = tasks
+	s.types[inv.Index] = slice
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
-		group = s.status.Group("bigslice")
+		group = s.status.Groupf("bigslice(%d)", inv.Index)
 	}
-	return tasks, s.types[key], Eval(ctx, s.executor, inv, tasks, group)
+	return &Result{
+		Slice: slice,
+		sess:  s,
+		inv:   inv,
+		tasks: tasks,
+	}, Eval(ctx, s.executor, inv, tasks, group)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.
@@ -187,4 +163,27 @@ func (s *Session) Status() *status.Status {
 
 func (s *Session) HandleDebug(handler *http.ServeMux) {
 	s.executor.HandleDebug(http.DefaultServeMux)
+}
+
+// A Result is the output of a Slice evaluation. It is the only type
+// implementing bigslice.Slice that is a legal argument to a
+// bigslice.Func.
+type Result struct {
+	bigslice.Slice
+	inv   bigslice.Invocation
+	sess  *Session
+	tasks []*Task
+}
+
+// Scan returns a scanner that scans the output. If the output
+// contains multiple shards, they are scanned sequentially.
+func (r *Result) Scan(ctx context.Context) *sliceio.Scanner {
+	readers := make([]sliceio.Reader, len(r.tasks))
+	for i := range readers {
+		readers[i] = r.sess.executor.Reader(ctx, r.tasks[i], 0)
+	}
+	return &sliceio.Scanner{
+		Type:   r,
+		Reader: sliceio.MultiReader(readers...),
+	}
 }

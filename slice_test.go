@@ -72,12 +72,12 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 		sess := exec.Start(opt)
 		// TODO(marius): faster teardown in bigmachine so that we can call this here.
 		// defer sess.Shutdown()
-		scan, err := sess.Scan(ctx, fn)
+		res, err := sess.Run(ctx, fn)
 		if err != nil {
 			t.Errorf("executor %s error %v", name, err)
 			continue
 		}
-		results[name] = scan
+		results[name] = res.Scan(ctx)
 	}
 	return results
 }

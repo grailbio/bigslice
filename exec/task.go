@@ -233,6 +233,19 @@ func (t *Task) Wait(ctx context.Context) error {
 	return err
 }
 
+// WaitState returns when the task's state is at least the provided state,
+// or else when the context is done.
+func (t *Task) WaitState(ctx context.Context, state TaskState) error {
+	t.Lock()
+	defer t.Unlock()
+	for t.state < state {
+		if err := t.Wait(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // GraphString returns a schematic string of the task graph rooted at t.
 func (t *Task) GraphString() string {
 	var b bytes.Buffer

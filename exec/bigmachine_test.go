@@ -35,27 +35,13 @@ func TestMachineQ(t *testing.T) {
 	}
 }
 
-func compileFunc(f func() bigslice.Slice) []*Task {
-	fn := bigslice.Func(f)
-	inv := fn.Invocation()
-	tasks, err := compile(make(taskNamer), inv, inv.Invoke())
-	if err != nil {
-		panic(err)
-	}
-	return tasks
-}
-
 func TestBigmachineExecutor(t *testing.T) {
-	sys := testsystem.New()
-	x := newBigmachineExecutor(sys)
-	defer x.Start(&Session{
-		Context: context.Background(),
-		p:       1,
-	})()
+	x, stop := testExecutor()
+	defer stop()
 
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{} // one for the local invocation.
-	tasks := compileFunc(func() bigslice.Slice {
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
 		<-gate
 		return bigslice.Const(1, []int{})
 	})
@@ -99,15 +85,11 @@ func TestBigmachineExecutor(t *testing.T) {
 }
 
 func TestBigmachineExecutorError(t *testing.T) {
-	sys := testsystem.New()
-	x := newBigmachineExecutor(sys)
-	defer x.Start(&Session{
-		Context: context.Background(),
-		p:       1,
-	})()
+	x, stop := testExecutor()
+	defer stop()
 
 	var count int
-	tasks := compileFunc(func() bigslice.Slice {
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
 		count++
 		if count == 2 {
 			panic("hello")
@@ -134,4 +116,52 @@ func TestBigmachineExecutorError(t *testing.T) {
 	}
 	task.err = nil
 	task.Unlock()
+}
+
+func TestBigmachineCompiler(t *testing.T) {
+	x, stop := testExecutor()
+	defer stop()
+
+	tasks, slice, inv := compileFunc(func() bigslice.Slice {
+		return bigslice.Const(1, []int{})
+	})
+	run(t, x, tasks)
+	tasks, _, _ = compileFunc(func() bigslice.Slice {
+		return bigslice.Map(&Result{Slice: slice, inv: inv}, func(i int) int { return i * 2 })
+	})
+	run(t, x, tasks)
+}
+
+func run(t *testing.T, x Executor, tasks []*Task) {
+	t.Helper()
+	for _, task := range tasks {
+		x.Runnable(task)
+	}
+	for _, task := range tasks {
+		task.WaitState(context.Background(), TaskOk)
+		task.Lock()
+		if task.state != TaskOk {
+			t.Fatalf("task %v not ok", task)
+		}
+		task.Unlock()
+	}
+}
+
+func testExecutor() (exec *bigmachineExecutor, stop func()) {
+	x := newBigmachineExecutor(testsystem.New())
+	return x, x.Start(&Session{
+		Context: context.Background(),
+		p:       1,
+	})
+}
+
+func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
+	fn := bigslice.Func(f)
+	inv := fn.Invocation()
+	slice := inv.Invoke()
+	tasks, err := compile(make(taskNamer), inv, slice)
+	if err != nil {
+		panic(err)
+	}
+	return tasks, slice, inv
 }

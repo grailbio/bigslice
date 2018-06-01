@@ -127,7 +127,7 @@ func main() {
 			paths = paths[:*n]
 		}
 		log.Printf("computing %d paths", len(paths))
-		if err := sess.Run(ctx, domainCounts, paths, *out); err != nil {
+		if _, err := sess.Run(ctx, domainCounts, paths, *out); err != nil {
 			return err
 		}
 		return nil

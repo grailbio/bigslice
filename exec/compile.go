@@ -17,6 +17,10 @@ import (
 // may be pipelined together.
 func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 	for {
+		// Stop at *Results, so we can re-use previous tasks.
+		if _, ok := slice.(*Result); ok {
+			return
+		}
 		slices = append(slices, slice)
 		if slice.NumDep() != 1 {
 			return
@@ -48,6 +52,10 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
 func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]*Task, error) {
+	// Reuse tasks from a previous invocation.
+	if result, ok := slice.(*Result); ok {
+		return result.tasks, nil
+	}
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks := make([]*Task, slice.NumShard())
@@ -93,12 +101,9 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, err := compile(namer, inv, dep)
+		deptasks, err := compile(namer, inv, dep.Slice)
 		if err != nil {
 			return nil, err
-		}
-		if !dep.Shuffle {
-			panic("non-pipelined non-shuffle dependency")
 		}
 		var combineKey string
 		if lastSlice.Combiner() != nil {

@@ -46,14 +46,11 @@ func (f *FuncValue) In(i int) reflect.Type { return f.args[i] }
 // applied to the provided arguments. Invocation panics with a type
 // error if the provided arguments do not match in type or arity.
 func (f *FuncValue) Invocation(args ...interface{}) Invocation {
-	if len(args) != len(f.args) {
-		typecheck.Panicf(1, "wrong number of arguments: function takes %d arguments, got %d", len(f.args), len(args))
+	argTypes := make([]reflect.Type, len(args))
+	for i, arg := range args {
+		argTypes[i] = reflect.TypeOf(arg)
 	}
-	for i := range args {
-		if t := reflect.TypeOf(args[i]); t != f.args[i] {
-			typecheck.Panicf(1, "wrong type for argument %d: expected %s, got %s", i, f.args[i], t)
-		}
-	}
+	f.typecheck(argTypes...)
 	return newInvocation(uint64(f.index), args...)
 }
 
@@ -69,16 +66,33 @@ func (f *FuncValue) Apply(args ...interface{}) Slice {
 }
 
 func (f *FuncValue) applyValue(args []reflect.Value) Slice {
-	if len(args) != len(f.args) {
-		typecheck.Panicf(1, "wrong number of arguments: expected %v, got %v", len(f.args), len(args))
+	argTypes := make([]reflect.Type, len(args))
+	for i, arg := range args {
+		argTypes[i] = arg.Type()
 	}
-	for i := range f.args {
-		if f.args[i] != args[i].Type() {
-			typecheck.Panicf(1, "wrong type for argument %d: expected %v, got %v", i, f.args[i], args[i].Type())
-		}
-	}
+	f.typecheck(argTypes...)
 	out := f.fn.Call(args)
 	return out[0].Interface().(Slice)
+}
+
+func (f *FuncValue) typecheck(args ...reflect.Type) {
+	if len(args) != len(f.args) {
+		typecheck.Panicf(2, "wrong number of arguments: function takes %d arguments, got %d",
+			len(f.args), len(args))
+	}
+	for i := range args {
+		expect, have := f.args[i], args[i]
+		switch expect.Kind() {
+		case reflect.Interface:
+			if !have.Implements(expect) {
+				typecheck.Panicf(2, "wrong type for argument %d: type %s does not implement interface %s", i, have, expect)
+			}
+		default:
+			if have != expect {
+				typecheck.Panicf(2, "wrong type for argument %d: expected %s, got %s", i, expect, have)
+			}
+		}
+	}
 }
 
 // Func creates a bigslice function from the provided function value.
@@ -90,29 +104,32 @@ func Func(fn interface{}) *FuncValue {
 	fv := reflect.ValueOf(fn)
 	ftype := fv.Type()
 	if ftype.Kind() != reflect.Func {
-		typecheck.Panicf(1, "argument to reflect.Func is a %T, not a func", fn)
+		typecheck.Panicf(1, "bigslice.Func: argument to func is a %T, not a func", fn)
 	}
 	if ftype.NumOut() != 1 || ftype.Out(0) != typeOfSlice {
-		typecheck.Panicf(1, "reflect.Func must return a single bigslice.Slice")
+		typecheck.Panicf(1, "bigslice.Func: func must return a single bigslice.Slice")
 	}
 	v := new(FuncValue)
 	v.fn = fv
 	for i := 0; i < ftype.NumIn(); i++ {
-		v.args = append(v.args, ftype.In(i))
-		gob.Register(reflect.Zero(ftype.In(i)).Interface())
+		typ := ftype.In(i)
+		v.args = append(v.args, typ)
+		if typ.Kind() != reflect.Interface {
+			gob.Register(reflect.Zero(typ).Interface())
+		}
 	}
 	if atomic.AddInt32(&funcsBusy, 1) != 1 {
-		panic("data race in bigslice.Register")
+		panic("bigslice.Func: data race")
 	}
 	v.index = len(funcs)
 	funcs = append(funcs, v)
 	if atomic.AddInt32(&funcsBusy, -1) != 0 {
-		panic("data race in bigslice.Register")
+		panic("bigslice.Func: data race")
 	}
 	return v
 }
 
-// Invocation represents an invocation of a bigslice func of the same
+// Invocation represents an invocation of a Bigslice func of the same
 // binary. Invocations can be transmitted across process boundaries
 // and thus may be invoked by remote executors.
 //
