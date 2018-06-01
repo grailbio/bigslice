@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"github.com/grailbio/base/file"
 )
 
-// SliceInfo stores metadata for a stored slice.
-type SliceInfo struct {
+// sliceInfo stores metadata for a stored slice.
+type sliceInfo struct {
 	// Size is the raw, encoded byte size of the stored slice.
 	// A value of -1 indicates the size is unknown.
 	Size int64
@@ -27,8 +27,8 @@ type SliceInfo struct {
 	Records int64
 }
 
-// A WriteCommitter represents a committable write stream into a store.
-type WriteCommitter interface {
+// A writeCommitter represents a committable write stream into a store.
+type writeCommitter interface {
 	io.Writer
 	// Commit commits the written data to storage. The caller should
 	// provide the number of records written as metadata.
@@ -44,7 +44,7 @@ type Store interface {
 	// to Open until the returned closer has been closed.
 	//
 	// TODO(marius): should we allow writes to be discarded as well?
-	Create(ctx context.Context, task string, partition int) (WriteCommitter, error)
+	Create(ctx context.Context, task string, partition int) (writeCommitter, error)
 
 	// Open returns a ReadCloser from which the stored contents of the
 	// named task and partition can be read. If the task and partition are
@@ -52,7 +52,7 @@ type Store interface {
 	Open(ctx context.Context, task string, partition int) (io.ReadCloser, error)
 
 	// Stat returns metadata for the stored slice.
-	Stat(ctx context.Context, task string, partition int) (SliceInfo, error)
+	Stat(ctx context.Context, task string, partition int) (sliceInfo, error)
 }
 
 // MemoryStore is a store implementation that maintains in-memory buffers
@@ -112,7 +112,7 @@ func (m *memoryWriter) Commit(ctx context.Context, count int64) error {
 	return m.store.put(m.task, m.partition, m.Buffer.Bytes(), count)
 }
 
-func (m *memoryStore) Create(ctx context.Context, task string, partition int) (WriteCommitter, error) {
+func (m *memoryStore) Create(ctx context.Context, task string, partition int) (writeCommitter, error) {
 	if b, _ := m.get(task, partition); b != nil {
 		return nil, errors.E(errors.Exists, fmt.Sprintf("create %s[%d]", task, partition))
 	}
@@ -131,12 +131,12 @@ func (m *memoryStore) Open(ctx context.Context, task string, partition int) (io.
 	return ioutil.NopCloser(bytes.NewReader(p)), nil
 }
 
-func (m *memoryStore) Stat(ctx context.Context, task string, partition int) (SliceInfo, error) {
+func (m *memoryStore) Stat(ctx context.Context, task string, partition int) (sliceInfo, error) {
 	b, n := m.get(task, partition)
 	if b == nil {
-		return SliceInfo{}, errors.E(errors.NotExist, fmt.Sprintf("stat %s[%d]", task, partition))
+		return sliceInfo{}, errors.E(errors.NotExist, fmt.Sprintf("stat %s[%d]", task, partition))
 	}
-	return SliceInfo{
+	return sliceInfo{
 		Size:    int64(len(b)),
 		Records: n,
 	}, nil
@@ -169,7 +169,7 @@ func (w *fileWriter) Commit(ctx context.Context, count int64) error {
 	return w.File.Close(ctx)
 }
 
-func (s *fileStore) Create(ctx context.Context, task string, partition int) (WriteCommitter, error) {
+func (s *fileStore) Create(ctx context.Context, task string, partition int) (writeCommitter, error) {
 	f, err := file.Create(ctx, s.path(task, partition))
 	if err != nil {
 		return nil, err
@@ -193,22 +193,22 @@ func (s *fileStore) Open(ctx context.Context, task string, partition int) (io.Re
 	}, nil
 }
 
-func (s *fileStore) Stat(ctx context.Context, task string, partition int) (SliceInfo, error) {
+func (s *fileStore) Stat(ctx context.Context, task string, partition int) (sliceInfo, error) {
 	f, err := file.Open(ctx, s.path(task, partition))
 	if err != nil {
-		return SliceInfo{}, err
+		return sliceInfo{}, err
 	}
 	rs := f.Reader(ctx)
 	n, err := rs.Seek(-8, io.SeekEnd)
 	if err != nil {
-		return SliceInfo{}, err
+		return sliceInfo{}, err
 	}
 	var b [8]byte
 	if _, err := rs.Read(b[:]); err != nil {
-		return SliceInfo{}, err
+		return sliceInfo{}, err
 	}
 	count := int64(binary.LittleEndian.Uint64(b[:]))
-	return SliceInfo{
+	return sliceInfo{
 		Size:    n,
 		Records: count,
 	}, nil

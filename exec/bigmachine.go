@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"bufio"
@@ -23,6 +23,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/ctxsync"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
@@ -37,7 +38,11 @@ const maxLoad = 0.95
 
 // DoShuffleReaders determines whether reader tasks should be
 // shuffled in order to avoid potential thundering herd issues.
-var doShuffleReaders = true
+// This should only be used in testing when deterministic ordering
+// matters.
+//
+// TODO(marius): make this a session option instead.
+var DoShuffleReaders = true
 
 func init() {
 	gob.Register(&worker{})
@@ -549,7 +554,7 @@ func (w *worker) Init(b *bigmachine.B) error {
 // Compile compiles an invocation on the worker and stores the
 // resulting tasks. Compile is idempotent: it will compile each
 // invocation at most once.
-func (w *worker) Compile(ctx context.Context, inv Invocation, _ *struct{}) (err error) {
+func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct{}) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("invocation panic! %v", e)
@@ -687,7 +692,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		Tasks:
 			for j := range dep.Tasks {
 				k := j
-				if doShuffleReaders {
+				if DoShuffleReaders {
 					k = shuffled[j]
 				}
 				deptask := dep.Tasks[k]
@@ -746,7 +751,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// instead once we also have memory management, in order to control
 	// buffer growth.
 	type partition struct {
-		wc  WriteCommitter
+		wc  writeCommitter
 		buf *bufio.Writer
 		*sliceio.Encoder
 	}
@@ -965,7 +970,7 @@ type taskPartition struct {
 }
 
 // Stat returns the SliceInfo for a slice.
-func (w *worker) Stat(ctx context.Context, tp taskPartition, info *SliceInfo) (err error) {
+func (w *worker) Stat(ctx context.Context, tp taskPartition, info *sliceInfo) (err error) {
 	*info, err = w.store.Stat(ctx, tp.Task, tp.Partition)
 	return
 }

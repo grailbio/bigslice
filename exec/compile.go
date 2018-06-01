@@ -2,19 +2,20 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
 // Pipeline returns the sequence of slices that may be pipelined
 // starting from slice. Slices that do not have shuffle dependencies
 // may be pipelined together.
-func pipeline(slice Slice) (slices []Slice) {
+func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 	for {
 		slices = append(slices, slice)
 		if slice.NumDep() != 1 {
@@ -46,7 +47,7 @@ func pipeline(slice Slice) (slices []Slice) {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(namer taskNamer, inv Invocation, slice Slice) ([]*Task, error) {
+func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]*Task, error) {
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks := make([]*Task, slice.NumShard())

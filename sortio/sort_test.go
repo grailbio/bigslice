@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package sortio
 
 import (
 	"context"
@@ -14,6 +14,11 @@ import (
 	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
+)
+
+var (
+	typeOfString = reflect.TypeOf("")
+	typeOfInt    = reflect.TypeOf(0)
 )
 
 // FuzzFrame creates a fuzzed frame of length n, where columns
@@ -111,7 +116,7 @@ func TestMergeReader(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	m, err := newMergeReader(ctx, frames[0], sorter, readers)
+	m, err := NewMergeReader(ctx, frames[0], sorter, readers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +153,7 @@ func TestSortReader(t *testing.T) {
 	if !kernel.Lookup(typeOfString, &sorter) {
 		t.Fatal("no sorter")
 	}
-	sorted, err := sortReader(ctx, sorter, 1<<19, typ, r)
+	sorted, err := SortReader(ctx, sorter, 1<<19, typ, r)
 	if err != nil {
 		t.Fatal(err)
 	}

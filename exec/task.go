@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
@@ -105,7 +106,7 @@ type Task struct {
 	slicetype.Type
 	// Invocation is the task's invocation, i.e. the Func invocation
 	// from which this task was compiled.
-	Invocation Invocation
+	Invocation bigslice.Invocation
 	// Name is the name of the task. Tasks are named universally: they
 	// should be unique among all possible tasks in a bigslice session.
 	Name string

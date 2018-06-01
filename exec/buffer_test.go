@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"context"
@@ -16,7 +16,10 @@ import (
 
 type testStruct struct{ A, B, C int }
 
-var typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
+var (
+	typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
+	typeOfString     = reflect.TypeOf("")
+)
 
 func TestTaskBuffer(t *testing.T) {
 	var batches [][]string

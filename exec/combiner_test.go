@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"bytes"
@@ -14,6 +14,8 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
+
+var typeOfInt = reflect.TypeOf(0)
 
 func deepEqual(f, g frame.Frame) bool {
 	if f.NumOut() != g.NumOut() {

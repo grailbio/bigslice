@@ -2,7 +2,9 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+// Package exec implements compilation, evaluation, and execution of
+// Bigslice slice operations.
+package exec
 
 import (
 	"context"
@@ -12,8 +14,11 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 )
+
+const defaultChunksize = 1024
 
 // Executor defines an interface used to provide implementations of
 // task runners. An Executor is responsible for running single tasks,
@@ -55,7 +60,7 @@ type Executor interface {
 // be interpreted without an accompanying invocation.
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
-func Eval(ctx context.Context, executor Executor, inv Invocation, roots []*Task, group *status.Group) error {
+func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots []*Task, group *status.Group) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	tasks := make(map[*Task]bool)

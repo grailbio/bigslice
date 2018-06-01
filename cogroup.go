@@ -12,6 +12,7 @@ import (
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/sortio"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -111,7 +112,7 @@ type cogroupReader struct {
 
 	readers []sliceio.Reader
 
-	heap *frameBufferHeap
+	heap *sortio.FrameBufferHeap
 }
 
 func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) {
@@ -119,9 +120,9 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		return 0, c.err
 	}
 	if c.heap == nil {
-		c.heap = new(frameBufferHeap)
+		c.heap = new(sortio.FrameBufferHeap)
 		c.heap.Sorter = c.sorter
-		c.heap.Buffers = make([]*frameBuffer, 0, len(c.readers))
+		c.heap.Buffers = make([]*sortio.FrameBuffer, 0, len(c.readers))
 		// Sort each partition one-by-one. Since tasks are scheduled
 		// to map onto a single CPU, we attain parallelism through sharding
 		// at a higher level.
@@ -131,14 +132,14 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			// on the environment: for example, we could pass down a memory
 			// allotment to each task from the scheduler.
 			var sorted sliceio.Reader
-			sorted, c.err = sortReader(ctx, c.sorter, 1<<29, c.op.Dep(i), c.readers[i])
+			sorted, c.err = sortio.SortReader(ctx, c.sorter, 1<<29, c.op.Dep(i), c.readers[i])
 			if c.err != nil {
 				// TODO(marius): in case this fails, we may leave open file
 				// descriptors. We should make sure we close readers that
 				// implement Discard.
 				return 0, c.err
 			}
-			buf := &frameBuffer{
+			buf := &sortio.FrameBuffer{
 				Frame:  frame.Make(c.op.Dep(i), 1024),
 				Reader: sorted,
 				Index:  i,

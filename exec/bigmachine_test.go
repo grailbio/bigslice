@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"container/heap"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigmachine/testsystem"
+	"github.com/grailbio/bigslice"
 )
 
 func TestMachineQ(t *testing.T) {
@@ -34,8 +35,8 @@ func TestMachineQ(t *testing.T) {
 	}
 }
 
-func compileFunc(f func() Slice) []*Task {
-	fn := Func(f)
+func compileFunc(f func() bigslice.Slice) []*Task {
+	fn := bigslice.Func(f)
 	inv := fn.Invocation()
 	tasks, err := compile(make(taskNamer), inv, inv.Invoke())
 	if err != nil {
@@ -54,9 +55,9 @@ func TestBigmachineExecutor(t *testing.T) {
 
 	gate := make(chan struct{}, 1)
 	gate <- struct{}{} // one for the local invocation.
-	tasks := compileFunc(func() Slice {
+	tasks := compileFunc(func() bigslice.Slice {
 		<-gate
-		return Const(1, []int{})
+		return bigslice.Const(1, []int{})
 	})
 	if got, want := len(tasks), 1; got != want {
 		t.Fatalf("got %v, want %v", got, want)
@@ -106,12 +107,12 @@ func TestBigmachineExecutorError(t *testing.T) {
 	})()
 
 	var count int
-	tasks := compileFunc(func() Slice {
+	tasks := compileFunc(func() bigslice.Slice {
 		count++
 		if count == 2 {
 			panic("hello")
 		}
-		return Const(1, []int{})
+		return bigslice.Const(1, []int{})
 	})
 	if got, want := len(tasks), 1; got != want {
 		t.Fatalf("got %v, want %v", got, want)

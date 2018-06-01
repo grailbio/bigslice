@@ -2,15 +2,16 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"context"
 	"net/http"
-	"reflect"
 
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -49,7 +50,7 @@ type Session struct {
 	p        int
 	executor Executor
 	tasks    map[uint64][]*Task
-	types    map[uint64][]reflect.Type
+	types    map[uint64]slicetype.Type
 	status   *status.Status
 }
 
@@ -94,7 +95,7 @@ func Start(options ...Option) *Session {
 	s := &Session{
 		Context: context.Background(),
 		tasks:   make(map[uint64][]*Task),
-		types:   make(map[uint64][]reflect.Type),
+		types:   make(map[uint64]slicetype.Type),
 	}
 	for _, opt := range options {
 		opt(s)
@@ -115,7 +116,32 @@ func Start(options ...Option) *Session {
 // on error. It is not safe to make concurrent calls to Run. Instead,
 // parallelism should be expressed in the bigslice computation
 // itself.
-func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}) error {
+func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) error {
+	_, _, err := s.run(ctx, funcv, args...)
+	return err
+}
+
+// Scan evaluates the slice returned by the Bigslice func funcv
+// applied to the provided arguments. Tasks are run by the session's
+// executor. On success, Scan returns a Scanner for the result of the
+// evaluated slice.
+func (s *Session) Scan(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*sliceio.Scanner, error) {
+	tasks, typ, err := s.run(ctx, funcv, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	readers := make([]sliceio.Reader, len(tasks))
+	for i := range readers {
+		readers[i] = s.executor.Reader(ctx, tasks[i], 0)
+	}
+	return &sliceio.Scanner{
+		Type:   typ,
+		Reader: sliceio.MultiReader(readers...),
+	}, nil
+}
+
+func (s *Session) run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) ([]*Task, slicetype.Type, error) {
 	// TODO(marius): perform structural equality checking too, and panic
 	// if there's a collision, or maybe add a counter to name colliding
 	// applications.
@@ -128,17 +154,17 @@ func (s *Session) Run(ctx context.Context, funcv *FuncValue, args ...interface{}
 		var err error
 		tasks, err = compile(make(taskNamer), inv, slice)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		s.tasks[key] = tasks
-		s.types[key] = slicetype.Columns(slice)
+		s.types[key] = slice
 	}
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
 		group = s.status.Group("bigslice")
 	}
-	return Eval(ctx, s.executor, inv, tasks, group)
+	return tasks, s.types[key], Eval(ctx, s.executor, inv, tasks, group)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

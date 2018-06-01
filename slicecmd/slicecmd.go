@@ -43,7 +43,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
-	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/exec"
 )
 
 var (
@@ -80,7 +80,7 @@ func RegisterSystem(name string, system bigmachine.System) {
 //
 // TODO(marius): abstract this into a struct so that it can be more
 // easily be used with command line utilities like Vanadium's.
-func Main(main func(sess *bigslice.Session, args []string) error) {
+func Main(main func(sess *exec.Session, args []string) error) {
 	var (
 		// TODO(marius): consider letting the system flag itself take parameters, e.g.,
 		// 	-system ec2,r3.8xlarge
@@ -92,30 +92,30 @@ func Main(main func(sess *bigslice.Session, args []string) error) {
 	)
 	log.AddFlags()
 	flag.Parse()
-	var options []bigslice.Option
+	var options []exec.Option
 	switch *system {
 	case "":
 		// Use in-process evaluation instead of bigmachine out-of-process
 		// by default. The latter is mostly useful for debugging bigmachine
 		// issues.
-		options = append(options, bigslice.Local)
+		options = append(options, exec.Local)
 	case "local":
-		options = append(options, bigslice.Bigmachine(bigmachine.Local))
+		options = append(options, exec.Bigmachine(bigmachine.Local))
 	default:
 		impl := systems[*system]
 		if impl == nil {
 			log.Fatalf("system %s not found", *system)
 		}
-		options = append(options, bigslice.Bigmachine(impl))
+		options = append(options, exec.Bigmachine(impl))
 		// TODO(marius): get rid of this requirement once the bigmachine executor is dynamic.
 		if *p == 0 {
 			log.Fatalf("target parallelism (-p) must be specified for system %s", *system)
 		}
 	}
-	options = append(options, bigslice.Parallelism(*p))
+	options = append(options, exec.Parallelism(*p))
 	top := new(status.Status)
-	options = append(options, bigslice.Status(top))
-	sess := bigslice.Start(options...)
+	options = append(options, exec.Status(top))
+	sess := exec.Start(options...)
 	sess.HandleDebug(http.DefaultServeMux)
 	http.Handle("/debug/status", status.Handler(top))
 	go func() {

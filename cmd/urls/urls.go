@@ -26,6 +26,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/ec2system"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/slicecmd"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -105,7 +106,7 @@ func main() {
 	slicecmd.RegisterSystem("ec2", &ec2system.System{
 		InstanceType: "r3.8xlarge",
 	})
-	slicecmd.Main(func(sess *bigslice.Session, args []string) error {
+	slicecmd.Main(func(sess *exec.Session, args []string) error {
 		if *out == "" {
 			return errors.New("missing flag -out")
 		}

@@ -2,16 +2,14 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+// Package sortio provides facilities for sorting slice outputs
+// and merging and reducing sorted record streams.
+package sortio
 
 import (
 	"container/heap"
 	"context"
-	"io"
-	"io/ioutil"
 	"math"
-	"os"
-	"path/filepath"
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
@@ -27,8 +25,8 @@ import (
 // rows in order to estimate the size of future reads. The estimate
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
-func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
-	spill, err := newSpiller()
+func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
+	spill, err := sliceio.NewSpiller()
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +49,8 @@ func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 		}
 		bytesPerRow := size / n
 		targetRows := spillTarget / bytesPerRow
-		if targetRows < spillBatchSize {
-			targetRows = spillBatchSize
+		if targetRows < sliceio.SpillBatchSize {
+			targetRows = sliceio.SpillBatchSize
 		}
 		// If we're within 5%, that's ok.
 		if math.Abs(float64(f.Len()-targetRows)/float64(targetRows)) > 0.05 {
@@ -67,93 +65,12 @@ func sortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 	if err != nil {
 		return nil, err
 	}
-	return newMergeReader(ctx, typ, sorter, readers)
-}
-
-// SpillBatchSize determines the amount of batching used in each
-// spill file. A single read of a spill file produces this many rows.
-// SpillBatchSize then trades off memory footprint for encoding size.
-const spillBatchSize = defaultChunksize
-
-// A spiller manages a set of spill files.
-type spiller string
-
-// NewSpiller creates and returns a new spiller backed by a
-// temporary directory.
-func newSpiller() (spiller, error) {
-	dir, err := ioutil.TempDir("", "spiller")
-	if err != nil {
-		return "", err
-	}
-	return spiller(dir), nil
-}
-
-// Spill spills the provided frame to a new file in the spiller.
-// Spill returns the file's encoded size, or an error. The frame
-// is encoded in batches of spillBatchSize.
-func (dir spiller) Spill(frame frame.Frame) (int, error) {
-	f, err := ioutil.TempFile(string(dir), "")
-	if err != nil {
-		return 0, err
-	}
-	// TODO(marius): buffer?
-	enc := sliceio.NewEncoder(f)
-	for frame.Len() > 0 {
-		n := spillBatchSize
-		m := frame.Len()
-		if m < n {
-			n = m
-		}
-		if err := enc.Encode(frame.Slice(0, n)); err != nil {
-			return 0, err
-		}
-		frame = frame.Slice(n, m)
-	}
-	size, err := f.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return 0, err
-	}
-	if err := f.Close(); err != nil {
-		return 0, err
-	}
-	return int(size), nil
-}
-
-// Readers returns a reader for each spiller file.
-func (s spiller) Readers() ([]sliceio.Reader, error) {
-	dir, err := os.Open(string(s))
-	if err != nil {
-		return nil, err
-	}
-	infos, err := dir.Readdir(-1)
-	if err != nil {
-		return nil, err
-	}
-	readers := make([]sliceio.Reader, len(infos))
-	closers := make([]io.Closer, len(infos))
-	for i := range infos {
-		f, err := os.Open(filepath.Join(string(s), infos[i].Name()))
-		if err != nil {
-			for j := 0; j < i; j++ {
-				closers[j].Close()
-			}
-			return nil, err
-		}
-		closers[i] = f
-		readers[i] = &sliceio.ClosingReader{sliceio.NewDecodingReader(f), f}
-	}
-	return readers, nil
-}
-
-// Cleanup removes the spiller's temporary files. It is safe to call
-// Cleanup after Readers(), but before reading is done.
-func (s spiller) Cleanup() error {
-	return os.RemoveAll(string(s))
+	return NewMergeReader(ctx, typ, sorter, readers)
 }
 
 // A FrameBuffer is a buffered frame. The frame is filled from
 // a reader, and maintains a current offset and length.
-type frameBuffer struct {
+type FrameBuffer struct {
 	frame.Frame
 	sliceio.Reader
 	Off, Len int
@@ -161,10 +78,10 @@ type frameBuffer struct {
 	N        int
 }
 
-// Fill (re-) filles the frameBuffer when it's empty. An error
+// Fill (re-) fills the FrameBuffer when it's empty. An error
 // is returned if the underlying reader returns an error.
 // EOF is returned if no more data are available.
-func (f *frameBuffer) Fill(ctx context.Context) error {
+func (f *FrameBuffer) Fill(ctx context.Context) error {
 	if f.Frame.Len() < f.Frame.Cap() {
 		f.Frame = f.Frame.Slice(0, f.Frame.Cap())
 	}
@@ -184,28 +101,31 @@ func (f *frameBuffer) Fill(ctx context.Context) error {
 	return err
 }
 
-// FrameBufferHeap implements a heap of frameBuffers,
+// FrameBufferHeap implements a heap of FrameBuffers,
 // ordered by the provided sorter.
-type frameBufferHeap struct {
-	Buffers []*frameBuffer
+type FrameBufferHeap struct {
+	Buffers []*FrameBuffer
 	Sorter  kernel.Sorter
 }
 
-func (f *frameBufferHeap) Len() int { return len(f.Buffers) }
-func (f *frameBufferHeap) Less(i, j int) bool {
+func (f *FrameBufferHeap) Len() int { return len(f.Buffers) }
+func (f *FrameBufferHeap) Less(i, j int) bool {
 	return f.Sorter.Less(f.Buffers[i].Frame, f.Buffers[i].Off, f.Buffers[j].Frame, f.Buffers[j].Off)
 }
-func (f *frameBufferHeap) Swap(i, j int) {
+func (f *FrameBufferHeap) Swap(i, j int) {
 	f.Buffers[i], f.Buffers[j] = f.Buffers[j], f.Buffers[i]
 }
 
-func (f *frameBufferHeap) Push(x interface{}) {
-	buf := x.(*frameBuffer)
+// Push pushes a FrameBuffer onto the heap.
+func (f *FrameBufferHeap) Push(x interface{}) {
+	buf := x.(*FrameBuffer)
 	buf.Index = len(f.Buffers)
 	f.Buffers = append(f.Buffers, buf)
 }
 
-func (f *frameBufferHeap) Pop() interface{} {
+// Pop removes the FrameBuffer with the smallest priority
+// from the heap.
+func (f *FrameBufferHeap) Pop() interface{} {
 	n := len(f.Buffers)
 	elem := f.Buffers[n-1]
 	f.Buffers = f.Buffers[:n-1]
@@ -216,20 +136,20 @@ func (f *frameBufferHeap) Pop() interface{} {
 // single sorted reader.
 type mergeReader struct {
 	err  error
-	heap *frameBufferHeap
+	heap *FrameBufferHeap
 }
 
-// NewMergeReader returns a new mergeReader that is sorted
+// NewMergeReader returns a new Reader that is sorted
 // according to the provided Sorter. The readers to be merged
 // must already be sorted according to the same.
-func newMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []sliceio.Reader) (*mergeReader, error) {
-	h := new(frameBufferHeap)
+func NewMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []sliceio.Reader) (sliceio.Reader, error) {
+	h := new(FrameBufferHeap)
 	h.Sorter = sorter
-	h.Buffers = make([]*frameBuffer, 0, len(readers))
+	h.Buffers = make([]*FrameBuffer, 0, len(readers))
 	for i := range readers {
-		fr := &frameBuffer{
+		fr := &FrameBuffer{
 			Reader: readers[i],
-			Frame:  frame.Make(typ, spillBatchSize),
+			Frame:  frame.Make(typ, sliceio.SpillBatchSize),
 		}
 		switch err := fr.Fill(ctx); {
 		case err == sliceio.EOF:

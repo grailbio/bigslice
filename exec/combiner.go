@@ -2,7 +2,7 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package bigslice
+package exec
 
 import (
 	"context"
@@ -16,16 +16,22 @@ import (
 	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/sortio"
 	"github.com/grailbio/bigslice/typecheck"
+)
+
+var (
+	combinerKeys         = expvar.NewInt("combinerkeys")
+	combinerRecords      = expvar.NewInt("combinerrecords")
+	combinerTotalRecords = expvar.NewInt("combinertotalrecords")
+	combineDiskSpills    = expvar.NewInt("combinediskspills")
 )
 
 // TODO(marius): use ARC or something similary adaptive when
 // compacting and spilling combiner frames? It could make a big
 // difference if keys have varying degrees of temporal locality.
 
-var combineDiskSpills = expvar.NewInt("combinediskspills")
-
-// A CombiningFrame maintains a frame wherein values are continually
+// A combiningFrame maintains a frame wherein values are continually
 // combined by a user-supplied combiner. CombingFrames have two
 // columns: the first column is the key by which values are combined;
 // the second column is the combined value for that key.
@@ -33,7 +39,7 @@ var combineDiskSpills = expvar.NewInt("combinediskspills")
 // TODO(marius): Instead of using an indexer (which must maintain
 // redundant copies of keys), we could implement a hash table directly
 // on top of a Frame.
-type CombiningFrame struct {
+type combiningFrame struct {
 	// Frame is the data frame that is being combined. Frame is
 	// continually appended as new keys appear.
 	frame.Frame
@@ -69,11 +75,11 @@ func canMakeCombiningFrame(typ slicetype.Type) bool {
 // MakeCombiningFrame creates and returns a new CombiningFrame
 // with the provided type and combiner. MakeCombiningFrame panics
 // if there is type disagreement.
-func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFrame {
+func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *combiningFrame {
 	if typ.NumOut() != 2 {
 		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}
-	f := new(CombiningFrame)
+	f := new(combiningFrame)
 	if !kernel.Lookup(typ.Out(0), &f.indexer) {
 		return nil
 	}
@@ -86,7 +92,7 @@ func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *CombiningFr
 // values in f are combined with existing values using the
 // CombiningFrame's combiner. When no value exists for a key, the
 // value is copied directly.
-func (c *CombiningFrame) Combine(f frame.Frame) {
+func (c *combiningFrame) Combine(f frame.Frame) {
 	n := f.Len()
 	if cap(c.indices) < n {
 		c.indices = make([]int, n)
@@ -119,7 +125,7 @@ func (c *CombiningFrame) Combine(f frame.Frame) {
 // can retain memory residence for longer.
 //
 // TODO(marius): we could dynamically decide what the top N cutoff is.
-func (c *CombiningFrame) Compact(n int) frame.Frame {
+func (c *combiningFrame) Compact(n int) frame.Frame {
 	if c.swap == nil {
 		c.swap = c.Swapper()
 	}
@@ -148,10 +154,10 @@ type combiner struct {
 	mu sync.Mutex
 
 	targetSize int
-	comb       *CombiningFrame
+	comb       *combiningFrame
 	sorter     kernel.Sorter
 	combiner   reflect.Value
-	spiller    spiller
+	spiller    sliceio.Spiller
 	name       string
 	total      int
 	read       bool
@@ -168,7 +174,7 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 		targetSize: targetSize,
 	}
 	var err error
-	c.spiller, err = newSpiller()
+	c.spiller, err = sliceio.NewSpiller()
 	if err != nil {
 		return nil, err
 	}
@@ -241,11 +247,7 @@ func (c *combiner) Reader() (sliceio.Reader, error) {
 	c.comb = nil
 	c.sorter.Sort(f)
 	readers = append(readers, sliceio.FrameReader(f))
-	return &reduceReader{
-		typ:      c,
-		combiner: c.combiner,
-		readers:  readers,
-	}, nil
+	return sortio.Reduce(c, readers, c.combiner), nil
 }
 
 // WriteTo writes the contents of this combiner to the provided
