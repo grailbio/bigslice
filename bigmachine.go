@@ -84,7 +84,7 @@ func (s *sliceMachine) Go(ctx context.Context) error {
 			lerr error
 		)
 		g.Go(func() error {
-			mem, merr = s.Machine.MemInfo(gctx)
+			mem, merr = s.Machine.MemInfo(gctx, false)
 			return nil
 		})
 		g.Go(func() error {
