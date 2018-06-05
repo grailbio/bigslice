@@ -77,7 +77,7 @@ var domainCounts = bigslice.Func(func(files []string, prefix string) bigslice.Sl
 		count = 1
 		return
 	})
-	slice = bigslice.Fold(slice, func(a, e int) int { return a + e })
+	slice = bigslice.Reduce(slice, func(a, e int) int { return a + e })
 	slice = bigslice.Scan(slice, func(shard int, scan *sliceio.Scanner) error {
 		f, err := file.Create(ctx, fmt.Sprintf("%s-%03d-of-%03d", prefix, shard, len(files)))
 		if err != nil {

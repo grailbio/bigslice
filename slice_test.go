@@ -65,6 +65,23 @@ var executors = map[string]exec.Option{
 	"Bigmachine.Test": exec.Bigmachine(testsystem.New()),
 }
 
+// CanTolerateFailures reports whether the particular slice is able to
+// recover from runtime failures.
+//
+// TODO(marius): remove once we can recover from tasks with combiner
+// buffers.
+func canTolerateFailures(slice bigslice.Slice) bool {
+	if slice.Combiner() != nil {
+		return false
+	}
+	for i := 0; i < slice.NumDep(); i++ {
+		if !canTolerateFailures(slice.Dep(i)) {
+			return false
+		}
+	}
+	return true
+}
+
 func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sliceio.Scanner {
 	results := make(map[string]*sliceio.Scanner)
 	fn := bigslice.Func(func() bigslice.Slice { return slice })
@@ -84,8 +101,12 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 }
 
 func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interface{}) {
-	rpc.InjectFailures = true
-	defer func() { rpc.InjectFailures = false }()
+	if canTolerateFailures(slice) {
+		rpc.InjectFailures = true
+		defer func() { rpc.InjectFailures = false }()
+	} else {
+		t.Logf("slice %s cannot recover from failures", bigslice.String(slice))
+	}
 
 	t.Helper()
 	if len(expect) == 0 {

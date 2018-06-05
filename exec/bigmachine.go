@@ -6,7 +6,6 @@ package exec
 
 import (
 	"bufio"
-	"container/heap"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/retry"
@@ -36,13 +34,20 @@ func init() {
 	gob.Register(invocationRef{})
 }
 
+const (
+	// StatsPollInterval is the period at which task statistics are polled.
+	statsPollInterval = 10 * time.Second
+
+	// StatTimeout is the maximum amount of time allowed to retrieve
+	// machine stats, per iteration.
+	statTimeout = 5 * time.Second
+)
+
 // RetryPolicy is the default retry policy used for machine calls.
 var retryPolicy = retry.Backoff(time.Second, 5*time.Second, 1.5)
 
-const statsPollInterval = 5 * time.Second
-
-// MaxLoad is the maximum per-machine load.
-const maxLoad = 0.95
+// FatalErr is used to match fatal errors.
+var fatalErr = errors.E(errors.Fatal)
 
 // DoShuffleReaders determines whether reader tasks should be
 // shuffled in order to avoid potential thundering herd issues.
@@ -60,130 +65,6 @@ func init() {
 // e.g., perhaps we can register flags in a bigmachine flagset that gets
 // parsed together, so that we don't litter the process with global flags.
 
-// SliceMachine maintains bigslice-specific metadata to bigmachine machines.
-type sliceMachine struct {
-	*bigmachine.Machine
-
-	// Curprocs is the current number of procs on the machine that have
-	// tasks assigned.
-	Curprocs int
-
-	Stats  *stats.Map
-	Status *status.Task
-
-	// index is the machine's index in the executor's priority queue.
-	index int
-
-	// Compiles ensures that each invocation is compiled exactly once on
-	// the machine.
-	compiles taskOnce
-
-	mu   sync.Mutex
-	disk bigmachine.DiskInfo
-	mem  bigmachine.MemInfo
-	load bigmachine.LoadInfo
-}
-
-// Go polls runtime statistics from the underlying machine until
-// the provided context is done.
-func (s *sliceMachine) Go(ctx context.Context) error {
-	for ctx.Err() == nil {
-		g, gctx := errgroup.WithContext(ctx)
-		var (
-			mem  bigmachine.MemInfo
-			merr error
-			disk bigmachine.DiskInfo
-			derr error
-			load bigmachine.LoadInfo
-			lerr error
-		)
-		g.Go(func() error {
-			mem, merr = s.Machine.MemInfo(gctx, false)
-			return nil
-		})
-		g.Go(func() error {
-			disk, derr = s.Machine.DiskInfo(gctx)
-			return nil
-		})
-		g.Go(func() error {
-			load, lerr = s.Machine.LoadInfo(gctx)
-			return nil
-		})
-		if err := g.Wait(); err != nil {
-			return err
-		}
-		if merr != nil {
-			log.Printf("meminfo %s: %v", s.Machine.Addr, merr)
-		}
-		if derr != nil {
-			log.Printf("diskinfo %s: %v", s.Machine.Addr, derr)
-		}
-		if lerr != nil {
-			log.Printf("loadinfo %s: %v", s.Machine.Addr, lerr)
-		}
-		s.mu.Lock()
-		if merr == nil {
-			s.mem = mem
-		}
-		if derr == nil {
-			s.disk = disk
-		}
-		if lerr == nil {
-			s.load = load
-		}
-		s.mu.Unlock()
-		s.UpdateStatus()
-		select {
-		case <-time.After(statsPollInterval):
-		case <-ctx.Done():
-		}
-	}
-	return ctx.Err()
-}
-
-// UpdateStatus updates the machine's status.
-func (s *sliceMachine) UpdateStatus() {
-	values := make(stats.Values)
-	s.Stats.AddAll(values)
-	s.mu.Lock()
-	s.Status.Printf("mem %s/%s disk %s/%s load %.1f/%.1f/%.1f counters %s",
-		data.Size(s.mem.System.Used), data.Size(s.mem.System.Total),
-		data.Size(s.disk.Usage.Used), data.Size(s.disk.Usage.Total),
-		s.load.Averages.Load1, s.load.Averages.Load5, s.load.Averages.Load15,
-		values,
-	)
-	s.mu.Unlock()
-}
-
-// Load returns the machine's load, i.e., the proportion of its
-// capacity that is currently in use.
-func (s *sliceMachine) Load() float64 {
-	return float64(s.Curprocs) / float64(s.Maxprocs)
-}
-
-// MachineQ is a priority queue for sliceMachines, prioritized
-// by the machine's load, as defined by (*sliceMachine).Load()
-type machineQ []*sliceMachine
-
-func (h machineQ) Len() int           { return len(h) }
-func (h machineQ) Less(i, j int) bool { return h[i].Load() < h[j].Load() }
-func (h machineQ) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].index, h[j].index = i, j
-}
-
-func (h *machineQ) Push(x interface{}) {
-	*h = append(*h, x.(*sliceMachine))
-}
-
-func (h *machineQ) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
 // BigmachineExecutor is an executor that runs individual tasks on
 // bigmachine machines.
 type bigmachineExecutor struct {
@@ -192,19 +73,14 @@ type bigmachineExecutor struct {
 	sess *Session
 	b    *bigmachine.B
 
-	machinesOnce sync.Once
-	machines     machineQ
-	machinesErr  error
+	offerc chan *sliceMachine
+	needc  chan int
 
 	status *status.Group
 
 	mu sync.Mutex
 
-	// Waiters is the set of tasks waiting for capacity. The waitlist is
-	// FIFO: at most one gets notified for each task completion.
-	waiters []*Task
-
-	locations map[*Task]*bigmachine.Machine
+	locations map[*Task]*sliceMachine
 	stats     map[string]stats.Values
 
 	// Invocations and invocationDeps are used to track dependencies
@@ -217,9 +93,7 @@ type bigmachineExecutor struct {
 }
 
 func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
-	return &bigmachineExecutor{
-		system: system,
-	}
+	return &bigmachineExecutor{system: system}
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
@@ -231,13 +105,16 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	debug.SetGCPercent(10)
 	b.sess = sess
 	b.b = bigmachine.Start(b.system)
-	b.locations = make(map[*Task]*bigmachine.Machine)
+	b.locations = make(map[*Task]*sliceMachine)
 	b.stats = make(map[string]stats.Values)
 	if status := sess.Status(); status != nil {
 		b.status = status.Group("bigmachine")
 	}
 	b.invocations = make(map[uint64]bigslice.Invocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
+	b.offerc = make(chan *sliceMachine)
+	b.needc = make(chan int)
+	go manageMachines(context.Background(), b.b, b.status, b.sess.Parallelism(), b.needc, b.offerc)
 	return b.b.Shutdown
 }
 
@@ -296,7 +173,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	b.mu.Unlock()
 
 	for i := len(invocations) - 1; i >= 0; i-- {
-		err := m.compiles.Do(invocations[i].Index, func() error {
+		err := m.Compiles.Do(invocations[i].Index, func() error {
 			return m.RetryCall(ctx, "Worker.Compile", invocations[i], nil)
 		})
 		if err != nil {
@@ -309,40 +186,17 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 func (b *bigmachineExecutor) run(task *Task) {
 	ctx := context.Background()
 	task.Status.Print("waiting for a machine")
-	if err := b.initMachines(); err != nil {
-		task.Errorf("machine initialization failed: %v", err)
-		return
-	}
+
+	b.need(1)
+	defer b.need(-1)
 
 	var m *sliceMachine
-	for {
-		b.mu.Lock()
-		if len(b.machines) == 0 {
-			b.mu.Unlock()
-			task.Errorf("no machines available")
-			return
-		}
-		m = b.machines[0]
-		// Since the priority queue is ordered by Load, then this is true
-		// for all machines, and there is not currently excess capacity in
-		// the cluster.
-		if m.Load() < maxLoad {
-			break
-		}
-		b.waiters = append(b.waiters, task)
-		task.Lock()
-		b.mu.Unlock()
-		if err := task.Wait(ctx); err != nil {
-			task.Unlock()
-			task.Error(err)
-			return
-		}
-		task.Unlock()
+	select {
+	case <-ctx.Done():
+		task.Error(ctx.Err())
+		return
+	case m = <-b.offerc:
 	}
-
-	m.Curprocs++
-	heap.Fix(&b.machines, m.index)
-	b.mu.Unlock()
 
 	numTasks := m.Stats.Int("tasks")
 	numTasks.Add(1)
@@ -350,19 +204,6 @@ func (b *bigmachineExecutor) run(task *Task) {
 	defer func() {
 		numTasks.Add(-1)
 		m.UpdateStatus()
-		b.mu.Lock()
-		var waiter *Task
-		if len(b.waiters) > 0 {
-			waiter, b.waiters = b.waiters[0], b.waiters[1:]
-		}
-		m.Curprocs--
-		heap.Fix(&b.machines, m.index)
-		b.mu.Unlock()
-		if waiter != nil {
-			waiter.Lock()
-			waiter.Broadcast()
-			waiter.Unlock()
-		}
 	}()
 
 	// Make sure that the invocation has been compiled on the selected
@@ -378,9 +219,18 @@ compile:
 			// invocation. We're going to try to run it again. Note that this
 			// is racy: the behavior remains correct but may imply additional
 			// data transfer. C'est la vie.
-			m.compiles.Forget(task.Invocation.Index)
+			m.Compiles.Forget(task.Invocation.Index)
+		case errors.Is(errors.Net, err), errors.IsTemporary(err):
+			// Compilations don't involve invoking user code, nor does it
+			// involve dependencies other than potentially uploading data from
+			// the driver node, so we interpret errors more strictly.
+			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
+			task.Set(TaskLost)
+			m.Done(err)
+			return
 		default:
 			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
+			m.Done(err)
 			return
 		}
 	}
@@ -399,6 +249,7 @@ compile:
 				// TODO(marius): make this a separate state, or a separate
 				// error type?
 				task.Errorf("task %s has no location", deptask.Name)
+				m.Done(nil)
 				return
 			}
 			req.Locations[deptask.Name] = m.Addr
@@ -419,7 +270,7 @@ compile:
 			var vals stats.Values
 			if err := m.Call(ctx, "Worker.Stats", struct{}{}, &vals); err != nil {
 				if err != context.Canceled {
-					log.Printf("Worker.Stats: %v", err)
+					log.Error.Printf("Worker.Stats: %v", err)
 				}
 				return
 			}
@@ -432,16 +283,26 @@ compile:
 		}
 	}()
 
-	task.State(TaskRunning)
+	task.Set(TaskRunning)
 	var reply taskRunReply
-	// TODO(marius): distinguish between errors that are caused by
-	// missing dependencies, lost tasks, etc.
-	if err := m.RetryCall(ctx, "Worker.Run", req, &reply); err != nil {
+	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
+	m.Done(err)
+	switch {
+	case err == nil:
+		b.setLocation(task, m)
+		task.Set(TaskOk)
+		m.Assign(task)
+	case ctx.Err() != nil:
 		task.Error(err)
-		return
+	case errors.Match(fatalErr, err):
+		// Fatal errors aren't retryable.
+		task.Error(err)
+	default:
+		// Everything else we consider as the task being lost. It'll get
+		// resubmitted by the evaluator.
+		task.Status.Printf("lost task during task evaluation: %v", err)
+		task.Set(TaskLost)
 	}
-	b.setLocation(task, m.Machine)
-	task.State(TaskOk)
 }
 
 func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) sliceio.Reader {
@@ -454,90 +315,14 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return &machineReader{
-		Machine:       m,
+		Machine:       m.Machine,
 		TaskPartition: taskPartition{task.Name, partition},
 	}
 }
 
-// Maxprocs reports the total number of processors available in
-// the bigmachine.
-func (b *bigmachineExecutor) Maxprocs() int {
-	// TODO(marius): cache this
-	var n int
-	b.mu.Lock()
-	for _, mach := range b.machines {
-		n += mach.Maxprocs
-	}
-	b.mu.Unlock()
-	return n
-}
-
-func (b *bigmachineExecutor) initMachines() error {
-	b.machinesOnce.Do(func() {
-		var (
-			n        = 1
-			p        = b.sess.Parallelism()
-			maxprocs = b.b.System().Maxprocs()
-		)
-		if p > 0 {
-			n = p / maxprocs
-			if p%maxprocs != 0 {
-				n++
-			}
-		}
-		log.Printf("starting %d bigmachines (p=%d, maxprocs=%d)", n, p, maxprocs)
-		ctx := context.Background()
-		machines, err := b.b.Start(ctx, n, bigmachine.Services{
-			"Worker": &worker{},
-		})
-		if err != nil {
-			b.machinesErr = err
-			return
-		}
-		log.Printf("waiting for %d machines", len(machines))
-		g, ctx := errgroup.WithContext(ctx)
-		for i := range machines {
-			m := machines[i]
-			status := b.status.Start()
-			status.Print("waiting for machine to boot")
-			g.Go(func() error {
-				<-m.Wait(bigmachine.Running)
-				if err := m.Err(); err != nil {
-					log.Printf("machine %s failed to start: %v", m.Addr, err)
-					status.Printf("failed to start: %v", err)
-					status.Done()
-					return nil
-				}
-				status.Title(m.Addr)
-				status.Print("running")
-				log.Printf("machine %v is ready", m.Addr)
-				sm := &sliceMachine{
-					Machine: m,
-					Stats:   stats.NewMap(),
-					Status:  status,
-				}
-				// TODO(marius): pass a context that's tied to the evaluation
-				// lifetime, or lifetime of the machine.
-				go sm.Go(context.Background())
-				b.mu.Lock()
-				b.machines = append(b.machines, sm)
-				b.mu.Unlock()
-				return nil
-			})
-		}
-		if err := g.Wait(); err != nil {
-			b.machinesErr = err
-			return
-		}
-		if len(b.machines) == 0 {
-			b.machinesErr = errors.E("no machines started")
-			return
-		}
-		b.mu.Lock()
-		heap.Init(&b.machines)
-		b.mu.Unlock()
-	})
-	return b.machinesErr
+// Need indicates the n additional procs are needed.
+func (b *bigmachineExecutor) need(n int) {
+	b.needc <- n
 }
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
@@ -546,14 +331,14 @@ func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
 
 // Location returns the machine on which the results of the provided
 // task resides.
-func (b *bigmachineExecutor) location(task *Task) *bigmachine.Machine {
+func (b *bigmachineExecutor) location(task *Task) *sliceMachine {
 	b.mu.Lock()
 	m := b.locations[task]
 	b.mu.Unlock()
 	return m
 }
 
-func (b *bigmachineExecutor) setLocation(task *Task, m *bigmachine.Machine) {
+func (b *bigmachineExecutor) setLocation(task *Task, m *sliceMachine) {
 	b.mu.Lock()
 	b.locations[task] = m
 	b.mu.Unlock()
@@ -628,6 +413,7 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("invocation panic! %v", e)
+			err = errors.E(errors.Fatal, err)
 		}
 	}()
 	return w.compiles.Do(inv.Index, func() error {
@@ -715,12 +501,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		if e := recover(); e != nil {
 			stack := debug.Stack()
 			err = fmt.Errorf("panic while evaluating slice: %v\n%s", e, string(stack))
+			err = errors.E(err, errors.Fatal)
 		}
 		if err != nil {
 			log.Printf("task %s error: %v", req.Task, err)
 			task.Error(errors.Recover(err))
 		} else {
-			task.State(TaskOk)
+			task.Set(TaskOk)
 		}
 	}()
 

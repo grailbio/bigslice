@@ -40,10 +40,6 @@ type Executor interface {
 	// Reader returns a locally accessible reader for the requested task.
 	Reader(context.Context, *Task, int) sliceio.Reader
 
-	// Maxprocs returns the number of available processors in this executor.
-	// It determines the amount of available physical parallelism.
-	Maxprocs() int
-
 	// HandleDebug adds executor-specific debug handlers to the provided
 	// http.ServeMux. This is used to serve diagnostic information relating
 	// to the executor.
@@ -68,7 +64,7 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 		task.all(tasks)
 	}
 	var (
-		donec   = make(chan *Task)
+		donec   = make(chan struct{})
 		errc    = make(chan error)
 		running int
 	)
@@ -96,31 +92,27 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 			executor.Runnable(task)
 			running++
 			go func(task *Task) {
-				task.Lock()
-				for task.state <= TaskRunning {
-					if err := task.Wait(ctx); err != nil {
-						task.Unlock()
-						errc <- err
-						return
-					}
+				state, err := task.WaitState(ctx, TaskOk)
+				if err != nil {
+					errc <- err
+					return
 				}
-				var err error
-				switch task.state {
+				log.Debug.Printf("done task %v", task)
+				task.Status.Done()
+				switch state {
 				default:
-					err = fmt.Errorf("unexpected task state %s", task.state)
+					err = fmt.Errorf("unexpected task state %v", task)
 				case TaskOk:
 				case TaskErr:
 					err = task.err
 				case TaskLost:
-					err = ErrTaskLost
+					log.Error.Printf("lost task %s", task.Name)
 				}
-				task.Unlock()
 				if err != nil {
-					task.Status.Printf("error %v", err)
 					errc <- err
-					return
+				} else {
+					donec <- struct{}{}
 				}
-				donec <- task
 			}(task)
 		}
 
@@ -136,9 +128,8 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 		}
 		group.Printf("tasks: %s", strings.Join(states, " "))
 		select {
-		case task := <-donec:
+		case <-donec:
 			running--
-			task.Status.Done()
 		case err := <-errc:
 			return err
 		}
@@ -160,11 +151,17 @@ func addReady(tasks map[*Task]bool, task *Task) error {
 	switch task.state {
 	case TaskInit:
 	case TaskWaiting, TaskRunning, TaskOk:
+		// We only add back lost tasks after they've been acknowledged
+		// by the main evaluation loop.
 		return nil
+	case TaskLost:
+		// If we encounter a lost task, we re-initialize it.
+		if task.CombineKey != "" {
+			return fmt.Errorf("unrecoverable combine task %v lost", task)
+		}
+		task.state = TaskInit
 	case TaskErr:
 		return task.err
-	case TaskLost:
-		return ErrTaskLost
 	default:
 		panic("unhandled task state")
 	}

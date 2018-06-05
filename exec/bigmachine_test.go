@@ -5,38 +5,17 @@
 package exec
 
 import (
-	"container/heap"
 	"context"
 	"testing"
 
-	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
-func TestMachineQ(t *testing.T) {
-	q := machineQ{
-		{Machine: &bigmachine.Machine{Maxprocs: 2}, Curprocs: 1},
-		{Machine: &bigmachine.Machine{Maxprocs: 4}, Curprocs: 1},
-		{Machine: &bigmachine.Machine{Maxprocs: 3}, Curprocs: 0},
-	}
-	heap.Init(&q)
-	if got, want := q[0].Maxprocs, 3; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	q[0].Curprocs++
-	heap.Fix(&q, 0)
-	expect := []int{4, 3, 2}
-	for _, procs := range expect {
-		if got, want := q[0].Maxprocs, procs; got != want {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-		heap.Pop(&q)
-	}
-}
-
 func TestBigmachineExecutor(t *testing.T) {
-	x, stop := testExecutor()
+	x, stop := bigmachineTestExecutor()
 	defer stop()
 
 	gate := make(chan struct{}, 1)
@@ -84,8 +63,8 @@ func TestBigmachineExecutor(t *testing.T) {
 	task.Unlock()
 }
 
-func TestBigmachineExecutorError(t *testing.T) {
-	x, stop := testExecutor()
+func TestBigmachineExecutorPanicCompile(t *testing.T) {
+	x, stop := bigmachineTestExecutor()
 	defer stop()
 
 	var count int
@@ -96,63 +75,98 @@ func TestBigmachineExecutorError(t *testing.T) {
 		}
 		return bigslice.Const(1, []int{})
 	})
-	if got, want := len(tasks), 1; got != want {
-		t.Fatalf("got %v, want %v", got, want)
+	run(t, x, tasks, TaskErr)
+}
+
+func TestBigmachineExecutorPanicRun(t *testing.T) {
+	x, stop := bigmachineTestExecutor()
+	defer stop()
+
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
+		slice := bigslice.Const(1, []int{123})
+		return bigslice.Map(slice, func(i int) int {
+			panic(i)
+		})
+	})
+	run(t, x, tasks, TaskErr)
+	if err := tasks[0].Err(); !errors.Match(fatalErr, err) {
+		t.Errorf("expected fatal error, got %v", err)
 	}
-	task := tasks[0]
-	ctx := context.Background()
-	x.Runnable(task)
-	task.Lock()
-	for task.state <= TaskRunning {
-		if err := task.Wait(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got, want := task.state, TaskErr; got != want {
+}
+
+type errorSlice struct {
+	bigslice.Slice
+	err error
+}
+
+func (r *errorSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
+	return sliceio.ErrReader(r.err)
+}
+
+func TestBigmachineExecutorErrorRun(t *testing.T) {
+	x, stop := bigmachineTestExecutor()
+	defer stop()
+
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
+		return &errorSlice{bigslice.Const(1, []int{123}), errors.New("some error")}
+	})
+	run(t, x, tasks, TaskLost)
+}
+
+func TestBigmachineExecutorFatalErrorRun(t *testing.T) {
+	x, stop := bigmachineTestExecutor()
+	defer stop()
+
+	err := errors.E(errors.Fatal, "a fatal error")
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
+		return &errorSlice{bigslice.Const(1, []int{123}), err}
+	})
+	run(t, x, tasks, TaskErr)
+	if got, want := tasks[0].Err(), err; !errors.Match(want, got) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if task.err == nil {
-		t.Error("expected error")
-	}
-	task.err = nil
-	task.Unlock()
 }
 
 func TestBigmachineCompiler(t *testing.T) {
-	x, stop := testExecutor()
+	x, stop := bigmachineTestExecutor()
 	defer stop()
 
 	tasks, slice, inv := compileFunc(func() bigslice.Slice {
 		return bigslice.Const(1, []int{})
 	})
-	run(t, x, tasks)
+	run(t, x, tasks, TaskOk)
 	tasks, _, _ = compileFunc(func() bigslice.Slice {
 		return bigslice.Map(&Result{Slice: slice, inv: inv}, func(i int) int { return i * 2 })
 	})
-	run(t, x, tasks)
+	run(t, x, tasks, TaskOk)
 }
 
-func run(t *testing.T, x Executor, tasks []*Task) {
+func run(t *testing.T, x Executor, tasks []*Task, expect TaskState) {
 	t.Helper()
 	for _, task := range tasks {
 		x.Runnable(task)
 	}
 	for _, task := range tasks {
-		task.WaitState(context.Background(), TaskOk)
+		task.WaitState(context.Background(), expect)
 		task.Lock()
-		if task.state != TaskOk {
-			t.Fatalf("task %v not ok", task)
+		if got, want := task.state, expect; got != want {
+			t.Fatalf("task %v: got %v, want %v", task, got, want)
 		}
 		task.Unlock()
 	}
 }
 
-func testExecutor() (exec *bigmachineExecutor, stop func()) {
+func bigmachineTestExecutor() (exec *bigmachineExecutor, stop func()) {
 	x := newBigmachineExecutor(testsystem.New())
-	return x, x.Start(&Session{
-		Context: context.Background(),
+	ctx, cancel := context.WithCancel(context.Background())
+	shutdown := x.Start(&Session{
+		Context: ctx,
 		p:       1,
 	})
+	return x, func() {
+		cancel()
+		shutdown()
+	}
 }
 
 func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {

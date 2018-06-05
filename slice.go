@@ -6,12 +6,12 @@ package bigslice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/kernel"
@@ -272,7 +272,12 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out...))
 	n = int(rvs[0].Int())
 	if e := rvs[1].Interface(); e != nil {
-		r.err = e.(error)
+		if err := e.(error); err == sliceio.EOF || errors.Recover(err).Severity != errors.Unknown {
+			r.err = err
+		} else {
+			// We consider all application-generated errors as Fatal unless marked otherwise.
+			r.err = errors.E(errors.Fatal, err)
+		}
 	}
 	return n, r.err
 }

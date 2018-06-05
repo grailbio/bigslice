@@ -30,16 +30,24 @@ func (c *Cond) Broadcast() {
 	}
 }
 
-// Wait returns after the next call to Broadcast, or if the context
-// is complete. The context's lock must be held when calling Wait.
-// An error returns with the context's error if the context completes
-// while waiting.
-func (c *Cond) Wait(ctx context.Context) error {
+// Done returns a channel that is closed after the next broadcast of
+// this Cond. Done mus tbe called with the Cond's lock held; the lock
+// is released before Done returns.
+func (c *Cond) Done() <-chan struct{} {
 	if c.waitc == nil {
 		c.waitc = make(chan struct{})
 	}
 	waitc := c.waitc
 	c.l.Unlock()
+	return waitc
+}
+
+// Wait returns after the next call to Broadcast, or if the context
+// is complete. The context's lock must be held when calling Wait.
+// An error returns with the context's error if the context completes
+// while waiting.
+func (c *Cond) Wait(ctx context.Context) error {
+	waitc := c.Done()
 	var err error
 	select {
 	case <-waitc:

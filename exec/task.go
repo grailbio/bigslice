@@ -159,9 +159,9 @@ func (t *Task) String() string {
 	return b.String()
 }
 
-// State sets the task's state to the provided state and notifies
+// Set sets the task's state to the provided state and notifies
 // any waiters.
-func (t *Task) State(state TaskState) {
+func (t *Task) Set(state TaskState) {
 	t.Lock()
 	t.state = state
 	t.Broadcast()
@@ -206,6 +206,14 @@ func (t *Task) Err() error {
 	return nil
 }
 
+// State returns the task's current state.
+func (t *Task) State() TaskState {
+	t.Lock()
+	state := t.state
+	t.Unlock()
+	return state
+}
+
 // Broadcast notifies waiters of a state change. Broadcast must only
 // be called while the task's lock is held.
 func (t *Task) Broadcast() {
@@ -235,15 +243,14 @@ func (t *Task) Wait(ctx context.Context) error {
 
 // WaitState returns when the task's state is at least the provided state,
 // or else when the context is done.
-func (t *Task) WaitState(ctx context.Context, state TaskState) error {
+func (t *Task) WaitState(ctx context.Context, state TaskState) (TaskState, error) {
 	t.Lock()
 	defer t.Unlock()
-	for t.state < state {
-		if err := t.Wait(ctx); err != nil {
-			return err
-		}
+	var err error
+	for t.state < state && err == nil {
+		err = t.Wait(ctx)
 	}
-	return nil
+	return t.state, err
 }
 
 // GraphString returns a schematic string of the task graph rooted at t.

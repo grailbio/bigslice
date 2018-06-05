@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"runtime"
 	"sync"
 
 	"github.com/grailbio/base/limiter"
@@ -34,9 +33,6 @@ func newLocalExecutor() *localExecutor {
 		limiter: limiter.New(),
 	}
 }
-
-// Maxprocs returns the maxprocs reported by the Go runtime.
-func (localExecutor) Maxprocs() int { return runtime.GOMAXPROCS(0) }
 
 func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	l.sess = sess
@@ -101,7 +97,7 @@ func (l *localExecutor) runTask(task *Task) {
 			in = append(in, reader)
 		}
 	}
-	task.State(TaskRunning)
+	task.Set(TaskRunning)
 
 	// Start execution, then place output in a task buffer.
 	out := task.Do(in)
