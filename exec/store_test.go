@@ -33,7 +33,7 @@ func testStore(t *testing.T, store Store) {
 		return
 	}
 	// Make sure the buffer isn't available until it's closed.
-	_, err = store.Open(ctx, "test", 0)
+	_, err = store.Open(ctx, "test", 0, 0)
 	if err == nil {
 		t.Error("store prematurely unavailable")
 	} else if !errors.Is(errors.NotExist, err) {
@@ -55,7 +55,7 @@ func testStore(t *testing.T, store Store) {
 		}
 	}
 
-	rc, err := store.Open(ctx, "test", 0)
+	rc, err := store.Open(ctx, "test", 0, 0)
 	if err != nil {
 		t.Error(err)
 		return

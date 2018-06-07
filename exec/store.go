@@ -46,10 +46,11 @@ type Store interface {
 	// TODO(marius): should we allow writes to be discarded as well?
 	Create(ctx context.Context, task string, partition int) (writeCommitter, error)
 
-	// Open returns a ReadCloser from which the stored contents of the
-	// named task and partition can be read. If the task and partition are
-	// not stored, an error with kind errors.NotExist is returned.
-	Open(ctx context.Context, task string, partition int) (io.ReadCloser, error)
+	// Open returns a ReadCloser from which the stored contents of the named task
+	// and partition can be read. If the task and partition are not stored, an
+	// error with kind errors.NotExist is returned. The offset specifies the byte
+	// position from which to read.
+	Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error)
 
 	// Stat returns metadata for the stored slice.
 	Stat(ctx context.Context, task string, partition int) (sliceInfo, error)
@@ -123,12 +124,15 @@ func (m *memoryStore) Create(ctx context.Context, task string, partition int) (w
 	}, nil
 }
 
-func (m *memoryStore) Open(ctx context.Context, task string, partition int) (io.ReadCloser, error) {
+func (m *memoryStore) Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error) {
 	p, _ := m.get(task, partition)
 	if p == nil {
 		return nil, errors.E(errors.NotExist, fmt.Sprintf("open %s[%d]", task, partition))
 	}
-	return ioutil.NopCloser(bytes.NewReader(p)), nil
+	if int64(len(p)) < offset {
+		return nil, errors.E(errors.Invalid, fmt.Sprintf("open %s[%d]: seeked to %d, data size %d", task, partition, offset, len(p)))
+	}
+	return ioutil.NopCloser(bytes.NewReader(p[offset:])), nil
 }
 
 func (m *memoryStore) Stat(ctx context.Context, task string, partition int) (sliceInfo, error) {
@@ -177,7 +181,7 @@ func (s *fileStore) Create(ctx context.Context, task string, partition int) (wri
 	return &fileWriter{File: f, Writer: f.Writer(ctx)}, nil
 }
 
-func (s *fileStore) Open(ctx context.Context, task string, partition int) (io.ReadCloser, error) {
+func (s *fileStore) Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error) {
 	f, err := file.Open(ctx, s.path(task, partition))
 	if err != nil {
 		return nil, err
@@ -186,8 +190,14 @@ func (s *fileStore) Open(ctx context.Context, task string, partition int) (io.Re
 	if err != nil {
 		return nil, err
 	}
+	r := f.Reader(ctx)
+	if n, err := r.Seek(offset, io.SeekStart); err != nil || n != offset {
+		if err == nil {
+			return nil, errors.E(errors.Invalid, fmt.Sprintf("Seeked to %d, got %d", offset, n))
+		}
+	}
 	return &fileIOCloser{
-		Reader: io.LimitReader(f.Reader(ctx), info.Size()-8),
+		Reader: io.LimitReader(r, info.Size()-8-offset),
 		ctx:    ctx,
 		file:   f,
 	}, nil

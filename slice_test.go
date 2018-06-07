@@ -18,6 +18,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/bigmachine/rpc"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/exec"
@@ -83,6 +84,9 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 }
 
 func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interface{}) {
+	rpc.InjectFailures = true
+	defer func() { rpc.InjectFailures = false }()
+
 	t.Helper()
 	if len(expect) == 0 {
 		t.Fatal("need at least one column")

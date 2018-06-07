@@ -21,6 +21,7 @@ import (
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/base/retry"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
@@ -34,6 +35,9 @@ import (
 func init() {
 	gob.Register(invocationRef{})
 }
+
+// RetryPolicy is the default retry policy used for machine calls.
+var retryPolicy = retry.Backoff(time.Second, 5*time.Second, 1.5)
 
 const statsPollInterval = 5 * time.Second
 
@@ -293,7 +297,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 
 	for i := len(invocations) - 1; i >= 0; i-- {
 		err := m.compiles.Do(invocations[i].Index, func() error {
-			return m.Call(ctx, "Worker.Compile", invocations[i], nil)
+			return m.RetryCall(ctx, "Worker.Compile", invocations[i], nil)
 		})
 		if err != nil {
 			return err
@@ -432,7 +436,7 @@ compile:
 	var reply taskRunReply
 	// TODO(marius): distinguish between errors that are caused by
 	// missing dependencies, lost tasks, etc.
-	if err := m.Call(ctx, "Worker.Run", req, &reply); err != nil {
+	if err := m.RetryCall(ctx, "Worker.Run", req, &reply); err != nil {
 		task.Error(err)
 		return
 	}
@@ -681,6 +685,32 @@ type taskRunReply struct{} // nothing here yet
 // output deposited in a local buffer.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
 	recordsOut := w.stats.Int("write")
+	named := w.tasks[req.Invocation]
+	if named == nil {
+		return errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))
+	}
+	task := named[req.Task]
+	if task == nil {
+		return errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Task))
+	}
+
+	task.Lock()
+	if task.state != TaskInit {
+		for task.state <= TaskRunning {
+			log.Printf("runtask: %s already running. Waiting for it to finish.", task.Name)
+			err = task.Wait(ctx)
+			if err != nil {
+				break
+			}
+		}
+		task.Unlock()
+		if e := task.Err(); e != nil {
+			err = e
+		}
+		return err
+	}
+	task.state = TaskRunning
+	task.Unlock()
 	defer func() {
 		if e := recover(); e != nil {
 			stack := debug.Stack()
@@ -688,17 +718,12 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		if err != nil {
 			log.Printf("task %s error: %v", req.Task, err)
+			task.Error(errors.Recover(err))
+		} else {
+			task.State(TaskOk)
 		}
 	}()
 
-	named := w.tasks[req.Invocation]
-	if named == nil {
-		return fmt.Errorf("invocation %x not compiled", req.Invocation)
-	}
-	task := named[req.Task]
-	if task == nil {
-		return fmt.Errorf("task %s not found", req.Task)
-	}
 	// Gather inputs from the bigmachine cluster, dialing machines
 	// as necessary.
 	var (
@@ -742,7 +767,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				g.Go(func() error {
-					return machine.Call(ctx, "Worker.CommitCombiner", dep.CombineKey, nil)
+					return machine.RetryCall(ctx, "Worker.CommitCombiner", dep.CombineKey, nil)
 				})
 			}
 			if err := g.Wait(); err != nil {
@@ -781,7 +806,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				// (e.g., S3), then read it directly.
 				info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
 				if err == nil {
-					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition)
+					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition, 0)
 					if err == nil {
 						defer rc.Close()
 						reader.q[j] = sliceio.NewDecodingReader(rc)
@@ -1122,9 +1147,78 @@ func (w *worker) writeCombiner(key string) {
 // Read reads a slice.
 //
 // TODO(marius): should we flush combined outputs explicitly?
-func (w *worker) Read(ctx context.Context, tp taskPartition, rc *io.ReadCloser) (err error) {
-	*rc, err = w.store.Open(ctx, tp.Task, tp.Partition)
+func (w *worker) Read(ctx context.Context, req readRequest, rc *io.ReadCloser) (err error) {
+	*rc, err = w.store.Open(ctx, req.Task, req.Partition, req.Offset)
 	return
+}
+
+type machineRPCReader struct {
+	ctx context.Context
+	// Machine is the machine from which task data is read.
+	machine *bigmachine.Machine
+	// TaskPartition is the task and partition that should be read.
+	taskPartition taskPartition
+	err           error
+	reader        io.ReadCloser // The raw data from the remote worker
+	bytes         int64         // Cumulative # of bytes read from the worker.
+	retries       int
+}
+
+// readRequest is the request payload for Worker.Run
+type readRequest struct {
+	// Task is the name of the task whose output is to be read.
+	Task string
+	// Partition is the partition number to read.
+	Partition int
+	// Offset is the start offset of the read
+	Offset int64
+}
+
+func (r *machineRPCReader) Read(data []byte) (int, error) {
+	for {
+		if r.err != nil {
+			return 0, r.err
+		}
+		if r.reader == nil {
+			if r.retries > 0 {
+				log.Printf("Worker.Read %s: retrying(%d) rpc from offset %d",
+					r.taskPartition.Task, r.retries, r.bytes)
+			}
+			if err := r.machine.RetryCall(r.ctx, "Worker.Read",
+				readRequest{r.taskPartition.Task, r.taskPartition.Partition, r.bytes}, &r.reader); err != nil {
+				// machine.Call retries on temp errors, so we don't need to retry here.
+				r.err = err
+				return 0, r.err
+			}
+		}
+		n, err := r.reader.Read(data)
+		if err == nil || err == io.EOF {
+			r.err = err
+			r.bytes += int64(n)
+			return n, err
+		}
+		// Here, we blindly retry regardless of error kind/severity.
+		// This allows us to retry on on errors such as aws-sdk or io.UnexpectedEOF.
+		// The subsequent call to Worker.Read will detect any permenent
+		// errors in any case.
+		log.Error.Printf("machineReader %s: error (%d) at %d bytes: %v",
+			r.machine.Addr, r.retries, r.bytes, err)
+		r.reader.Close()
+		r.reader = nil
+		r.retries++
+		if r.err = retry.Wait(r.ctx, retryPolicy, r.retries); r.err != nil {
+			return 0, r.err
+		}
+	}
+}
+
+func (r *machineRPCReader) Close() error {
+	if r.reader == nil {
+		return nil
+	}
+	err := r.reader.Close()
+	r.reader = nil
+	return err
 }
 
 // MachineReader reads a taskPartition from a machine. It issues the
@@ -1138,37 +1232,35 @@ type machineReader struct {
 	// TaskPartition is the task and partition that should be read.
 	TaskPartition taskPartition
 
-	closer io.Closer
-	err    error
 	reader sliceio.Reader
+	rpc    *machineRPCReader
+}
+
+func newMachineReader(machine *bigmachine.Machine, partition taskPartition) *machineReader {
+	m := &machineReader{
+		Machine:       machine,
+		TaskPartition: partition,
+	}
+	return m
 }
 
 func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
-	if m.err != nil {
-		return 0, m.err
-	}
-	if m.reader == nil {
-		var rc io.ReadCloser
-		m.err = m.Machine.Call(ctx, "Worker.Read", m.TaskPartition, &rc)
-		if m.err != nil {
-			return 0, m.err
+	if m.rpc == nil {
+		m.rpc = &machineRPCReader{
+			ctx:           ctx,
+			machine:       m.Machine,
+			taskPartition: m.TaskPartition,
 		}
-		m.reader = sliceio.NewDecodingReader(rc)
-		m.closer = rc
+		m.reader = sliceio.NewDecodingReader(m.rpc)
 	}
-	n, err := m.reader.Read(ctx, f)
-	if err != nil {
-		m.Close()
-		m.closer = nil
-	}
-	return n, err
+	return m.reader.Read(ctx, f)
 }
 
 func (m *machineReader) Close() error {
-	if m.closer == nil {
-		return nil
+	if m.rpc != nil {
+		return m.rpc.Close()
 	}
-	return m.closer.Close()
+	return nil
 }
 
 type statsReader struct {
