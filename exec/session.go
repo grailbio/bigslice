@@ -13,7 +13,6 @@ import (
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
-	"github.com/grailbio/bigslice/slicetype"
 )
 
 func init() {
@@ -54,8 +53,6 @@ type Session struct {
 	shutdown func()
 	p        int
 	executor Executor
-	tasks    map[uint64][]*Task
-	types    map[uint64]slicetype.Type
 	status   *status.Status
 }
 
@@ -97,11 +94,7 @@ func Status(status *status.Status) Option {
 // the lifetime of the binary. If no executor is configured, the session
 // is configured to use the bigmachine executor.
 func Start(options ...Option) *Session {
-	s := &Session{
-		Context: context.Background(),
-		tasks:   make(map[uint64][]*Task),
-		types:   make(map[uint64]slicetype.Type),
-	}
+	s := &Session{Context: context.Background()}
 	for _, opt := range options {
 		opt(s)
 	}
@@ -128,8 +121,6 @@ func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...in
 	if err != nil {
 		return nil, err
 	}
-	s.tasks[inv.Index] = tasks
-	s.types[inv.Index] = slice
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
