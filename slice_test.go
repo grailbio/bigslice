@@ -101,11 +101,13 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 }
 
 func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interface{}) {
-	if canTolerateFailures(slice) {
-		rpc.InjectFailures = true
-		defer func() { rpc.InjectFailures = false }()
-	} else {
-		t.Logf("slice %s cannot recover from failures", bigslice.String(slice))
+	if !testing.Short() {
+		if canTolerateFailures(slice) {
+			rpc.InjectFailures = true
+			defer func() { rpc.InjectFailures = false }()
+		} else {
+			t.Logf("slice %s cannot recover from failures", bigslice.String(slice))
+		}
 	}
 
 	t.Helper()

@@ -65,9 +65,9 @@ func Test{{.TypeCap}}Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOf{{.TypeCap}}), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)

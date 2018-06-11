@@ -56,8 +56,8 @@ func ({{.Type}}Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type {{.Type}}Index map[{{.Type}}]int
 
-func (x {{.Type}}Index) Index(f frame.Frame, indices []int) {
-	vec := f[0].Interface().([]{{.Type}})
+func (x {{.Type}}Index) Index(col reflect.Value, indices []int) {
+	vec := col.Interface().([]{{.Type}})
 	for i := range indices {
 		ix, ok := x[vec[i]]
 		if !ok {
@@ -68,8 +68,8 @@ func (x {{.Type}}Index) Index(f frame.Frame, indices []int) {
 	}
 }
 
-func ({{.Type}}Kernel) Index(f frame.Frame) Index {
-	vec := f[0].Interface().([]{{.Type}})
+func ({{.Type}}Kernel) Index(col reflect.Value) Index {
+	vec := col.Interface().([]{{.Type}})
 	x := make({{.Type}}Index, len(vec))
 	for _, key := range vec {
 		if _, ok := x[key]; ok {

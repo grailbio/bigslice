@@ -75,9 +75,9 @@ func TestStringIndex(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfString), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -132,9 +132,9 @@ func TestUintIndex(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUint), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -189,9 +189,9 @@ func TestUint8Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUint8), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -246,9 +246,9 @@ func TestUint16Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUint16), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -303,9 +303,9 @@ func TestUint32Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUint32), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -360,9 +360,9 @@ func TestUint64Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUint64), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -417,9 +417,9 @@ func TestIntIndex(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfInt), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -474,9 +474,9 @@ func TestInt8Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfInt8), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -531,9 +531,9 @@ func TestInt16Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfInt16), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -588,9 +588,9 @@ func TestInt32Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfInt32), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -645,9 +645,9 @@ func TestInt64Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfInt64), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -702,9 +702,9 @@ func TestFloat32Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfFloat32), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -759,9 +759,9 @@ func TestFloat64Index(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfFloat64), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)
@@ -816,9 +816,9 @@ func TestUintptrIndex(t *testing.T) {
 	}
 	f := frame.Make(slicetype.New(typeOfUintptr), N)
 	fuzzFrame(f)
-	index := indexer.Index(f)
+	index := indexer.Index(f[0])
 	ix := make([]int, f.Len())
-	index.Index(f, ix)
+	index.Index(f[0], ix)
 	for _, i := range ix {
 		if i >= f.Len() {
 			t.Errorf("invalid index %v", i)

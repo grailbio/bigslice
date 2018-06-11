@@ -8,7 +8,6 @@ import (
 	"context"
 	"expvar"
 	"reflect"
-	"sync"
 
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
@@ -47,9 +46,6 @@ type combiningFrame struct {
 	// It should have the signature func(x, y t) t, where t is the type
 	// of Frame[1].
 	Combiner reflect.Value
-
-	// Swap swaps two elements of Frame.
-	swap func(i, j int)
 
 	// Index stores the index on the frame's Frame's key column.
 	index   kernel.Index
@@ -98,9 +94,9 @@ func (c *combiningFrame) Combine(f frame.Frame) {
 		c.indices = make([]int, n)
 	}
 	if c.index == nil {
-		c.index = c.indexer.Index(f)
+		c.index = c.indexer.Index(f[0])
 	}
-	c.index.Index(f, c.indices[:n])
+	c.index.Index(f[0], c.indices[:n])
 	for i := 0; i < n; i++ {
 		ix := c.indices[i]
 		if ix >= c.n {
@@ -126,21 +122,18 @@ func (c *combiningFrame) Combine(f frame.Frame) {
 //
 // TODO(marius): we could dynamically decide what the top N cutoff is.
 func (c *combiningFrame) Compact(n int) frame.Frame {
-	if c.swap == nil {
-		c.swap = c.Swapper()
-	}
+	swap := c.Swapper()
 	if c.Len() < n {
 		n = c.Len()
 	}
 	// Pack the top n hits into the frame.
-	top := topn(c.hits, n)
-	for i, j := range top {
-		c.swap(i, j)
+	for i, j := range topn(c.hits, n) {
+		swap(i, j)
 		c.hits[i] = c.hits[j] / 2
 	}
 	var g frame.Frame
 	c.Frame, g = c.Slice(0, n), c.Slice(n, c.Len())
-	c.index = c.indexer.Index(c.Frame)
+	c.index = c.indexer.Index(c.Frame[0])
 	c.hits = c.hits[:n]
 	c.n = n
 	return g
@@ -150,8 +143,6 @@ func (c *combiningFrame) Compact(n int) frame.Frame {
 // when it grows beyond a configured size threshold.
 type combiner struct {
 	slicetype.Type
-
-	mu sync.Mutex
 
 	targetSize int
 	comb       *combiningFrame
@@ -208,8 +199,6 @@ func (c *combiner) spill(f frame.Frame) error {
 // to disk. We could copy the data and perform this spilling concurrently
 // with writing.
 func (c *combiner) Combine(ctx context.Context, f frame.Frame) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	n := f.Len()
 	combinerRecords.Add(int64(n))
 	combinerTotalRecords.Add(int64(n))

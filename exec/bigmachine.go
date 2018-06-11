@@ -387,14 +387,14 @@ type worker struct {
 	// CombinerStates and combiners are used to manage shared combine
 	// buffers.
 	combinerStates map[string]combinerState
-	combiners      map[string][]*combiner
+	combiners      map[string][]chan *combiner
 }
 
 func (w *worker) Init(b *bigmachine.B) error {
 	w.cond = ctxsync.NewCond(&w.mu)
 	w.tasks = make(map[uint64]map[string]*Task)
 	w.slices = make(map[uint64]bigslice.Slice)
-	w.combiners = make(map[string][]*combiner)
+	w.combiners = make(map[string][]chan *combiner)
 	w.combinerStates = make(map[string]combinerState)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
@@ -771,19 +771,20 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 		w.mu.Unlock()
 		return fmt.Errorf("combine key %s already committed", task.CombineKey)
 	case combinerNone:
-		combiners := make([]*combiner, task.NumPartition)
+		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			var err error
-			combiners[i], err = newCombiner(task, task.CombineKey, *task.Combiner, defaultChunksize*100)
+			comb, err := newCombiner(task, task.CombineKey, *task.Combiner, defaultChunksize*100)
 			if err != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
-					if err := combiners[j].Discard(); err != nil {
+					if err := (<-combiners[j]).Discard(); err != nil {
 						log.Error.Printf("error discarding combiner: %v", err)
 					}
 				}
 				return err
 			}
+			combiners[i] = make(chan *combiner, 1)
+			combiners[i] <- comb
 		}
 		w.combiners[task.CombineKey] = combiners
 		w.combinerStates[task.CombineKey] = combinerIdle
@@ -800,16 +801,26 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 
 	recordsOut := w.stats.Int("write")
 	const psize = 8
-	// If we have a Hasher, we're expected to partition the output.
+	// Now perform the partition-combine operation. We maintain a
+	// per-task combine buffer for each partition. When this buffer
+	// reaches half of its capacity, we attempt to combine up to 3/4ths
+	// of its least frequent keys into the shared combine buffer. This
+	// arrangement permits hot keys to be combined primarily in the task
+	// buffer, while spilling less frequent keys into the per machine
+	// buffer. (The local buffer is purely in memory, and has a fixed
+	// capacity; the machine buffer spills to disk when it reaches a
+	// preconfigured threshold.)
 	var (
-		partition   = make([]int, defaultChunksize)
-		partitionv  = make([]frame.Frame, task.NumPartition)
-		lens        = make([]int, task.NumPartition)
-		partitioner = newPartitioner(task.Hasher, task.NumPartition)
-		out         = frame.Make(task, defaultChunksize)
+		partition         = make([]int, defaultChunksize)
+		partitionv        = make([]frame.Frame, task.NumPartition)
+		partitionCombiner = make([]*combiningFrame, task.NumPartition)
+		lens              = make([]int, task.NumPartition)
+		partitioner       = newPartitioner(task.Hasher, task.NumPartition)
+		out               = frame.Make(task, defaultChunksize)
 	)
 	for i := range partitionv {
 		partitionv[i] = frame.Make(task, psize)
+		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner)
 	}
 	for {
 		n, err := in.Read(ctx, out)
@@ -823,13 +834,35 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 				vec.Index(lens[p]).Set(out[j].Index(i))
 			}
 			lens[p]++
-			// Flush to the combiner when we're full.
-			if lens[p] == psize {
-				if err := combiners[p].Combine(ctx, partitionv[p]); err != nil {
-					return err
+			if lens[p] < psize {
+				continue
+			}
+			pcomb := partitionCombiner[p]
+
+			pcomb.Combine(partitionv[p])
+			partitionv[p].Clear()
+			lens[p] = 0
+
+			len, cap := pcomb.Len(), pcomb.Cap()
+			if len < cap/2 {
+				continue
+			}
+			var combiner *combiner
+			if len >= defaultChunksize {
+				combiner = <-combiners[p]
+			} else {
+				select {
+				case combiner = <-combiners[p]:
+				default:
+					continue
 				}
-				partitionv[p].Clear()
-				lens[p] = 0
+			}
+
+			flushed := pcomb.Compact(cap / 4)
+			err := combiner.Combine(ctx, flushed)
+			combiners[p] <- combiner
+			if err != nil {
+				return err
 			}
 		}
 		recordsOut.Add(int64(n))
@@ -839,10 +872,16 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	}
 	// Flush the remainder.
 	for p, n := range lens {
-		if n == 0 {
-			continue
+		combiner := <-combiners[p]
+		var err error
+		if n > 0 {
+			err = combiner.Combine(ctx, partitionv[p].Slice(0, n))
 		}
-		if err := combiners[p].Combine(ctx, partitionv[p].Slice(0, n)); err != nil {
+		if err == nil {
+			err = combiner.Combine(ctx, partitionCombiner[p].Frame)
+		}
+		combiners[p] <- combiner
+		if err != nil {
 			return err
 		}
 	}
@@ -898,7 +937,7 @@ func (w *worker) CommitCombiner(ctx context.Context, key string, _ *struct{}) er
 func (w *worker) writeCombiner(key string) {
 	g, ctx := errgroup.WithContext(context.Background())
 	for part := range w.combiners[key] {
-		part, combiner := part, w.combiners[key][part]
+		part, combiner := part, <-w.combiners[key][part]
 		g.Go(func() error {
 			wc, err := w.store.Create(ctx, key, part)
 			if err != nil {
