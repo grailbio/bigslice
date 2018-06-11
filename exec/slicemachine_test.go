@@ -132,6 +132,10 @@ func TestMachineQ(t *testing.T) {
 func startTestSystem(machinep, maxp int) (system *testsystem.System, b *bigmachine.B, needc chan int, offerc chan *sliceMachine, cancel func()) {
 	system = testsystem.New()
 	system.Machineprocs = machinep
+	// Customize timeouts so that tests run faster.
+	system.KeepalivePeriod = time.Second
+	system.KeepaliveTimeout = 5 * time.Second
+	system.KeepaliveRpcTimeout = time.Second
 	b = bigmachine.Start(system)
 	var ctx context.Context
 	ctx, cancel = context.WithCancel(context.Background())
