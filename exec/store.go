@@ -170,7 +170,7 @@ func (w *fileWriter) Commit(ctx context.Context, count int64) error {
 	if _, err := w.Write(b[:]); err != nil {
 		return nil
 	}
-	return w.File.Close(ctx)
+	return closeFile(ctx, w.File)
 }
 
 func (s *fileStore) Create(ctx context.Context, task string, partition int) (writeCommitter, error) {
@@ -232,5 +232,18 @@ type fileIOCloser struct {
 }
 
 func (f *fileIOCloser) Close() error {
-	return f.file.Close(f.ctx)
+	return closeFile(f.ctx, f.file)
+}
+
+type closeNoSyncer interface {
+	CloseNoSync(context.Context) error
+}
+
+// CloseFile closes the provided file. It avoids syncing if the implementation
+// supports it.
+func closeFile(ctx context.Context, f file.File) error {
+	if closer, ok := f.(closeNoSyncer); ok {
+		return closer.CloseNoSync(ctx)
+	}
+	return f.Close(ctx)
 }
