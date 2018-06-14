@@ -113,7 +113,7 @@ func main() {
 		ctx := context.Background()
 		var paths []string
 		url := "s3://gdelt-open-data/v2/events"
-		lst := file.List(ctx, url)
+		lst := file.List(ctx, url, true)
 		for lst.Scan() {
 			if strings.HasSuffix(lst.Path(), ".csv") {
 				paths = append(paths, lst.Path())
