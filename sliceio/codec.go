@@ -31,7 +31,7 @@ func NewEncoder(w io.Writer) *Encoder {
 // the encoder's writer.
 func (e *Encoder) Encode(f frame.Frame) error {
 	for i := range f {
-		if err := e.enc.EncodeValue(f[i]); err != nil {
+		if err := e.enc.EncodeValue(f[i].Value()); err != nil {
 			return err
 		}
 	}
@@ -104,7 +104,7 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 	}
 	if d.len > 0 {
 		for i := range f {
-			n = reflect.Copy(f[i], d.buf[i].Elem().Slice(d.off, d.len))
+			n = reflect.Copy(f[i].Value(), d.buf[i].Elem().Slice(d.off, d.len))
 		}
 		d.off += n
 	}

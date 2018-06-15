@@ -131,7 +131,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 		typecheck.Panic(1, "const: invalid slice inputs")
 	}
 	for i := range s.columns {
-		s.columns[i] = reflect.ValueOf(columns[i])
+		s.columns[i] = frame.ColumnOf(columns[i])
 		if i > 0 && s.columns[i].Len() != s.columns[i-1].Len() {
 			typecheck.Panicf(1, "const: column %d length does not match column %d", i, i-1)
 		}
@@ -269,7 +269,7 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 			r.state = reflect.Zero(r.op.stateType)
 		}
 	}
-	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out...))
+	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out.ColumnValues()...))
 	n = int(rvs[0].Int())
 	if e := rvs[1].Interface(); e != nil {
 		if err := e.(error); err == sliceio.EOF || errors.Recover(err).Severity != errors.Unknown {
@@ -507,7 +507,7 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 	if !slicetype.Assignable(out, f.op) {
 		return 0, errTypeError
 	}
-	args := make([]reflect.Value, f.op.Slice.NumOut())
+	args := make(frame.Frame, f.op.Slice.NumOut())
 	begOut, endOut := 0, out[0].Len()
 	for i := 1; i < len(out); i++ {
 		if out[i].Len() != endOut {
@@ -542,8 +542,8 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		// Consume one input at a time, as long as we have space in our
 		// output buffer.
 		for ; f.begIn < f.endIn && begOut < endOut; f.begIn++ {
-			f.in.CopyIndex(args, f.begIn)
-			result := frame.Frame(f.op.fval.Call(args))
+			f.in.CopyIndex(args.ColumnValues(), f.begIn)
+			result := frame.Cast(f.op.fval.Call(args.ColumnValues()))
 			n := frame.Copy(out.Slice(begOut, endOut), result)
 			begOut += n
 			// We've run out of output space. In this case, stash the rest of
@@ -672,7 +672,7 @@ func (f *foldReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		}
 	}
 	var n int
-	n, f.err = f.accum.Read(out[0], out[1])
+	n, f.err = f.accum.Read(out[0].Value(), out[1].Value())
 	return n, f.err
 }
 

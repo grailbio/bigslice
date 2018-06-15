@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 
 	"github.com/grailbio/base/limiter"
@@ -173,7 +172,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuff
 					m++
 				}
 				for j := range buf[p][m-1] {
-					buf[p][m-1][j] = reflect.Append(buf[p][m-1][j], in[j].Index(i))
+					buf[p][m-1][j] = frame.AppendColumn(buf[p][m-1][j], in[j].Index(i))
 				}
 			}
 		} else if n > 0 {

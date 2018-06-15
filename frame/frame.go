@@ -14,17 +14,62 @@ import (
 	"reflect"
 	"strings"
 	"text/tabwriter"
+	"unsafe"
 
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
+
+// Column represents a single column of values in a frame. Columns
+// are always Go slices, but are represented here as a reflect.Value
+// to support type polymorphism. We use the type Column instead of
+// reflect.Value to distinguish between the various uses of
+// reflect.Value in Bigslice's code base.
+type Column reflect.Value
+
+// ColumnOf returns a new column created from the given interface,
+// which must be a slice.
+func ColumnOf(x interface{}) Column {
+	return Column(reflect.ValueOf(x))
+}
+
+// AppendColumn appends the provided value to the column and returns
+// (possibly the same) column.
+func AppendColumn(col Column, val reflect.Value) Column {
+	return Column(reflect.Append(reflect.Value(col), val))
+}
+
+// Index returns the value at index i of the column c.
+func (c Column) Index(i int) reflect.Value { return reflect.Value(c).Index(i) }
+
+// Type returns the type of the column. The returned type is always a
+// slice.
+func (c Column) Type() reflect.Type { return reflect.Value(c).Type() }
+
+// ElemType returns the element type of the column.
+func (c Column) ElemType() reflect.Type { return c.Type().Elem() }
+
+// Value returns the reflect.Value that represents this column.
+func (c Column) Value() reflect.Value { return reflect.Value(c) }
+
+// Slice slices the column.
+func (c Column) Slice(i, j int) Column { return Column(reflect.Value(c).Slice(i, j)) }
+
+// Len returns the column's length.
+func (c Column) Len() int { return reflect.Value(c).Len() }
+
+// Cap returns the column's capacity.
+func (c Column) Cap() int { return reflect.Value(c).Cap() }
+
+// Interface returns the column value as an empty interface.
+func (c Column) Interface() interface{} { return reflect.Value(c).Interface() }
 
 // A Frame is a list of column vectors of equal lengths (i.e., it's
 // rectangular). Each column is represented as a reflect.Value that
 // encapsulates a slice of values representing the column vector.
 // Frames provide a set of methods that operate over the underlying
 // column vectors in a uniform fashion.
-type Frame []reflect.Value
+type Frame []Column
 
 // MakeFrame creates a new Frame of the given type, length, and
 // capacity. If the capacity argument is omitted, a frame with
@@ -41,9 +86,14 @@ func Make(types slicetype.Type, frameLen int, frameCap ...int) Frame {
 	}
 	f := make(Frame, types.NumOut())
 	for i := range f {
-		f[i] = reflect.MakeSlice(reflect.SliceOf(types.Out(i)), frameLen, cap)
+		f[i] = Column(reflect.MakeSlice(reflect.SliceOf(types.Out(i)), frameLen, cap))
 	}
 	return f
+}
+
+// Cast casts a lists of columns into a Frame.
+func Cast(cols []reflect.Value) Frame {
+	return *(*Frame)(unsafe.Pointer(&cols))
 }
 
 // AppendFrame appends the rows in the frame g to the rows in frame
@@ -54,11 +104,11 @@ func Append(f, g Frame) Frame {
 	if f == nil {
 		f = make(Frame, len(g))
 		for i := range f {
-			f[i] = reflect.Zero(g[i].Type())
+			f[i] = Column(reflect.Zero(g[i].Type()))
 		}
 	}
 	for i := range f {
-		f[i] = reflect.AppendSlice(f[i], g[i])
+		f[i] = Column(reflect.AppendSlice(f[i].Value(), g[i].Value()))
 	}
 	return f
 }
@@ -68,7 +118,7 @@ func Append(f, g Frame) Frame {
 func Copy(dst, src Frame) int {
 	var n int
 	for i := range dst {
-		n = reflect.Copy(dst[i], src[i])
+		n = reflect.Copy(dst[i].Value(), src[i].Value())
 	}
 	return n
 }
@@ -93,7 +143,7 @@ func Columns(cols ...interface{}) Frame {
 				i, val.Len(), n,
 			)
 		}
-		f[i] = val
+		f[i] = Column(val)
 	}
 	return f
 }
@@ -138,7 +188,7 @@ func (f Frame) NumOut() int {
 
 // Out implements Type.
 func (f Frame) Out(i int) reflect.Type {
-	return f[i].Type().Elem()
+	return f[i].ElemType()
 }
 
 // Realloc returns a frame with the provided length, returning f if
@@ -170,7 +220,7 @@ func (f Frame) SetIndex(row []reflect.Value, i int) {
 func (f Frame) String() string {
 	types := make([]string, len(f))
 	for i := range f {
-		types[i] = f[i].Type().Elem().String()
+		types[i] = f[i].ElemType().String()
 	}
 	return fmt.Sprintf("frame[%d]%s", f.Len(), strings.Join(types, ","))
 }
@@ -181,7 +231,7 @@ func (f Frame) WriteTab(w io.Writer) {
 	tw.Init(w, 4, 4, 1, ' ', 0)
 	types := make([]string, len(f))
 	for i := range f {
-		types[i] = f[i].Type().Elem().String()
+		types[i] = f[i].ElemType().String()
 	}
 	fmt.Fprintln(&tw, strings.Join(types, "\t"))
 	var (
@@ -237,6 +287,11 @@ func (f Frame) Clear() {
 			f[i].Index(j).Set(zero)
 		}
 	}
+}
+
+// ColumnValues returns the frame's columns as a slice of reflect.Values.
+func (f Frame) ColumnValues() []reflect.Value {
+	return *(*[]reflect.Value)(unsafe.Pointer(&f))
 }
 
 // Equal tells whether f1 and f2 are (deeply) equal.

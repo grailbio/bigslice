@@ -206,7 +206,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				}
 			} else {
 				for k := 1; k < typ.NumOut(); k++ {
-					out[j].Index(n).Set(row[i][k])
+					out[j].Index(n).Set(row[i][k].Value())
 					j++
 				}
 			}

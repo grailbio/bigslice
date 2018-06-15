@@ -116,7 +116,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 	buf := make(frame.Frame, len(columns))
 	for i := range columns {
 		typ := columnsv[i].Type().Elem()
-		buf[i] = reflect.MakeSlice(reflect.SliceOf(typ.Elem()), defaultChunksize, defaultChunksize)
+		buf[i] = frame.Column(reflect.MakeSlice(reflect.SliceOf(typ.Elem()), defaultChunksize, defaultChunksize))
 	}
 	for {
 		n, err := r.Read(ctx, buf)
@@ -125,7 +125,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 		}
 		buf = buf.Slice(0, n)
 		for i := range columnsv {
-			columnsv[i].Elem().Set(reflect.AppendSlice(columnsv[i].Elem(), buf[i]))
+			columnsv[i].Elem().Set(reflect.AppendSlice(columnsv[i].Elem(), buf[i].Value()))
 		}
 		if err == EOF {
 			break

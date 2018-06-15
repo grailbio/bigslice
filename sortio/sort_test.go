@@ -26,7 +26,7 @@ var (
 func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) frame.Frame {
 	f := make(frame.Frame, len(types))
 	for i := range f {
-		f[i] = reflect.MakeSlice(reflect.SliceOf(types[i]), n, n)
+		f[i] = frame.Column(reflect.MakeSlice(reflect.SliceOf(types[i]), n, n))
 		vp := reflect.New(types[i])
 		for j := 0; j < n; j++ {
 			fz.Fuzz(vp.Interface())

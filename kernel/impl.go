@@ -62,7 +62,7 @@ func (stringKernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type stringIndex map[string]int
 
-func (x stringIndex) Index(col reflect.Value, indices []int) {
+func (x stringIndex) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]string)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -74,7 +74,7 @@ func (x stringIndex) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (stringKernel) Index(col reflect.Value) Index {
+func (stringKernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]string)
 	x := make(stringIndex, len(vec))
 	for _, key := range vec {
@@ -117,7 +117,7 @@ func (uintKernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uintIndex map[uint]int
 
-func (x uintIndex) Index(col reflect.Value, indices []int) {
+func (x uintIndex) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uint)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -129,7 +129,7 @@ func (x uintIndex) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uintKernel) Index(col reflect.Value) Index {
+func (uintKernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uint)
 	x := make(uintIndex, len(vec))
 	for _, key := range vec {
@@ -172,7 +172,7 @@ func (uint8Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uint8Index map[uint8]int
 
-func (x uint8Index) Index(col reflect.Value, indices []int) {
+func (x uint8Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uint8)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -184,7 +184,7 @@ func (x uint8Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uint8Kernel) Index(col reflect.Value) Index {
+func (uint8Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uint8)
 	x := make(uint8Index, len(vec))
 	for _, key := range vec {
@@ -227,7 +227,7 @@ func (uint16Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uint16Index map[uint16]int
 
-func (x uint16Index) Index(col reflect.Value, indices []int) {
+func (x uint16Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uint16)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -239,7 +239,7 @@ func (x uint16Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uint16Kernel) Index(col reflect.Value) Index {
+func (uint16Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uint16)
 	x := make(uint16Index, len(vec))
 	for _, key := range vec {
@@ -282,7 +282,7 @@ func (uint32Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uint32Index map[uint32]int
 
-func (x uint32Index) Index(col reflect.Value, indices []int) {
+func (x uint32Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uint32)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -294,7 +294,7 @@ func (x uint32Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uint32Kernel) Index(col reflect.Value) Index {
+func (uint32Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uint32)
 	x := make(uint32Index, len(vec))
 	for _, key := range vec {
@@ -337,7 +337,7 @@ func (uint64Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uint64Index map[uint64]int
 
-func (x uint64Index) Index(col reflect.Value, indices []int) {
+func (x uint64Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uint64)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -349,7 +349,7 @@ func (x uint64Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uint64Kernel) Index(col reflect.Value) Index {
+func (uint64Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uint64)
 	x := make(uint64Index, len(vec))
 	for _, key := range vec {
@@ -392,7 +392,7 @@ func (intKernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type intIndex map[int]int
 
-func (x intIndex) Index(col reflect.Value, indices []int) {
+func (x intIndex) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]int)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -404,7 +404,7 @@ func (x intIndex) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (intKernel) Index(col reflect.Value) Index {
+func (intKernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]int)
 	x := make(intIndex, len(vec))
 	for _, key := range vec {
@@ -447,7 +447,7 @@ func (int8Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type int8Index map[int8]int
 
-func (x int8Index) Index(col reflect.Value, indices []int) {
+func (x int8Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]int8)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -459,7 +459,7 @@ func (x int8Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (int8Kernel) Index(col reflect.Value) Index {
+func (int8Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]int8)
 	x := make(int8Index, len(vec))
 	for _, key := range vec {
@@ -502,7 +502,7 @@ func (int16Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type int16Index map[int16]int
 
-func (x int16Index) Index(col reflect.Value, indices []int) {
+func (x int16Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]int16)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -514,7 +514,7 @@ func (x int16Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (int16Kernel) Index(col reflect.Value) Index {
+func (int16Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]int16)
 	x := make(int16Index, len(vec))
 	for _, key := range vec {
@@ -557,7 +557,7 @@ func (int32Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type int32Index map[int32]int
 
-func (x int32Index) Index(col reflect.Value, indices []int) {
+func (x int32Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]int32)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -569,7 +569,7 @@ func (x int32Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (int32Kernel) Index(col reflect.Value) Index {
+func (int32Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]int32)
 	x := make(int32Index, len(vec))
 	for _, key := range vec {
@@ -612,7 +612,7 @@ func (int64Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type int64Index map[int64]int
 
-func (x int64Index) Index(col reflect.Value, indices []int) {
+func (x int64Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]int64)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -624,7 +624,7 @@ func (x int64Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (int64Kernel) Index(col reflect.Value) Index {
+func (int64Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]int64)
 	x := make(int64Index, len(vec))
 	for _, key := range vec {
@@ -667,7 +667,7 @@ func (float32Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type float32Index map[float32]int
 
-func (x float32Index) Index(col reflect.Value, indices []int) {
+func (x float32Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]float32)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -679,7 +679,7 @@ func (x float32Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (float32Kernel) Index(col reflect.Value) Index {
+func (float32Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]float32)
 	x := make(float32Index, len(vec))
 	for _, key := range vec {
@@ -722,7 +722,7 @@ func (float64Kernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type float64Index map[float64]int
 
-func (x float64Index) Index(col reflect.Value, indices []int) {
+func (x float64Index) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]float64)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -734,7 +734,7 @@ func (x float64Index) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (float64Kernel) Index(col reflect.Value) Index {
+func (float64Kernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]float64)
 	x := make(float64Index, len(vec))
 	for _, key := range vec {
@@ -777,7 +777,7 @@ func (uintptrKernel) HashFrame(f frame.Frame, sum []uint32) {
 
 type uintptrIndex map[uintptr]int
 
-func (x uintptrIndex) Index(col reflect.Value, indices []int) {
+func (x uintptrIndex) Index(col frame.Column, indices []int) {
 	vec := col.Interface().([]uintptr)
 	for i := range indices {
 		ix, ok := x[vec[i]]
@@ -789,7 +789,7 @@ func (x uintptrIndex) Index(col reflect.Value, indices []int) {
 	}
 }
 
-func (uintptrKernel) Index(col reflect.Value) Index {
+func (uintptrKernel) Index(col frame.Column) Index {
 	vec := col.Interface().([]uintptr)
 	x := make(uintptrIndex, len(vec))
 	for _, key := range vec {

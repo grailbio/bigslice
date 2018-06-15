@@ -41,11 +41,11 @@ type Hasher interface {
 type Index interface {
 	// Index indexes the provided column and deposits its
 	// results in the provided integer slice.
-	Index(reflect.Value, []int)
+	Index(frame.Column, []int)
 }
 
 // An Indexer creates an (updateable) index from a frame.
 type Indexer interface {
 	// Index indexes a column and returns it.
-	Index(reflect.Value) Index
+	Index(frame.Column) Index
 }

@@ -52,7 +52,7 @@ func LessSorter(lessFunc interface{}) Sorter {
 }
 
 func (val lessSorter) Sort(f frame.Frame) {
-	less := reflect.Value(val).Call([]reflect.Value{f[0]})[0].Interface().(func(i, j int) bool)
+	less := reflect.Value(val).Call([]reflect.Value{f[0].Value()})[0].Interface().(func(i, j int) bool)
 	sortFrame(f, less)
 }
 
@@ -66,6 +66,6 @@ func (val lessSorter) Less(f frame.Frame, i int, g frame.Frame, j int) bool {
 }
 
 func (val lessSorter) IsSorted(f frame.Frame) bool {
-	less := reflect.Value(val).Call([]reflect.Value{f[0]})[0].Interface().(func(i, j int) bool)
+	less := reflect.Value(val).Call([]reflect.Value{f[0].Value()})[0].Interface().(func(i, j int) bool)
 	return sort.SliceIsSorted(f[0].Interface(), less)
 }

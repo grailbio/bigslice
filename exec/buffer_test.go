@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -28,8 +29,8 @@ func TestTaskBuffer(t *testing.T) {
 	fz.Fuzz(&batches)
 	b := make(taskBuffer, 1)
 	for _, batch := range batches {
-		col := reflect.ValueOf(batch)
-		b[0] = append(b[0], []reflect.Value{col})
+		col := frame.ColumnOf(batch)
+		b[0] = append(b[0], frame.Frame{col})
 	}
 	s := &sliceio.Scanner{
 		Reader: b.Reader(0),

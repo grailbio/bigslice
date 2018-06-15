@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -34,13 +35,13 @@ outer:
 		for i := 0; i < N; i++ {
 			keysPtr := reflect.New(reflect.SliceOf(typ))
 			fz.Fuzz(keysPtr.Interface())
-			keys := keysPtr.Elem()
+			keys := frame.Column(keysPtr.Elem())
 			counts := make([]int, keys.Len())
 			for i := range counts {
 				counts[i] = 1
 			}
-			accum.Accumulate([]reflect.Value{keys, reflect.ValueOf(counts)}, keys.Len())
-			accum.Accumulate([]reflect.Value{keys, reflect.ValueOf(counts)}, keys.Len())
+			accum.Accumulate(frame.Frame{keys, frame.ColumnOf(counts)}, keys.Len())
+			accum.Accumulate(frame.Frame{keys, frame.ColumnOf(counts)}, keys.Len())
 		}
 		keys := reflect.MakeSlice(reflect.SliceOf(typ), N, N)
 		vals := reflect.MakeSlice(reflect.SliceOf(typeOfInt), N, N)

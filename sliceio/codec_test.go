@@ -38,7 +38,7 @@ func TestCodec(t *testing.T) {
 
 	var b bytes.Buffer
 	enc := NewEncoder(&b)
-	in := frame.Frame{reflect.ValueOf(c0), reflect.ValueOf(c1)}
+	in := frame.Frame{frame.ColumnOf(c0), frame.ColumnOf(c1)}
 	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
