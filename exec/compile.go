@@ -113,7 +113,6 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 		// these are properly partitioned at the time of computation.
 		for _, task := range deptasks {
 			task.NumPartition = slice.NumShard()
-			task.Hasher = lastSlice.Hasher()
 			// Assign a combine key that's based on the root name of the task.
 			// This is a name that's unique in the task namespace and is used to
 			// coalesce combiners on a single machine.

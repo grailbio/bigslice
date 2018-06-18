@@ -10,8 +10,8 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/sortio"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -20,8 +20,6 @@ type cogroupSlice struct {
 	slices   []Slice
 	out      []reflect.Type
 	numShard int
-	hasher   kernel.Hasher
-	sorter   kernel.Sorter
 }
 
 // Cogroup returns a slice that, for each key in any slice, contains
@@ -57,16 +55,11 @@ func Cogroup(slices ...Slice) Slice {
 			typecheck.Panicf(1, "cogroup: key column type mismatch: expected %s but got %s", want, got)
 		}
 	}
-
-	// We need a hasher for partitioning and a sorter for sorting
-	// each partition of each slice.
-	var hasher kernel.Hasher
-	if !kernel.Lookup(keyType, &hasher) {
-		typecheck.Panicf(1, "cogroup: key type %s cannot be joined", keyType)
+	if !frame.CanHash(keyType) {
+		typecheck.Panicf(1, "cogroup: key type %s cannot be hashed", keyType)
 	}
-	var sorter kernel.Sorter
-	if !kernel.Lookup(keyType, &sorter) {
-		typecheck.Panicf(1, "cogroup: no kernel.Sorter for key type %s", keyType)
+	if !frame.CanCompare(keyType) {
+		typecheck.Panicf(1, "cogroup: key type %s cannot be sorted", keyType)
 	}
 	out := []reflect.Type{keyType}
 	for _, slice := range slices {
@@ -88,8 +81,6 @@ func Cogroup(slices ...Slice) Slice {
 		numShard: numShard,
 		slices:   slices,
 		out:      out,
-		sorter:   sorter,
-		hasher:   hasher,
 	}
 }
 
@@ -98,17 +89,14 @@ func (c *cogroupSlice) ShardType() ShardType { return HashShard }
 
 func (c *cogroupSlice) NumOut() int            { return len(c.out) }
 func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
-func (c *cogroupSlice) Hasher() kernel.Hasher  { return c.hasher }
 func (c *cogroupSlice) Op() string             { return "cogroup" }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
 func (*cogroupSlice) Combiner() *reflect.Value { return nil }
 
 type cogroupReader struct {
-	err    error
-	op     *cogroupSlice
-	hasher kernel.Hasher
-	sorter kernel.Sorter
+	err error
+	op  *cogroupSlice
 
 	readers []sliceio.Reader
 
@@ -116,12 +104,15 @@ type cogroupReader struct {
 }
 
 func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) {
+	const (
+		bufferSize = 1024
+		spillSize  = 1 << 29
+	)
 	if c.err != nil {
 		return 0, c.err
 	}
 	if c.heap == nil {
 		c.heap = new(sortio.FrameBufferHeap)
-		c.heap.Sorter = c.sorter
 		c.heap.Buffers = make([]*sortio.FrameBuffer, 0, len(c.readers))
 		// Sort each partition one-by-one. Since tasks are scheduled
 		// to map onto a single CPU, we attain parallelism through sharding
@@ -132,7 +123,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			// on the environment: for example, we could pass down a memory
 			// allotment to each task from the scheduler.
 			var sorted sliceio.Reader
-			sorted, c.err = sortio.SortReader(ctx, c.sorter, 1<<29, c.op.Dep(i), c.readers[i])
+			sorted, c.err = sortio.SortReader(ctx, spillSize, c.op.Dep(i), c.readers[i])
 			if c.err != nil {
 				// TODO(marius): in case this fails, we may leave open file
 				// descriptors. We should make sure we close readers that
@@ -140,9 +131,9 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				return 0, c.err
 			}
 			buf := &sortio.FrameBuffer{
-				Frame:  frame.Make(c.op.Dep(i), 1024),
+				Frame:  frame.Make(c.op.Dep(i), bufferSize, bufferSize),
 				Reader: sorted,
-				Index:  i,
+				Off:    i * bufferSize,
 			}
 			switch err := buf.Fill(ctx); {
 			case err == sliceio.EOF:
@@ -154,28 +145,48 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				c.heap.Buffers = append(c.heap.Buffers, buf)
 			}
 		}
+		// Maintain a compare buffer that's used to compare values across
+		// the heterogeneously typed buffers.
+		// TODO(marius): the extra copy and indirection here is unnecessary.
+		lessBuf := frame.Make(slicetype.New(c.op.Out(0)), 2, 2)
+		c.heap.LessFunc = func(i, j int) bool {
+			ib, jb := c.heap.Buffers[i], c.heap.Buffers[j]
+			lessBuf.Index(0, 0).Set(ib.Frame.Index(0, ib.Index))
+			lessBuf.Index(0, 1).Set(jb.Frame.Index(0, jb.Index))
+			return lessBuf.Less(0, 1)
+		}
 	}
 	// Now that we're sorted, perform a merge from each dependency.
 	var (
-		n   int
-		max = out.Len()
+		n       int
+		max     = out.Len()
+		lessBuf = frame.Make(slicetype.New(c.op.Out(0)), 2, 2)
 	)
 	// BUG: this is gnarly
 	for n < max && len(c.heap.Buffers) > 0 {
+		// First, gather all the records that have the same key.
 		row := make([]frame.Frame, len(c.readers))
 		var (
 			key  reflect.Value
 			last = -1
 		)
-		for last < 0 || len(c.heap.Buffers) > 0 && !c.sorter.Less(row[last], 0, c.heap.Buffers[0].Frame, c.heap.Buffers[0].Off) {
+		// TODO(marius): the extra copy and indirection here is unnecessary.
+		less := func() bool {
 			buf := c.heap.Buffers[0]
-			row[buf.Index] = frame.Append(row[buf.Index], buf.Slice(buf.Off, buf.Off+1))
-			buf.Off++
+			lessBuf.Index(0, 0).Set(row[last].Index(0, 0))
+			lessBuf.Index(0, 1).Set(buf.Frame.Index(0, buf.Index))
+			return lessBuf.Less(0, 1)
+		}
+		for last < 0 || len(c.heap.Buffers) > 0 && !less() {
+			buf := c.heap.Buffers[0]
+			idx := buf.Off / bufferSize
+			row[idx] = frame.AppendFrame(row[idx], buf.Slice(buf.Index, buf.Index+1))
+			buf.Index++
 			if last < 0 {
-				key = row[buf.Index][0].Index(0)
+				key = row[idx].Index(0, 0)
 			}
-			last = buf.Index
-			if buf.Off == buf.Len {
+			last = idx
+			if buf.Index == buf.Len {
 				if err := buf.Fill(ctx); err != nil && err != sliceio.EOF {
 					c.err = err
 					return n, err
@@ -192,7 +203,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		// Now that we've gathered all the row values for a given key,
 		// push them into our output.
 		var j int
-		out[j].Index(n).Set(key)
+		out.Index(j, n).Set(key)
 		j++
 		// Note that here we are assuming that the key column is always first;
 		// elsewhere we don't really make this assumption, even though it is
@@ -201,12 +212,13 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			typ := c.op.Dep(i)
 			if row[i].Len() == 0 {
 				for k := 1; k < typ.NumOut(); k++ {
-					out[j].Index(n).Set(reflect.Zero(c.op.out[j]))
+					out.Index(j, n).Set(reflect.Zero(c.op.out[j]))
 					j++
 				}
 			} else {
 				for k := 1; k < typ.NumOut(); k++ {
-					out[j].Index(n).Set(row[i][k].Value())
+					// TODO(marius): precompute type checks here.
+					out.Index(j, n).Set(row[i].Value(k))
 					j++
 				}
 			}
@@ -223,7 +235,5 @@ func (c *cogroupSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &cogroupReader{
 		op:      c,
 		readers: deps,
-		hasher:  c.hasher,
-		sorter:  c.sorter,
 	}
 }

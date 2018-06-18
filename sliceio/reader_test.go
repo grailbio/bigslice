@@ -19,7 +19,7 @@ func TestFrameReader(t *testing.T) {
 		fz  = fuzz.NewWithSeed(12345)
 		f   = fuzzFrame(fz, N, typeOfString)
 		r   = FrameReader(f)
-		out = frame.Make(f, N)
+		out = frame.Make(f, N, N)
 		ctx = context.Background()
 	)
 	n, err := ReadFull(ctx, r, out)
@@ -30,7 +30,7 @@ func TestFrameReader(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	if err == nil {
-		n, err := ReadFull(ctx, r, frame.Make(f, 1))
+		n, err := ReadFull(ctx, r, frame.Make(f, 1, 1))
 		if got, want := err, EOF; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
@@ -39,7 +39,7 @@ func TestFrameReader(t *testing.T) {
 		}
 	}
 
-	if !reflect.DeepEqual(f[0].Interface().([]string), out[0].Interface().([]string)) {
+	if !reflect.DeepEqual(f.Interface(0).([]string), out.Interface(0).([]string)) {
 		t.Error("frames do not match")
 	}
 }
@@ -47,14 +47,15 @@ func TestFrameReader(t *testing.T) {
 // FuzzFrame creates a fuzzed frame of length n, where columns
 // have the provided types.
 func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) frame.Frame {
-	f := make(frame.Frame, len(types))
-	for i := range f {
-		f[i] = frame.Column(reflect.MakeSlice(reflect.SliceOf(types[i]), n, n))
+	cols := make([]interface{}, len(types))
+	for i := range cols {
+		v := reflect.MakeSlice(reflect.SliceOf(types[i]), n, n)
 		vp := reflect.New(types[i])
 		for j := 0; j < n; j++ {
 			fz.Fuzz(vp.Interface())
-			f[i].Index(j).Set(vp.Elem())
+			v.Index(j).Set(vp.Elem())
 		}
+		cols[i] = v.Interface()
 	}
-	return f
+	return frame.Slices(cols...)
 }

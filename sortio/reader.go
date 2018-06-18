@@ -10,7 +10,6 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -24,8 +23,8 @@ type reader struct {
 	readers  []sliceio.Reader
 	err      error
 
-	sorter kernel.Sorter
-	heap   *FrameBufferHeap
+	heap  *FrameBufferHeap
+	frame frame.Frame
 }
 
 // Reduce returns a Reader that merges and reduces a set of
@@ -44,17 +43,19 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		return 0, r.err
 	}
 	if r.heap == nil {
-		if !kernel.Lookup(r.typ.Out(0), &r.sorter) {
-			panic("bigslice.Reducer: invalid reduce type")
-		}
+		n := len(r.readers) * defaultChunksize
+		r.frame = frame.Make(r.typ, n, n)
 		r.heap = new(FrameBufferHeap)
-		r.heap.Sorter = r.sorter
+		r.heap.LessFunc = func(i, j int) bool {
+			return r.frame.Less(r.heap.Buffers[i].Pos(), r.heap.Buffers[j].Pos())
+		}
 		r.heap.Buffers = make([]*FrameBuffer, 0, len(r.readers))
 		for i := range r.readers {
+			off := i * defaultChunksize
 			buf := &FrameBuffer{
-				Frame:  frame.Make(r.typ, defaultChunksize),
+				Frame:  r.frame.Slice(off, off+defaultChunksize),
 				Reader: r.readers[i],
-				Index:  i,
+				Off:    off,
 			}
 			switch err := buf.Fill(ctx); {
 			case err == sliceio.EOF:
@@ -78,26 +79,28 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		// already been combined.
 		var combine []*FrameBuffer
 		for len(combine) == 0 || len(r.heap.Buffers) > 0 &&
-			!r.sorter.Less(combine[0].Frame, combine[0].Off, r.heap.Buffers[0].Frame, r.heap.Buffers[0].Off) {
+			!r.frame.Less(combine[0].Pos(), r.heap.Buffers[0].Pos()) {
 			buf := heap.Pop(r.heap).(*FrameBuffer)
 			combine = append(combine, buf)
 		}
+		// TODO(marius): pass a vector of values to be combined, if it is supported
+		// by the combiner.
 		var key, val reflect.Value
 		for i, buf := range combine {
 			if i == 0 {
-				key = buf.Frame[0].Index(buf.Off)
-				val = buf.Frame[1].Index(buf.Off)
+				key = buf.Frame.Index(0, buf.Index)
+				val = buf.Frame.Index(1, buf.Index)
 			} else {
-				val = r.combiner.Call([]reflect.Value{val, buf.Frame[1].Index(buf.Off)})[0]
+				val = r.combiner.Call([]reflect.Value{val, buf.Frame.Index(1, buf.Index)})[0]
 			}
 		}
 		// Emit the output before overwriting the frame. Note that key and val are
 		// references to slice elements.
-		out[0].Index(n).Set(key)
-		out[1].Index(n).Set(val)
+		out.Index(0, n).Set(key)
+		out.Index(1, n).Set(val)
 		for _, buf := range combine {
-			buf.Off++
-			if buf.Off == buf.Len {
+			buf.Index++
+			if buf.Index == buf.Len {
 				if err := buf.Fill(ctx); err != nil && err != sliceio.EOF {
 					r.err = err
 					return n, err

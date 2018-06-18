@@ -65,7 +65,7 @@ func main() {
 			log.Fatalf("no value method for type %s", typ)
 		}
 	}
-	for _, file := range []string{"impl.go", "impl_test.go"} {
+	for _, file := range []string{"ops_builtin.go"} {
 		tmpl, err := template.ParseFiles(file + "template")
 		if err != nil {
 			log.Fatal(err)

@@ -65,8 +65,8 @@ type stringAccumulator struct {
 }
 
 func (s *stringAccumulator) Accumulate(in frame.Frame, n int) {
-	keys := in[0].Interface().([]string)
-	args := make([]reflect.Value, len(in))
+	keys := in.Interface(0).([]string)
+	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
 		key := keys[i]
 		val, ok := s.state[key]
@@ -74,8 +74,8 @@ func (s *stringAccumulator) Accumulate(in frame.Frame, n int) {
 			val = reflect.Zero(s.accType)
 		}
 		args[0] = val
-		for j := 1; j < len(in); j++ {
-			args[j] = in[j].Index(i)
+		for j := 1; j < in.NumOut(); j++ {
+			args[j] = in.Index(j, i)
 		}
 		s.state[key] = s.fn.Call(args)[0]
 	}
@@ -106,8 +106,8 @@ type intAccumulator struct {
 }
 
 func (s *intAccumulator) Accumulate(in frame.Frame, n int) {
-	keys := in[0].Interface().([]int)
-	args := make([]reflect.Value, len(in))
+	keys := in.Interface(0).([]int)
+	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
 		key := keys[i]
 		val, ok := s.state[key]
@@ -115,8 +115,8 @@ func (s *intAccumulator) Accumulate(in frame.Frame, n int) {
 			val = reflect.Zero(s.accType)
 		}
 		args[0] = val
-		for j := 1; j < len(in); j++ {
-			args[j] = in[j].Index(i)
+		for j := 1; j < in.NumOut(); j++ {
+			args[j] = in.Index(j, i)
 		}
 		s.state[key] = s.fn.Call(args)[0]
 	}
@@ -147,8 +147,8 @@ type int64Accumulator struct {
 }
 
 func (s *int64Accumulator) Accumulate(in frame.Frame, n int) {
-	keys := in[0].Interface().([]int64)
-	args := make([]reflect.Value, len(in))
+	keys := in.Interface(0).([]int64)
+	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
 		key := keys[i]
 		val, ok := s.state[key]
@@ -156,8 +156,8 @@ func (s *int64Accumulator) Accumulate(in frame.Frame, n int) {
 			val = reflect.Zero(s.accType)
 		}
 		args[0] = val
-		for j := 1; j < len(in); j++ {
-			args[j] = in[j].Index(i)
+		for j := 1; j < in.NumOut(); j++ {
+			args[j] = in.Index(j, i)
 		}
 		s.state[key] = s.fn.Call(args)[0]
 	}

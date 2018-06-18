@@ -13,6 +13,7 @@ import (
 
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 // DefaultChunksize is the default size used for I/O vectors within the
@@ -107,17 +108,15 @@ func (f *frameReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 // testing purposes.
 func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 	columnsv := make([]reflect.Value, len(columns))
+	types := make([]reflect.Type, len(columns))
 	for i := range columns {
 		columnsv[i] = reflect.ValueOf(columns[i])
 		if columnsv[i].Type().Kind() != reflect.Ptr {
 			return errors.E(errors.Invalid, "attempted to read into non-pointer")
 		}
+		types[i] = reflect.TypeOf(columns[i]).Elem().Elem()
 	}
-	buf := make(frame.Frame, len(columns))
-	for i := range columns {
-		typ := columnsv[i].Type().Elem()
-		buf[i] = frame.Column(reflect.MakeSlice(reflect.SliceOf(typ.Elem()), defaultChunksize, defaultChunksize))
-	}
+	buf := frame.Make(slicetype.New(types...), defaultChunksize, defaultChunksize)
 	for {
 		n, err := r.Read(ctx, buf)
 		if err != nil && err != EOF {
@@ -125,7 +124,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 		}
 		buf = buf.Slice(0, n)
 		for i := range columnsv {
-			columnsv[i].Elem().Set(reflect.AppendSlice(columnsv[i].Elem(), buf[i].Value()))
+			columnsv[i].Elem().Set(reflect.AppendSlice(columnsv[i].Elem(), buf.Value(i)))
 		}
 		if err == EOF {
 			break

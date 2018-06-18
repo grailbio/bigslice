@@ -38,7 +38,8 @@ func TestCodec(t *testing.T) {
 
 	var b bytes.Buffer
 	enc := NewEncoder(&b)
-	in := frame.Frame{frame.ColumnOf(c0), frame.ColumnOf(c1)}
+
+	in := frame.Slices(c0, c1)
 	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +51,8 @@ func TestCodec(t *testing.T) {
 	if err := dec.Decode(out...); err != nil {
 		t.Fatal(err)
 	}
-	for i := range in {
-		if !reflect.DeepEqual(in[i].Interface(), out[i].Elem().Interface()) {
+	for i := 0; i < in.NumOut(); i++ {
+		if !reflect.DeepEqual(in.Interface(i), out[i].Elem().Interface()) {
 			t.Errorf("column %d mismatch", i)
 		}
 	}
@@ -114,7 +115,7 @@ func TestDecodingReader(t *testing.T) {
 
 func TestEmptyDecodingReader(t *testing.T) {
 	r := NewDecodingReader(bytes.NewReader(nil))
-	f := frame.Make(slicetype.New(typeOfString, typeOfInt), 100)
+	f := frame.Make(slicetype.New(typeOfString, typeOfInt), 100, 100)
 	n, err := r.Read(context.Background(), f)
 	if got, want := n, 0; got != want {
 		t.Errorf("got %v, want %v", got, want)

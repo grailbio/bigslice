@@ -28,6 +28,7 @@ type Scanner struct {
 	Type   slicetype.Type
 
 	err      error
+	started  bool
 	in       frame.Frame
 	beg, end int
 }
@@ -50,8 +51,9 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 			return false
 		}
 	}
-	if s.in == nil {
-		s.in = frame.Make(s.Type, defaultChunksize)
+	if !s.started {
+		s.started = true
+		s.in = frame.Make(s.Type, defaultChunksize, defaultChunksize)
 		s.beg, s.end = 0, 0
 	}
 	// Read the next batch of input.
@@ -70,8 +72,9 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 			s.Reader = nil
 		}
 	}
+	// TODO(marius): this can be made faster
 	for i, col := range out {
-		reflect.ValueOf(col).Elem().Set(s.in[i].Index(s.beg))
+		reflect.ValueOf(col).Elem().Set(s.in.Index(i, s.beg))
 	}
 	s.beg++
 	return true

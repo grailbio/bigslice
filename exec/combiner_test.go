@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"sort"
 	"testing"
 
+	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
@@ -25,7 +27,7 @@ func deepEqual(f, g frame.Frame) bool {
 		if f.Out(i) != g.Out(i) {
 			return false
 		}
-		if !reflect.DeepEqual(f[i].Interface(), g[i].Interface()) {
+		if !reflect.DeepEqual(f.Interface(i), g.Interface(i)) {
 			return false
 		}
 	}
@@ -38,47 +40,72 @@ func TestCombiningFrame(t *testing.T) {
 	if f == nil {
 		t.Fatal("nil frame")
 	}
-	f.Combine(frame.Columns(
+	f.Combine(frame.Slices(
 		[]string{"a", "b", "a", "a", "a"},
 		[]int{1, 2, 10, 20, 30},
 	))
-	f.Combine(frame.Columns(
+	f.Combine(frame.Slices(
 		[]string{"x", "a", "a"},
 		[]int{100, 0, 0},
 	))
 	if got, want := f.Len(), 3; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := f.Frame[0].Interface().([]string), ([]string{"a", "b", "x"}); !reflect.DeepEqual(got, want) {
+	g := f.Compact()
+	sort.Sort(g)
+	if got, want := g.Interface(0).([]string), ([]string{"a", "b", "x"}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := f.Frame[1].Interface().([]int), ([]int{61, 2, 100}); !reflect.DeepEqual(got, want) {
+	if got, want := g.Interface(1).([]int), ([]int{61, 2, 100}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
-func TestCombiningCompact(t *testing.T) {
+func TestCombiningFrameManyKeys(t *testing.T) {
+	const N = 100000
 	typ := slicetype.New(typeOfString, typeOfInt)
 	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }))
-	f.Combine(frame.Columns(
-		[]string{"b", "a", "a", "a", "b", "a", "c", "d"},
-		[]int{0, 1, 1, 1, 2, 1, 0, 1},
-	))
-	if got, want := f.Len(), 4; got != want {
-		t.Errorf("got %v, want %v", got, want)
+	if f == nil {
+		t.Fatal("nil frame")
 	}
-	rest := f.Compact(2)
-	if got, want := f.Len(), 2; got != want {
-		t.Errorf("got %v, want %v", got, want)
+	fz := fuzz.New()
+	fz.NilChance(0)
+	total := make(map[string]int)
+	for i := 0; i < N; i++ {
+		var elems map[string]int
+		fz.Fuzz(&elems)
+		// add some common ones too
+		elems["a"] = 123
+		elems["b"] = 333
+		var (
+			ks []string
+			vs []int
+		)
+		for k, v := range elems {
+			ks = append(ks, k)
+			vs = append(vs, v)
+			total[k] += v
+		}
+		f.Combine(frame.Slices(ks, vs))
+
 	}
-	if got, want := rest.Len(), 2; got != want {
-		t.Errorf("got %v, want %v", got, want)
+	c := f.Compact()
+	sort.Sort(c)
+	keys := make([]string, 0, len(total))
+	for k := range total {
+		keys = append(keys, k)
 	}
-	if got, want := f, frame.Columns([]string{"b", "a"}, []int{2, 4}); !deepEqual(got.Frame, want) {
-		t.Errorf("got %v, want %v", got, want)
+	sort.Strings(keys)
+	if got, want := c.Len(), len(total); got != want {
+		t.Fatalf("got %v, want %v", got, want)
 	}
-	if got, want := rest, frame.Columns([]string{"c", "d"}, []int{0, 1}); !deepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	for i, key := range keys {
+		if got, want := c.Index(0, i).String(), key; got != want {
+			t.Fatalf("index %d: got %v, want %v", i, got, want)
+		}
+		if got, want := c.Index(1, i).Int(), int64(total[key]); got != want {
+			t.Errorf("index %d: got %v, want %v", i, got, want)
+		}
 	}
 }
 
@@ -91,7 +118,7 @@ func TestCombiner(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	f := frame.Columns(
+	f := frame.Slices(
 		[]string{"a", "a", "b", "c", "d"},
 		[]int{0, 1, 2, 3, 4},
 	)
@@ -109,7 +136,7 @@ func TestCombiner(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	r := sliceio.NewDecodingReader(&b)
-	g := frame.Make(f, int(n))
+	g := frame.Make(f, int(n), int(n))
 	m, err := sliceio.ReadFull(ctx, r, g)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +144,7 @@ func TestCombiner(t *testing.T) {
 	if got, want := m, 4; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := g, frame.Columns([]string{"a", "b", "c", "d"}, []int{N, 2 * N, 3 * N, 4 * N}); !deepEqual(got, want) {
+	if got, want := g, frame.Slices([]string{"a", "b", "c", "d"}, []int{N, 2 * N, 3 * N, 4 * N}); !deepEqual(got, want) {
 		t.Errorf("got %v, want %v", got.TabString(), want.TabString())
 	}
 }

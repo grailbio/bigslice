@@ -18,7 +18,6 @@ import (
 
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice"
-	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -119,9 +118,6 @@ type Task struct {
 	// NumPartition is the number of partitions that are output by this task.
 	// If NumPartition > 1, then the task must also define a partitioner.
 	NumPartition int
-	// Hasher is used to compute hashes of Frame rows, used to partition
-	// a Frame's output.
-	Hasher kernel.Hasher
 
 	// Combiner specifies an (optional) combiner to use for this task's output.
 	// If a Combiner is specified, CombineKey names the combine buffer used:

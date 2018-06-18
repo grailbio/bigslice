@@ -41,7 +41,7 @@ func (b taskBuffer) Slice(partition, off int) (frame.Frame, int) {
 			n += l
 		}
 	}
-	return nil, -1
+	return frame.Frame{}, -1
 }
 
 type taskBufferReader struct {
@@ -58,7 +58,7 @@ loop:
 		case len(r.q[r.i]) == r.j:
 			r.i++
 			r.j, r.k = 0, 0
-		case r.q[r.i][r.j][0].Len() == r.k:
+		case r.q[r.i][r.j].Len() == r.k:
 			r.j++
 			r.k = 0
 		default:

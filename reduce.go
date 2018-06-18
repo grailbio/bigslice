@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/grailbio/bigslice/kernel"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/sortio"
@@ -48,21 +48,18 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if !canMakeCombiningFrame(slice) {
 		typecheck.Panicf(1, "cannot combine values for keys of type %s", slice.Out(0))
 	}
-	var hasher kernel.Hasher
-	if !kernel.Lookup(slice.Out(0), &hasher) {
+	if !frame.CanHash(slice.Out(0)) {
 		typecheck.Panicf(1, "key type %s is not partitionable", slice.Out(0))
 	}
-	return &reduceSlice{slice, reflect.ValueOf(reduce), hasher}
+	return &reduceSlice{slice, reflect.ValueOf(reduce)}
 }
 
 // ReduceSlice implements "post shuffle" combining merge sort.
 type reduceSlice struct {
 	Slice
 	combiner reflect.Value
-	hasher   kernel.Hasher
 }
 
-func (r *reduceSlice) Hasher() kernel.Hasher    { return r.hasher }
 func (r *reduceSlice) Op() string               { return "reduce" }
 func (*reduceSlice) NumDep() int                { return 1 }
 func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
@@ -78,5 +75,5 @@ func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
 func canMakeCombiningFrame(typ slicetype.Type) bool {
-	return typ.NumOut() == 2 && kernel.Implements(typ.Out(0), kernel.IndexerInterface)
+	return typ.NumOut() == 2 && frame.CanHash(typ.Out(0)) && frame.CanCompare(typ.Out(0))
 }

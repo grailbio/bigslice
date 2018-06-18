@@ -6,7 +6,6 @@ package exec
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 
@@ -69,7 +68,7 @@ func (l *localExecutor) runTask(task *Task) {
 				task.Error(err)
 				return
 			}
-			buf := frame.Make(dep.Tasks[0], defaultChunksize)
+			buf := frame.Make(dep.Tasks[0], defaultChunksize, defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
 				if err != nil && err != sliceio.EOF {
@@ -129,27 +128,19 @@ func (*localExecutor) HandleDebug(*http.ServeMux) {}
 // the task's partitioner in order to determine the correct partition.
 func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuffer, error) {
 	if task.NumOut() == 0 {
-		_, err := out.Read(ctx, nil)
+		_, err := out.Read(ctx, frame.Empty)
 		if err == sliceio.EOF {
 			err = nil
 		}
 		return nil, err
 	}
 	var (
-		buf         = make(taskBuffer, task.NumPartition)
-		in          frame.Frame
-		partitions  []int
-		partitioner *partitioner
+		buf = make(taskBuffer, task.NumPartition)
+		in  frame.Frame
 	)
-	if task.Hasher != nil {
-		partitions = make([]int, defaultChunksize, defaultChunksize)
-		partitioner = newPartitioner(task.Hasher, task.NumPartition)
-	} else if task.NumPartition != 1 {
-		return nil, fmt.Errorf("invalid task graph: NumPartition is %d, but no Hasher provided", task.NumPartition)
-	}
 	for {
-		if in == nil {
-			in = frame.Make(task, defaultChunksize)
+		if !in.IsValid() {
+			in = frame.Make(task, defaultChunksize, defaultChunksize)
 		}
 		n, err := out.Read(ctx, in)
 		if err != nil && err != sliceio.EOF {
@@ -159,10 +150,9 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuff
 		// assign partitions to each input element, and then append the
 		// elements in their respective partitions. In this case, we just
 		// maintain buffer slices of defaultChunksize each.
-		if task.Hasher != nil {
-			partitioner.Partition(in, partitions[:n])
+		if task.NumPartition > 1 {
 			for i := 0; i < n; i++ {
-				p := partitions[i]
+				p := int(in.Hash(i)) % task.NumPartition
 				// If we don't yet have a buffer or the current one is at capacity,
 				// create a new one.
 				m := len(buf[p])
@@ -171,14 +161,12 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuff
 					buf[p] = append(buf[p], frame)
 					m++
 				}
-				for j := range buf[p][m-1] {
-					buf[p][m-1][j] = frame.AppendColumn(buf[p][m-1][j], in[j].Index(i))
-				}
+				buf[p][m-1] = frame.AppendFrame(buf[p][m-1], in.Slice(i, i+1))
 			}
 		} else if n > 0 {
 			in = in.Slice(0, n)
 			buf[0] = append(buf[0], in)
-			in = nil
+			in = frame.Frame{}
 		}
 		if err == sliceio.EOF {
 			break

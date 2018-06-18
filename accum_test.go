@@ -35,13 +35,14 @@ outer:
 		for i := 0; i < N; i++ {
 			keysPtr := reflect.New(reflect.SliceOf(typ))
 			fz.Fuzz(keysPtr.Interface())
-			keys := frame.Column(keysPtr.Elem())
+			keys := keysPtr.Elem()
 			counts := make([]int, keys.Len())
 			for i := range counts {
 				counts[i] = 1
 			}
-			accum.Accumulate(frame.Frame{keys, frame.ColumnOf(counts)}, keys.Len())
-			accum.Accumulate(frame.Frame{keys, frame.ColumnOf(counts)}, keys.Len())
+			f := frame.Values([]reflect.Value{keys, reflect.ValueOf(counts)})
+			accum.Accumulate(f, keys.Len())
+			accum.Accumulate(f, keys.Len())
 		}
 		keys := reflect.MakeSlice(reflect.SliceOf(typ), N, N)
 		vals := reflect.MakeSlice(reflect.SliceOf(typeOfInt), N, N)

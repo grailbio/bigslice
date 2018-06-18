@@ -674,35 +674,30 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	switch {
 	case task.NumOut() == 0:
 		// If there are no output columns, just drive the computation.
-		_, err := out.Read(ctx, nil)
+		_, err := out.Read(ctx, frame.Empty)
 		if err == sliceio.EOF {
 			err = nil
 		}
 		return err
-	case task.Hasher != nil:
+	case task.NumPartition > 1:
 		const psize = defaultChunksize / 100
-		// If we have a Hasher, we're expected to partition the output.
 		var (
-			partition   = make([]int, defaultChunksize)
-			partitionv  = make([]frame.Frame, task.NumPartition)
-			lens        = make([]int, task.NumPartition)
-			partitioner = newPartitioner(task.Hasher, task.NumPartition)
+			partitionv = make([]frame.Frame, task.NumPartition)
+			lens       = make([]int, task.NumPartition)
 		)
 		for i := range partitionv {
-			partitionv[i] = frame.Make(task, psize)
+			partitionv[i] = frame.Make(task, psize, psize)
 		}
-		in := frame.Make(task, defaultChunksize)
+		in := frame.Make(task, defaultChunksize, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
 				return err
 			}
-			partitioner.Partition(in, partition)
 			for i := 0; i < n; i++ {
-				p := partition[i]
-				for j, vec := range partitionv[p] {
-					vec.Index(lens[p]).Set(in[j].Index(i))
-				}
+				p := int(in.Hash(i)) % task.NumPartition
+				j := lens[p]
+				frame.Copy(partitionv[p].Slice(j, j+1), in.Slice(i, i+1))
 				lens[p]++
 				count[p]++
 				// Flush when we fill up.
@@ -729,10 +724,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 		}
 	default:
-		if task.NumPartition != 1 {
-			return fmt.Errorf("invalid task graph: NumPartition is %d, but no Hasher provided", task.NumPartition)
-		}
-		in := frame.Make(task, defaultChunksize)
+		in := frame.Make(task, defaultChunksize, defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
@@ -798,7 +790,6 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	}()
 
 	recordsOut := w.stats.Int("write")
-	const psize = 8
 	// Now perform the partition-combine operation. We maintain a
 	// per-task combine buffer for each partition. When this buffer
 	// reaches half of its capacity, we attempt to combine up to 3/4ths
@@ -809,15 +800,10 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	// capacity; the machine buffer spills to disk when it reaches a
 	// preconfigured threshold.)
 	var (
-		partition         = make([]int, defaultChunksize)
-		partitionv        = make([]frame.Frame, task.NumPartition)
 		partitionCombiner = make([]*combiningFrame, task.NumPartition)
-		lens              = make([]int, task.NumPartition)
-		partitioner       = newPartitioner(task.Hasher, task.NumPartition)
-		out               = frame.Make(task, defaultChunksize)
+		out               = frame.Make(task, defaultChunksize, defaultChunksize)
 	)
-	for i := range partitionv {
-		partitionv[i] = frame.Make(task, psize)
+	for i := range partitionCombiner {
 		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner)
 	}
 	for {
@@ -825,21 +811,10 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 		if err != nil && err != sliceio.EOF {
 			return err
 		}
-		partitioner.Partition(out, partition)
 		for i := 0; i < n; i++ {
-			p := partition[i]
-			for j, vec := range partitionv[p] {
-				vec.Index(lens[p]).Set(out[j].Index(i))
-			}
-			lens[p]++
-			if lens[p] < psize {
-				continue
-			}
+			p := int(out.Hash(i)) % task.NumPartition
 			pcomb := partitionCombiner[p]
-
-			pcomb.Combine(partitionv[p])
-			partitionv[p].Clear()
-			lens[p] = 0
+			pcomb.Combine(out.Slice(i, i+1))
 
 			len, cap := pcomb.Len(), pcomb.Cap()
 			if len <= cap/2 {
@@ -856,7 +831,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 				}
 			}
 
-			flushed := pcomb.Compact(cap / 4)
+			flushed := pcomb.Compact()
 			err := combiner.Combine(ctx, flushed)
 			combiners[p] <- combiner
 			if err != nil {
@@ -869,15 +844,9 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 		}
 	}
 	// Flush the remainder.
-	for p, n := range lens {
+	for p, comb := range partitionCombiner {
 		combiner := <-combiners[p]
-		var err error
-		if n > 0 {
-			err = combiner.Combine(ctx, partitionv[p].Slice(0, n))
-		}
-		if err == nil {
-			err = combiner.Combine(ctx, partitionCombiner[p].Frame)
-		}
+		err := combiner.Combine(ctx, comb.Compact())
 		combiners[p] <- combiner
 		if err != nil {
 			return err
@@ -972,7 +941,6 @@ func (w *worker) writeCombiner(key string) {
 //
 // TODO(marius): should we flush combined outputs explicitly?
 func (w *worker) Read(ctx context.Context, req readRequest, rc *io.ReadCloser) (err error) {
-	log.Printf("Worker.Read %v", req)
 	*rc, err = w.store.Open(ctx, req.Task, req.Partition, req.Offset)
 	return
 }
@@ -1079,7 +1047,6 @@ func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 		m.reader = sliceio.NewDecodingReader(m.rpc)
 	}
 	n, err := m.reader.Read(ctx, f)
-	log.Printf("machinereader %s,%v, %d(%v) %v", m.Machine.Addr, m.TaskPartition, n, err, f.Slice(0, n))
 	return n, err
 }
 

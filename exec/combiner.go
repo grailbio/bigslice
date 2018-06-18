@@ -7,12 +7,13 @@ package exec
 import (
 	"context"
 	"expvar"
+	"fmt"
 	"reflect"
+	"sort"
 
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/sortio"
@@ -26,6 +27,22 @@ var (
 	combineDiskSpills    = expvar.NewInt("combinediskspills")
 )
 
+const (
+	combiningFrameInitSize    = defaultChunksize
+	combiningFrameScratchSize = defaultChunksize
+	combiningFrameLoadFactor  = 0.7
+
+	// HashSeed is used when hashing keys in the hash table. This is to
+	// prevent a previous partitioning step from reducing hash entropy.
+	// In the extreme case, all entropy is removed and hash combine
+	// operations become quadratic.
+	hashSeed = 0x9acb0442
+
+	// HashMaxCapacity is the largest possible combining hash table we
+	// can maintain.
+	hashMaxCapacity = 1 << 29
+)
+
 // TODO(marius): use ARC or something similary adaptive when
 // compacting and spilling combiner frames? It could make a big
 // difference if keys have varying degrees of temporal locality.
@@ -35,37 +52,43 @@ var (
 // columns: the first column is the key by which values are combined;
 // the second column is the combined value for that key.
 //
-// TODO(marius): Instead of using an indexer (which must maintain
-// redundant copies of keys), we could implement a hash table directly
-// on top of a Frame.
+// CombiningFrame is a power-of-two sized hash table with quadratic
+// probing (with c0=c1=1/2, which is guaranteed to explore every index
+// in the hash table) implemented directly on top of a Frame.
 type combiningFrame struct {
-	// Frame is the data frame that is being combined. Frame is
-	// continually appended as new keys appear.
-	frame.Frame
 	// Combiner is a function that combines values in the frame.
 	// It should have the signature func(x, y t) t, where t is the type
 	// of Frame[1].
 	Combiner reflect.Value
 
-	// Index stores the index on the frame's Frame's key column.
-	index   kernel.Index
-	indexer kernel.Indexer
+	typ slicetype.Type
+
+	// Data is the data frame that is being combined. It stores both
+	// the hash table and a scratch table.
+	data frame.Frame
+
+	// Scratch stores the scratch slice of data.
+	scratch frame.Frame
+
+	// Threshold is the current a
+	threshold int
 
 	// Hits stores the hit count per index.
 	hits []int
 
-	// Indices is the slice we pass into the indexer; it's stored here
-	// for reuse.
-	indices []int
+	// Len is the current data size of the hash table.
+	len int
+	// Cap is the size of the data portion of the data frame.
+	cap int
 
-	// N is the size of the combining frame.
-	n int
+	// Mask is the size mask to use for hashing.
+	mask int
 }
 
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
 func canMakeCombiningFrame(typ slicetype.Type) bool {
-	return typ.NumOut() == 2 && kernel.Implements(typ.Out(0), kernel.IndexerInterface)
+	return typ.NumOut() == 2 && frame.CanHash(typ.Out(0)) && frame.CanCompare(typ.Out(0))
 }
 
 // MakeCombiningFrame creates and returns a new CombiningFrame
@@ -75,68 +98,119 @@ func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *combiningFr
 	if typ.NumOut() != 2 {
 		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}
-	f := new(combiningFrame)
-	if !kernel.Lookup(typ.Out(0), &f.indexer) {
-		return nil
+	const n = combiningFrameInitSize + combiningFrameScratchSize
+	c := &combiningFrame{
+		Combiner: combiner,
+		typ:      typ,
 	}
-	f.Frame = frame.Make(typ, 0, defaultChunksize)
-	f.Combiner = combiner
-	return f
+	_, _, _ = c.make(combiningFrameInitSize, combiningFrameScratchSize)
+	return c
 }
+
+func (c *combiningFrame) make(ndata, nscratch int) (data0, scratch0 frame.Frame, hits0 []int) {
+	if ndata&(ndata-1) != 0 {
+		panic("hash table size " + fmt.Sprint(ndata) + " not a power of two")
+	}
+	data0 = c.data
+	scratch0 = c.scratch
+	hits0 = c.hits
+	c.data = frame.Make(c.typ, ndata+nscratch, ndata+nscratch)
+	c.scratch = c.data.Slice(ndata, ndata+nscratch)
+	c.hits = make([]int, ndata)
+	c.threshold = int(combiningFrameLoadFactor * float64(ndata))
+	c.mask = ndata - 1
+	c.cap = ndata
+	return
+}
+
+// Len returns the number of enetries in the combining frame.
+func (c *combiningFrame) Len() int { return c.len }
+
+// Cap returns the current capacity of the combining frame.
+func (c *combiningFrame) Cap() int { return c.cap }
 
 // Combine combines the provided frame into the the CombiningFrame:
 // values in f are combined with existing values using the
 // CombiningFrame's combiner. When no value exists for a key, the
 // value is copied directly.
 func (c *combiningFrame) Combine(f frame.Frame) {
-	n := f.Len()
-	if cap(c.indices) < n {
-		c.indices = make([]int, n)
+	nchunk := (f.Len() + c.scratch.Len() - 1) / c.scratch.Len()
+	for i := 0; i < nchunk; i++ {
+		n := frame.Copy(c.scratch, f.Slice(c.scratch.Len()*i, f.Len()))
+		c.combine(n)
 	}
-	if c.index == nil {
-		c.index = c.indexer.Index(f[0])
-	}
-	c.index.Index(f[0], c.indices[:n])
+}
+
+// Combine combines n items in the scratch space.
+func (c *combiningFrame) combine(n int) {
 	for i := 0; i < n; i++ {
-		ix := c.indices[i]
-		if ix >= c.n {
-			c.Frame = frame.Append(c.Frame, f.Slice(i, i+1))
-			c.hits = append(c.hits, 0)
-			c.n++
-		} else {
-			// TODO(marius): vectorize combiners too.
-			rvs := c.Combiner.Call([]reflect.Value{c.Frame[1].Index(ix), f[1].Index(i)})
-			c.Frame[1].Index(ix).Set(rvs[0])
-			c.hits[ix]++
+		idx := int(c.scratch.HashWithSeed(i, hashSeed)) & c.mask
+		for try := 1; ; try++ {
+			if c.hits[idx] == 0 {
+				c.hits[idx]++
+				c.data.Swap(idx, c.cap+i)
+				c.added()
+				break
+			} else if !c.data.Less(idx, c.cap+i) && !c.data.Less(c.cap+i, idx) {
+				rvs := c.Combiner.Call([]reflect.Value{c.data.Index(1, idx), c.scratch.Index(1, i)})
+				c.data.Index(1, idx).Set(rvs[0])
+				c.hits[idx]++
+				break
+			} else {
+				// Probe quadratically.
+				idx = (idx + try) & c.mask
+			}
 		}
 	}
 }
 
-// Compact compacts this CombiningFrame to length n. The n most
-// frequently accessed items are kept in the frame and reindexed. The
-// returned Frame is the slice of the remainder of the Frame. It is
-// only valid until the next call to Combine.
-//
-// Key hit counts are decayed by a factor of two; thus very frequent keys
-// can retain memory residence for longer.
-//
-// TODO(marius): we could dynamically decide what the top N cutoff is.
-func (c *combiningFrame) Compact(n int) frame.Frame {
-	swap := c.Swapper()
-	if c.Len() < n {
-		n = c.Len()
+func (c *combiningFrame) added() {
+	c.len += 1
+	if c.len <= c.threshold {
+		return
 	}
-	// Pack the top n hits into the frame.
-	for i, j := range topn(c.hits, n) {
-		swap(i, j)
-		c.hits[i] = c.hits[j] / 2
+	if c.cap == hashMaxCapacity {
+		panic("hash table too large")
 	}
-	var g frame.Frame
-	c.Frame, g = c.Slice(0, n), c.Slice(n, c.Len())
-	c.index = c.indexer.Index(c.Frame[0])
-	c.hits = c.hits[:n]
-	c.n = n
-	return g
+	// Double the hash table size and rehash all the keys. Note that because
+	// all of the keys are unique, we do not need to check for equality when
+	// probing for a slot.
+	n := c.cap * 2
+	data0, scratch0, hits0 := c.make(n, c.scratch.Len())
+	frame.Copy(c.scratch, scratch0)
+	for i := range hits0 {
+		if hits0[i] == 0 {
+			continue
+		}
+		idx := int(data0.HashWithSeed(i, hashSeed)) & c.mask
+		for try := 1; ; try++ {
+			if c.hits[idx] == 0 {
+				c.hits[idx] = hits0[i]
+				frame.Copy(c.data.Slice(idx, idx+1), data0.Slice(i, i+1))
+				break
+			} else {
+				idx = (idx + try) & c.mask
+			}
+		}
+	}
+}
+
+// Compact returns a snapshot of all of the keys in the frame after
+// compacting them into the beginning of the frame. After a call to
+// Compact, the frame is considered empty; the returned Frame is
+// valid only until the next call to Combine.
+func (c *combiningFrame) Compact() frame.Frame {
+	j := 0
+	for i, n := range c.hits {
+		if n == 0 {
+			continue
+		}
+		c.data.Swap(i, j)
+		c.hits[i] = 0
+		j++
+	}
+	c.len = 0
+	return c.data.Slice(0, j)
 }
 
 // A Combiner manages a CombiningFrame, spilling its contents to disk
@@ -146,7 +220,6 @@ type combiner struct {
 
 	targetSize int
 	comb       *combiningFrame
-	sorter     kernel.Sorter
 	combiner   reflect.Value
 	spiller    sliceio.Spiller
 	name       string
@@ -170,15 +243,15 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 		return nil, err
 	}
 	c.comb = makeCombiningFrame(c, comb)
-	if !kernel.Lookup(typ.Out(0), &c.sorter) {
-		typecheck.Panicf(1, "bigslice.newCombiner: no sorter kernel for type %s", typ.Out(0))
+	if !frame.CanCompare(typ.Out(0)) {
+		typecheck.Panicf(1, "bigslice.newCombiner: cannot sort type %s", typ.Out(0))
 	}
 	return c, nil
 }
 
 func (c *combiner) spill(f frame.Frame) error {
-	log.Debug.Printf("combiner %s: spilling %d rows disk", c.name, c.comb.Frame.Len())
-	c.sorter.Sort(f)
+	log.Debug.Printf("combiner %s: spilling %d rows disk", c.name, c.comb.Len())
+	sort.Sort(f)
 	n, err := c.spiller.Spill(f)
 	if err == nil {
 		combinerKeys.Add(-int64(f.Len()))
@@ -205,10 +278,13 @@ func (c *combiner) Combine(ctx context.Context, f frame.Frame) error {
 	c.total += n
 	nkeys := c.comb.Len()
 	c.comb.Combine(f)
+	// TODO(marius): keep combining up to the next threshold; spill only if
+	// we need to grow.  maybe Combine should return 'n', and then we invoke
+	// 'grow' manually; or at least an option for this API.
 	combinerKeys.Add(int64(c.comb.Len() - nkeys))
 	if nkeys >= c.targetSize {
 		// TODO(marius): we can copy the data and spill this concurrently
-		spilled := c.comb.Compact((c.targetSize + 9) / 10)
+		spilled := c.comb.Compact()
 		combineDiskSpills.Add(1)
 		if err := c.spill(spilled); err != nil {
 			return err
@@ -232,9 +308,8 @@ func (c *combiner) Reader() (sliceio.Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := c.comb.Frame
-	c.comb = nil
-	c.sorter.Sort(f)
+	f := c.comb.Compact()
+	sort.Sort(f)
 	readers = append(readers, sliceio.FrameReader(f))
 	return sortio.Reduce(c, c.name, readers, c.combiner), nil
 }
@@ -250,7 +325,7 @@ func (c *combiner) WriteTo(ctx context.Context, enc *sliceio.Encoder) (int64, er
 		return 0, err
 	}
 	var total int64
-	in := frame.Make(c, defaultChunksize)
+	in := frame.Make(c, defaultChunksize, defaultChunksize)
 	for {
 		n, err := reader.Read(ctx, in)
 		if err != nil && err != sliceio.EOF {

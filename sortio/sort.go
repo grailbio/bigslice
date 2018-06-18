@@ -10,28 +10,29 @@ import (
 	"container/heap"
 	"context"
 	"math"
-	"reflect"
+	"sort"
 
 	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/kernel"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-// SortReader sorts a Reader using the provided Sorter. SortReader
-// may spill to disk, in which case it targets spill file sizes of
+const numCanaryRows = 1 << 14
+
+// SortReader sorts a Reader by its first column. SortReader may
+// spill to disk, in which case it targets spill file sizes of
 // spillTarget (in bytes). Because the encoded size of objects is not
 // known in advance, sortReader uses a "canary" batch size of ~16k
 // rows in order to estimate the size of future reads. The estimate
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
-func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
+func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
 	spill, err := sliceio.NewSpiller("sorter")
 	if err != nil {
 		return nil, err
 	}
 	defer spill.Cleanup()
-	f := frame.Make(typ, 1<<14)
+	f := frame.Make(typ, numCanaryRows, numCanaryRows)
 	for {
 		n, err := sliceio.ReadFull(ctx, r, f)
 		if err != nil && err != sliceio.EOF {
@@ -39,7 +40,7 @@ func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 		}
 		eof := err == sliceio.EOF
 		g := f.Slice(0, n)
-		sorter.Sort(g)
+		sort.Sort(g)
 		size, err := spill.Spill(g)
 		if err != nil {
 			return nil, err
@@ -57,7 +58,7 @@ func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 			if targetRows <= f.Cap() {
 				f = f.Slice(0, targetRows)
 			} else {
-				f = frame.Make(typ, targetRows)
+				f.Grow(targetRows)
 			}
 		}
 	}
@@ -65,17 +66,28 @@ func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ 
 	if err != nil {
 		return nil, err
 	}
-	return NewMergeReader(ctx, typ, sorter, readers)
+	return NewMergeReader(ctx, typ, readers)
 }
 
 // A FrameBuffer is a buffered frame. The frame is filled from
-// a reader, and maintains a current offset and length.
+// a reader, and maintains a current index and length.
 type FrameBuffer struct {
+	// Frame is the buffer into which new data are read. The buffer is
+	// always allocated externally and must be nonempty.
 	frame.Frame
+	// Reader is the slice reader from which the buffer is filled.
 	sliceio.Reader
-	Off, Len int
-	Index    int
-	N        int
+	// Index, Len is current index and length of the frame.
+	Index, Len int
+
+	// Off is the global offset of this framebuffer. It is added to
+	// the index to compute the buffer's current position.
+	Off int
+}
+
+// Pos returns this frame buffer's current position.
+func (f FrameBuffer) Pos() int {
+	return f.Off + f.Index
 }
 
 // Fill (re-) fills the FrameBuffer when it's empty. An error
@@ -87,14 +99,13 @@ func (f *FrameBuffer) Fill(ctx context.Context) error {
 	}
 	var err error
 	f.Len, err = f.Reader.Read(ctx, f.Frame)
-	f.N++
 	if err != nil && err != sliceio.EOF {
 		return err
 	}
 	if err == sliceio.EOF && f.Len > 0 {
 		err = nil
 	}
-	f.Off = 0
+	f.Index = 0
 	if f.Len == 0 && err == nil {
 		err = sliceio.EOF
 	}
@@ -105,12 +116,13 @@ func (f *FrameBuffer) Fill(ctx context.Context) error {
 // ordered by the provided sorter.
 type FrameBufferHeap struct {
 	Buffers []*FrameBuffer
-	Sorter  kernel.Sorter
+	// Less compares the current index of buffers i and j.
+	LessFunc func(i, j int) bool
 }
 
 func (f *FrameBufferHeap) Len() int { return len(f.Buffers) }
 func (f *FrameBufferHeap) Less(i, j int) bool {
-	return f.Sorter.Less(f.Buffers[i].Frame, f.Buffers[i].Off, f.Buffers[j].Frame, f.Buffers[j].Off)
+	return f.LessFunc(i, j)
 }
 func (f *FrameBufferHeap) Swap(i, j int) {
 	f.Buffers[i], f.Buffers[j] = f.Buffers[j], f.Buffers[i]
@@ -119,7 +131,6 @@ func (f *FrameBufferHeap) Swap(i, j int) {
 // Push pushes a FrameBuffer onto the heap.
 func (f *FrameBufferHeap) Push(x interface{}) {
 	buf := x.(*FrameBuffer)
-	buf.Index = len(f.Buffers)
 	f.Buffers = append(f.Buffers, buf)
 }
 
@@ -139,17 +150,22 @@ type mergeReader struct {
 	heap *FrameBufferHeap
 }
 
-// NewMergeReader returns a new Reader that is sorted
-// according to the provided Sorter. The readers to be merged
-// must already be sorted according to the same.
-func NewMergeReader(ctx context.Context, typ slicetype.Type, sorter kernel.Sorter, readers []sliceio.Reader) (sliceio.Reader, error) {
+// NewMergeReader returns a new Reader that is sorted by its first
+// column. The readers to be merged must already be sorted.
+func NewMergeReader(ctx context.Context, typ slicetype.Type, readers []sliceio.Reader) (sliceio.Reader, error) {
 	h := new(FrameBufferHeap)
-	h.Sorter = sorter
 	h.Buffers = make([]*FrameBuffer, 0, len(readers))
+	n := len(readers) * sliceio.SpillBatchSize
+	f := frame.Make(typ, n, n)
+	h.LessFunc = func(i, j int) bool {
+		return f.Less(h.Buffers[i].Pos(), h.Buffers[j].Pos())
+	}
 	for i := range readers {
+		off := i * sliceio.SpillBatchSize
 		fr := &FrameBuffer{
 			Reader: readers[i],
-			Frame:  frame.Make(typ, sliceio.SpillBatchSize),
+			Frame:  f.Slice(off, off+sliceio.SpillBatchSize),
+			Off:    off,
 		}
 		switch err := fr.Fill(ctx); {
 		case err == sliceio.EOF:
@@ -170,16 +186,15 @@ func (m *mergeReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		return 0, m.err
 	}
 	var (
-		row = make([]reflect.Value, len(out))
 		n   int
 		max = out.Len()
 	)
 	for n < max && len(m.heap.Buffers) > 0 {
-		m.heap.Buffers[0].CopyIndex(row, m.heap.Buffers[0].Off)
-		out.SetIndex(row, n)
+		idx := m.heap.Buffers[0].Index
+		frame.Copy(out.Slice(n, n+1), m.heap.Buffers[0].Slice(idx, idx+1))
 		n++
-		m.heap.Buffers[0].Off++
-		if m.heap.Buffers[0].Off == m.heap.Buffers[0].Len {
+		m.heap.Buffers[0].Index++
+		if m.heap.Buffers[0].Index == m.heap.Buffers[0].Len {
 			if err := m.heap.Buffers[0].Fill(ctx); err != nil && err != sliceio.EOF {
 				m.err = err
 				return 0, err

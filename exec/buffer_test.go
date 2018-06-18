@@ -29,8 +29,7 @@ func TestTaskBuffer(t *testing.T) {
 	fz.Fuzz(&batches)
 	b := make(taskBuffer, 1)
 	for _, batch := range batches {
-		col := frame.ColumnOf(batch)
-		b[0] = append(b[0], frame.Frame{col})
+		b[0] = append(b[0], frame.Slices(batch))
 	}
 	s := &sliceio.Scanner{
 		Reader: b.Reader(0),

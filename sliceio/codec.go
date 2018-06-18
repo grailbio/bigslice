@@ -30,8 +30,8 @@ func NewEncoder(w io.Writer) *Encoder {
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
 func (e *Encoder) Encode(f frame.Frame) error {
-	for i := range f {
-		if err := e.enc.EncodeValue(f[i].Value()); err != nil {
+	for i := 0; i < f.NumOut(); i++ {
+		if err := e.enc.EncodeValue(f.Value(i)); err != nil {
 			return err
 		}
 	}
@@ -85,13 +85,13 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 	}
 	for d.off == d.len {
 		if d.buf == nil {
-			d.buf = make([]reflect.Value, len(f))
+			d.buf = make([]reflect.Value, f.NumOut())
 			for i := range d.buf {
 				d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
 			}
 		}
 		// Read the next batch.
-		for i := range f {
+		for i := 0; i < f.NumOut(); i++ {
 			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
 				if d.err == io.EOF {
 					d.err = EOF
@@ -103,8 +103,8 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 		d.len = d.buf[0].Elem().Len()
 	}
 	if d.len > 0 {
-		for i := range f {
-			n = reflect.Copy(f[i].Value(), d.buf[i].Elem().Slice(d.off, d.len))
+		for i := 0; i < f.NumOut(); i++ {
+			n = reflect.Copy(f.Value(i), d.buf[i].Elem().Slice(d.off, d.len))
 		}
 		d.off += n
 	}
