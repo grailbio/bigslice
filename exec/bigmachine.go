@@ -101,8 +101,6 @@ func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
 //
 // TODO(marius): provide fine-grained fault tolerance.
 func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
-	log.Printf("setting GC percentage to 10")
-	debug.SetGCPercent(10)
 	b.sess = sess
 	b.b = bigmachine.Start(b.system)
 	b.locations = make(map[*Task]*sliceMachine)
