@@ -319,7 +319,9 @@ func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, m
 			m = machines[0]
 			mc = offerc
 		}
-		if len(probation) > 0 && probationTimer == nil {
+		if len(probation) == 0 {
+			probationTimer = nil
+		} else if probationTimer == nil {
 			probationTimer = time.NewTimer(time.Until(probation[0].lastFailure.Add(probationTimeout)))
 		}
 		var timec <-chan time.Time
@@ -351,7 +353,6 @@ func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, m
 				m.health = machineOk
 				heap.Remove(&probation, m.index)
 				heap.Push(&machines, m)
-				probationTimer = nil
 			case m.health == machineLost:
 				// In this case, the machine has already been removed from the heap.
 			case m.health == machineProbation:
