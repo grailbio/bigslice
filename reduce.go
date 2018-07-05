@@ -5,6 +5,7 @@
 package bigslice
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/grailbio/bigslice/kernel"
@@ -71,7 +72,7 @@ func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	if len(deps) == 1 {
 		return deps[0]
 	}
-	return sortio.Reduce(r, deps, r.combiner)
+	return sortio.Reduce(r, fmt.Sprintf("app-%d", shard), deps, r.combiner)
 }
 
 // CanMakeCombiningFrame tells whether the provided Frame type can be

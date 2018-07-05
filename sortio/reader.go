@@ -19,6 +19,7 @@ const defaultChunksize = 1024
 
 type reader struct {
 	typ      slicetype.Type
+	name     string
 	combiner reflect.Value
 	readers  []sliceio.Reader
 	err      error
@@ -29,9 +30,10 @@ type reader struct {
 
 // Reduce returns a Reader that merges and reduces a set of
 // sorted (and possibly combined) readers. For each
-func Reduce(typ slicetype.Type, readers []sliceio.Reader, combiner reflect.Value) sliceio.Reader {
+func Reduce(typ slicetype.Type, name string, readers []sliceio.Reader, combiner reflect.Value) sliceio.Reader {
 	return &reader{
 		typ:      typ,
+		name:     name,
 		readers:  readers,
 		combiner: combiner,
 	}
@@ -88,6 +90,12 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 			} else {
 				val = r.combiner.Call([]reflect.Value{val, buf.Frame[1].Index(buf.Off)})[0]
 			}
+		}
+		// Emit the output before overwriting the frame. Note that key and val are
+		// references to slice elements.
+		out[0].Index(n).Set(key)
+		out[1].Index(n).Set(val)
+		for _, buf := range combine {
 			buf.Off++
 			if buf.Off == buf.Len {
 				if err := buf.Fill(ctx); err != nil && err != sliceio.EOF {
@@ -100,8 +108,6 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 				heap.Push(r.heap, buf)
 			}
 		}
-		out[0].Index(n).Set(key)
-		out[1].Index(n).Set(val)
 		n++
 	}
 	var err error

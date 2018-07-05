@@ -4,7 +4,11 @@
 
 package exec
 
-import "container/heap"
+import (
+	"container/heap"
+
+	"github.com/grailbio/base/log"
+)
 
 type topIndex struct{ Index, Count int }
 
@@ -30,6 +34,9 @@ func (q *topHeap) Pop() interface{} {
 }
 
 func topn(counts []int, n int) []int {
+	if n == 0 {
+		log.Panicf("topn: n=0, counts=%", counts)
+	}
 	if m := len(counts); m < n {
 		n = m
 	}

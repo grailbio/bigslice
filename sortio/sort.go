@@ -26,7 +26,7 @@ import (
 // is revisited on every subsequent fill and adjusted if it is
 // violated by more than 5%.
 func SortReader(ctx context.Context, sorter kernel.Sorter, spillTarget int, typ slicetype.Type, r sliceio.Reader) (sliceio.Reader, error) {
-	spill, err := sliceio.NewSpiller()
+	spill, err := sliceio.NewSpiller("sorter")
 	if err != nil {
 		return nil, err
 	}

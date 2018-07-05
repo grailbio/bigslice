@@ -5,6 +5,7 @@
 package sliceio
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -23,8 +24,8 @@ type Spiller string
 
 // NewSpiller creates and returns a new spiller backed by a
 // temporary directory.
-func NewSpiller() (Spiller, error) {
-	dir, err := ioutil.TempDir("", "spiller")
+func NewSpiller(name string) (Spiller, error) {
+	dir, err := ioutil.TempDir("", fmt.Sprintf("spiller-%s-", name))
 	if err != nil {
 		return "", err
 	}

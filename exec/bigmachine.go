@@ -771,7 +771,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			comb, err := newCombiner(task, task.CombineKey, *task.Combiner, defaultChunksize*100)
+			comb, err := newCombiner(task, fmt.Sprintf("%s%d", task.CombineKey, i), *task.Combiner, defaultChunksize*100)
 			if err != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
@@ -842,7 +842,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 			lens[p] = 0
 
 			len, cap := pcomb.Len(), pcomb.Cap()
-			if len < cap/2 {
+			if len <= cap/2 {
 				continue
 			}
 			var combiner *combiner
@@ -972,6 +972,7 @@ func (w *worker) writeCombiner(key string) {
 //
 // TODO(marius): should we flush combined outputs explicitly?
 func (w *worker) Read(ctx context.Context, req readRequest, rc *io.ReadCloser) (err error) {
+	log.Printf("Worker.Read %v", req)
 	*rc, err = w.store.Open(ctx, req.Task, req.Partition, req.Offset)
 	return
 }
@@ -1077,7 +1078,9 @@ func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 		}
 		m.reader = sliceio.NewDecodingReader(m.rpc)
 	}
-	return m.reader.Read(ctx, f)
+	n, err := m.reader.Read(ctx, f)
+	log.Printf("machinereader %s,%v, %d(%v) %v", m.Machine.Addr, m.TaskPartition, n, err, f.Slice(0, n))
+	return n, err
 }
 
 func (m *machineReader) Close() error {

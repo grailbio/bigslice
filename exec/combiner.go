@@ -165,7 +165,7 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 		targetSize: targetSize,
 	}
 	var err error
-	c.spiller, err = sliceio.NewSpiller()
+	c.spiller, err = sliceio.NewSpiller(name)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (c *combiner) Reader() (sliceio.Reader, error) {
 	c.comb = nil
 	c.sorter.Sort(f)
 	readers = append(readers, sliceio.FrameReader(f))
-	return sortio.Reduce(c, readers, c.combiner), nil
+	return sortio.Reduce(c, c.name, readers, c.combiner), nil
 }
 
 // WriteTo writes the contents of this combiner to the provided
