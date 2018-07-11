@@ -36,7 +36,7 @@ func deepEqual(f, g frame.Frame) bool {
 
 func TestCombiningFrame(t *testing.T) {
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }))
+	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }), 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}
@@ -64,7 +64,7 @@ func TestCombiningFrame(t *testing.T) {
 func TestCombiningFrameManyKeys(t *testing.T) {
 	const N = 100000
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }))
+	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }), 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}

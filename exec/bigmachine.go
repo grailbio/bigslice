@@ -804,7 +804,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 		out               = frame.Make(task, defaultChunksize, defaultChunksize)
 	)
 	for i := range partitionCombiner {
-		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner)
+		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner, 8, 1)
 	}
 	for {
 		n, err := in.Read(ctx, out)
@@ -821,7 +821,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 				continue
 			}
 			var combiner *combiner
-			if len >= defaultChunksize {
+			if len >= 8 {
 				combiner = <-combiners[p]
 			} else {
 				select {

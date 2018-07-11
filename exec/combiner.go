@@ -91,19 +91,20 @@ func canMakeCombiningFrame(typ slicetype.Type) bool {
 	return typ.NumOut() == 2 && frame.CanHash(typ.Out(0)) && frame.CanCompare(typ.Out(0))
 }
 
-// MakeCombiningFrame creates and returns a new CombiningFrame
-// with the provided type and combiner. MakeCombiningFrame panics
-// if there is type disagreement.
-func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value) *combiningFrame {
+// MakeCombiningFrame creates and returns a new CombiningFrame with
+// the provided type and combiner. MakeCombiningFrame panics if there
+// is type disagreement. N and nscratch determine the initial frame
+// size and scratch space size respective. The initial frame size
+// must be a power of two.
+func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value, n, nscratch int) *combiningFrame {
 	if typ.NumOut() != 2 {
 		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
 	}
-	const n = combiningFrameInitSize + combiningFrameScratchSize
 	c := &combiningFrame{
 		Combiner: combiner,
 		typ:      typ,
 	}
-	_, _, _ = c.make(combiningFrameInitSize, combiningFrameScratchSize)
+	_, _, _ = c.make(n, nscratch)
 	return c
 }
 
@@ -242,7 +243,7 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 	if err != nil {
 		return nil, err
 	}
-	c.comb = makeCombiningFrame(c, comb)
+	c.comb = makeCombiningFrame(c, comb, combiningFrameInitSize, combiningFrameScratchSize)
 	if !frame.CanCompare(typ.Out(0)) {
 		typecheck.Panicf(1, "bigslice.newCombiner: cannot sort type %s", typ.Out(0))
 	}
