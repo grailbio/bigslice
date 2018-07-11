@@ -46,6 +46,10 @@ type sliceMachine struct {
 	// the machine.
 	Compiles taskOnce
 
+	// Commits keeps track of which combine keys have been committed
+	// on the machine, so that they are run exactly once on the machine.
+	Commits taskOnce
+
 	Stats  *stats.Map
 	Status *status.Task
 

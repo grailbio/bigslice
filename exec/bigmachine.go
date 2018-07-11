@@ -13,11 +13,13 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/retry"
 	"github.com/grailbio/base/status"
@@ -181,6 +183,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	return nil
 }
 
+func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
+	return m.Commits.Do(key, func() error {
+		log.Printf("committing key %v on worker %v", key, m.Addr)
+		return m.RetryCall(ctx, "Worker.CommitCombiner", key, nil)
+	})
+}
+
 func (b *bigmachineExecutor) run(task *Task) {
 	ctx := context.Background()
 	task.Status.Print("waiting for a machine")
@@ -240,6 +249,7 @@ compile:
 		Invocation: task.Invocation.Index,
 		Locations:  make(map[string]string),
 	}
+	g, _ := errgroup.WithContext(ctx)
 	for _, dep := range task.Deps {
 		for _, deptask := range dep.Tasks {
 			m := b.location(deptask)
@@ -251,9 +261,20 @@ compile:
 				return
 			}
 			req.Locations[deptask.Name] = m.Addr
+			key := dep.CombineKey
+			if key == "" {
+				continue
+			}
+			// Make sure that the result is committed.
+			g.Go(func() error { return b.commit(ctx, m, key) })
 		}
 	}
 	task.Status.Print(m.Addr)
+	if err := g.Wait(); err != nil {
+		task.Errorf("failed to commit combiner: %v", err)
+		return
+	}
+
 	// While we're running, also update task stats directly into the tasks's status.
 	// TODO(marius): also aggregate stats across all tasks.
 	ctx, cancel := context.WithCancel(ctx)
@@ -386,6 +407,8 @@ type worker struct {
 	// buffers.
 	combinerStates map[string]combinerState
 	combiners      map[string][]chan *combiner
+
+	commitLimiter *limiter.Limiter
 }
 
 func (w *worker) Init(b *bigmachine.B) error {
@@ -401,6 +424,17 @@ func (w *worker) Init(b *bigmachine.B) error {
 	}
 	w.store = &fileStore{Prefix: dir + "/"}
 	w.stats = stats.NewMap()
+	// Set up a limiter to limit the number of concurrent commits
+	// that are allowed to happen in the worker.
+	//
+	// TODO(marius): we should treat commits like tasks and apply
+	// load balancing/limiting instead.
+	w.commitLimiter = limiter.New()
+	procs := b.System().Maxprocs()
+	if procs == 0 {
+		procs = runtime.GOMAXPROCS(0)
+	}
+	w.commitLimiter.Release(procs)
 	return nil
 }
 
@@ -524,9 +558,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		// If the dependency has a combine key, they are combined on the
 		// machine, and we de-dup the dependencies.
 		//
-		// We first ensure that the combiner buffers are committed on
-		// each machine, and then read them.
-		g, ctx := errgroup.WithContext(ctx)
+		// The caller of has already ensured that the combiner buffers
+		// are committed on the machines.
 		if dep.CombineKey != "" {
 			locations := make(map[string]bool)
 			for _, deptask := range dep.Tasks {
@@ -547,16 +580,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					continue
 				}
 				locations[addr] = true
-				machine, err := w.b.Dial(ctx, addr)
-				if err != nil {
-					return err
-				}
-				g.Go(func() error {
-					return machine.RetryCall(ctx, "Worker.CommitCombiner", dep.CombineKey, nil)
-				})
-			}
-			if err := g.Wait(); err != nil {
-				return err
 			}
 			for addr := range locations {
 				machine, err := w.b.Dial(ctx, addr)
@@ -902,10 +925,13 @@ func (w *worker) CommitCombiner(ctx context.Context, key string, _ *struct{}) er
 }
 
 func (w *worker) writeCombiner(key string) {
+	ctx := context.Background()
 	g, ctx := errgroup.WithContext(context.Background())
 	for part := range w.combiners[key] {
 		part, combiner := part, <-w.combiners[key][part]
 		g.Go(func() error {
+			w.commitLimiter.Acquire(ctx, 1)
+			defer w.commitLimiter.Release(1)
 			wc, err := w.store.Create(ctx, key, part)
 			if err != nil {
 				return err
