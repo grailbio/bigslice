@@ -450,5 +450,15 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 			return nil
 		})
 	}
-	return slicemachines, g.Wait()
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	n = 0
+	for _, m := range slicemachines {
+		if m != nil {
+			slicemachines[n] = m
+			n++
+		}
+	}
+	return slicemachines[:n], nil
 }
