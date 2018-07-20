@@ -32,8 +32,9 @@ import (
 )
 
 func init() {
-	file.RegisterImplementation("s3", s3file.NewImplementation(
-		s3file.NewDefaultProvider(session.Options{})))
+	file.RegisterImplementation("s3", func() file.Implementation {
+		return s3file.NewImplementation(s3file.NewDefaultProvider(session.Options{}), s3file.Options{})
+	})
 	s3file.SetBucketRegion("gdelt-open-data", "us-east-1")
 }
 
