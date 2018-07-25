@@ -162,6 +162,7 @@ func bigmachineTestExecutor() (exec *bigmachineExecutor, stop func()) {
 	shutdown := x.Start(&Session{
 		Context: ctx,
 		p:       1,
+		maxLoad: 1,
 	})
 	return x, func() {
 		cancel()

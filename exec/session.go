@@ -15,6 +15,9 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
+// DefaultMaxLoad is the default machine max load.
+const DefaultMaxLoad = 0.95
+
 func init() {
 	gob.Register(&Result{})
 }
@@ -52,6 +55,7 @@ type Session struct {
 	context.Context
 	shutdown func()
 	p        int
+	maxLoad  float64
 	executor Executor
 	status   *status.Status
 }
@@ -75,8 +79,22 @@ func Bigmachine(system bigmachine.System) Option {
 // Parallelism configures the session with the provided target
 // parallelism.
 func Parallelism(p int) Option {
+	if p <= 0 {
+		panic("exec.Parallelism: p <= 0")
+	}
 	return func(s *Session) {
 		s.p = p
+	}
+}
+
+// MaxLoad configures the session with the provided max
+// machine load.
+func MaxLoad(maxLoad float64) Option {
+	if maxLoad <= 0 {
+		panic("exec.MaxLoad: maxLoad <= 0")
+	}
+	return func(s *Session) {
+		s.maxLoad = maxLoad
 	}
 }
 
@@ -100,6 +118,9 @@ func Start(options ...Option) *Session {
 	}
 	if s.p == 0 {
 		s.p = 1
+	}
+	if s.maxLoad == 0 {
+		s.maxLoad = DefaultMaxLoad
 	}
 	if s.executor == nil {
 		s.executor = newBigmachineExecutor(bigmachine.Local)
@@ -137,6 +158,11 @@ func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...in
 // Parallelism returns the desired amount of evaluation parallelism.
 func (s *Session) Parallelism() int {
 	return s.p
+}
+
+// MaxLoad returns the maximum load on each allocated machine.
+func (s *Session) MaxLoad() float64 {
+	return s.maxLoad
 }
 
 // Shutdown tears down resources associated with this session.

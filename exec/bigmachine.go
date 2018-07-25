@@ -114,7 +114,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
 	b.offerc = make(chan *sliceMachine)
 	b.needc = make(chan int)
-	go manageMachines(context.Background(), b.b, b.status, b.sess.Parallelism(), b.needc, b.offerc)
+	go manageMachines(context.Background(), b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad(), b.needc, b.offerc)
 	return b.b.Shutdown
 }
 

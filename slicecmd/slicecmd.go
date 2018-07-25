@@ -35,10 +35,9 @@ package slicecmd
 import (
 	"flag"
 	"net/http"
-	"os"
-	"sync"
-	// Pprof is included to be exposed on the local diagnostic web server.
 	_ "net/http/pprof"
+	"os"
+	"sync" // Pprof is included to be exposed on the local diagnostic web server.
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
@@ -88,7 +87,8 @@ func Main(main func(sess *exec.Session, args []string) error) {
 		addr   = flag.String("addr", ":3333", "address of local diagnostic web server")
 		// TODO(marius): this should eventually be maximum parallelism, once the underlying
 		// executors are dynamic.
-		p = flag.Int("p", 0, "target parallelism")
+		p       = flag.Int("p", 0, "target parallelism")
+		maxLoad = flag.Float64("maxload", exec.DefaultMaxLoad, "maximum machine load")
 	)
 	log.AddFlags()
 	flag.Parse()
@@ -113,6 +113,7 @@ func Main(main func(sess *exec.Session, args []string) error) {
 		}
 	}
 	options = append(options, exec.Parallelism(*p))
+	options = append(options, exec.MaxLoad(*maxLoad))
 	top := new(status.Status)
 	options = append(options, exec.Status(top))
 	sess := exec.Start(options...)
