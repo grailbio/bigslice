@@ -251,6 +251,17 @@ func (f Frame) Grow(n int) Frame {
 	return f
 }
 
+// Ensure Slice(0, n), growing the frame as needed.
+func (f Frame) Ensure(n int) Frame {
+	if f.len == n {
+		return f
+	}
+	if n <= f.cap {
+		return f.Slice(0, n)
+	}
+	return f.Grow(n - f.len)
+}
+
 // Len returns the Frame's length.
 func (f Frame) Len() int { return f.len }
 

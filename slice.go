@@ -330,7 +330,7 @@ func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	if !m.in.IsValid() {
 		m.in = frame.Make(m.op.Slice, n, n)
 	} else {
-		m.in = m.in.Grow(n)
+		m.in = m.in.Ensure(n)
 	}
 	n, m.err = m.reader.Read(ctx, m.in.Slice(0, n))
 	// Now iterate over each record, transform it, and set the output
@@ -423,7 +423,7 @@ func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err er
 		if !f.in.IsValid() {
 			f.in = frame.Make(f.op, max-m, max-m)
 		} else {
-			f.in = f.in.Grow(max - m)
+			f.in = f.in.Ensure(max - m)
 		}
 		n, f.err = f.reader.Read(ctx, f.in)
 		for i := 0; i < n; i++ {
@@ -522,7 +522,7 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			if !f.in.IsValid() {
 				f.in = frame.Make(f.op.Slice, out.Len(), out.Len())
 			} else {
-				f.in = f.in.Grow(out.Len())
+				f.in = f.in.Ensure(out.Len())
 			}
 			n, err := f.reader.Read(ctx, f.in)
 			if err != nil && err != sliceio.EOF {

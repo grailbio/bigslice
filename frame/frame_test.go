@@ -140,6 +140,17 @@ func TestGrow(t *testing.T) {
 	assertZeros(t, g.Slice(f.Len(), g.Len()))
 }
 
+func TestEnsure(t *testing.T) {
+	const N = 50
+	f := fuzzFrame(100)
+	g := f.Ensure(f.Len() + N)
+	if got, want := g.Len(), f.Len()+N; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	assertEqual(t, g.Slice(0, f.Len()), f)
+	assertZeros(t, g.Slice(f.Len(), f.Len()+N))
+}
+
 func TestSwap(t *testing.T) {
 	f := fuzzFrame(100)
 	g := Make(f, f.Len(), f.Len())

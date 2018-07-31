@@ -55,11 +55,7 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 		}
 		// If we're within 5%, that's ok.
 		if math.Abs(float64(f.Len()-targetRows)/float64(targetRows)) > 0.05 {
-			if targetRows <= f.Cap() {
-				f = f.Slice(0, targetRows)
-			} else {
-				f.Grow(targetRows)
-			}
+			f = f.Ensure(targetRows)
 		}
 	}
 	readers, err := spill.Readers()
