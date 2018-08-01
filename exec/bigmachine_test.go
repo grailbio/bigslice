@@ -6,6 +6,7 @@ package exec
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/grailbio/base/errors"
@@ -61,6 +62,46 @@ func TestBigmachineExecutor(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	task.Unlock()
+}
+
+func TestBigmachineExecutorExclusive(t *testing.T) {
+	x, stop := bigmachineTestExecutor()
+	defer stop()
+	var wg sync.WaitGroup
+	fn := bigslice.Func(func(i int) bigslice.Slice {
+		wg.Done()
+		return bigslice.Const(1, []int{})
+	})
+	fn = fn.Exclusive()
+
+	const N = 5
+	var maxIndex int
+	wg.Add(2 * N) //one for local invocation; one for remote
+	for i := 0; i < N; i++ {
+		inv := fn.Invocation(i)
+		if ix := int(inv.Index); ix > maxIndex {
+			maxIndex = ix
+		}
+		slice := inv.Invoke()
+		tasks, err := compile(make(taskNamer), inv, slice)
+		if err != nil {
+			t.Fatal(err)
+		}
+		x.Runnable(tasks[0])
+	}
+	wg.Wait()
+	if got, want := len(x.managers), maxIndex+1; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	var n int
+	for i := 1; i < maxIndex+1; i++ {
+		if x.managers[i] != nil {
+			n++
+		}
+	}
+	if got, want := n, N; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 
 func TestBigmachineExecutorPanicCompile(t *testing.T) {

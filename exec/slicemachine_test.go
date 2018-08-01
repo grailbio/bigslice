@@ -24,7 +24,7 @@ func TestSlicemachineLoad(t *testing.T) {
 				Nmach = 10
 			)
 			ntask := int(maxLoad * Nproc * Nmach)
-			system, _, needc, offerc, cancel := startTestSystem(
+			system, _, mgr, cancel := startTestSystem(
 				Nproc,
 				ntask,
 				maxLoad,
@@ -34,16 +34,16 @@ func TestSlicemachineLoad(t *testing.T) {
 			if got, want := system.N(), 0; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
-			needc <- 1
+			mgr.Need(1)
 			if got, want := system.Wait(1), 1; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
-			needc <- ntask - 1
+			mgr.Need(ntask - 1)
 			if got, want := system.Wait(Nmach), Nmach; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
 			// (This is racy.)
-			needc <- ntask
+			mgr.Need(ntask)
 			time.Sleep(10 * time.Millisecond)
 			if got, want := system.Wait(Nmach), Nmach; got != want {
 				t.Errorf("got %v, want %v", got, want)
@@ -51,10 +51,10 @@ func TestSlicemachineLoad(t *testing.T) {
 			// Machines should be balanced, and allow maxLoad load.
 			loads := make(map[*sliceMachine]int)
 			for i := 0; i < ntask; i++ {
-				loads[<-offerc]++
+				loads[<-mgr.Offer()]++
 			}
 			select {
-			case m := <-offerc:
+			case m := <-mgr.Offer():
 				t.Errorf("offered machine %s", m)
 			default:
 			}
@@ -71,22 +71,22 @@ func TestSlicemachineLoad(t *testing.T) {
 }
 
 func TestSlicemachineProbation(t *testing.T) {
-	system, _, needc, offerc, cancel := startTestSystem(2, 4, 1.0)
+	system, _, mgr, cancel := startTestSystem(2, 4, 1.0)
 	defer cancel()
 
 	ms := make([]*sliceMachine, 4)
 	for i := range ms {
 		// To make sure we get m0, m0, m1, m1
-		needc <- 1
-		ms[i] = <-offerc
+		mgr.Need(1)
+		ms[i] = <-mgr.Offer()
 	}
 	if got, want := system.N(), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	ms[0].Done(errors.New("some error"))
-	needc <- 0
+	mgr.Need(0)
 	select {
-	case <-offerc:
+	case <-mgr.Offer():
 		t.Fatal("did not expect an offer")
 	default:
 	}
@@ -94,27 +94,27 @@ func TestSlicemachineProbation(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	ms[1].Done(nil)
-	needc <- 0
+	mgr.Need(0)
 	if got, want := ms[0].health, machineOk; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := <-offerc, ms[0]; got != want {
+	if got, want := <-mgr.Offer(), ms[0]; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := <-offerc, ms[1]; got != want {
+	if got, want := <-mgr.Offer(), ms[1]; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
 func TestSlicemachineLost(t *testing.T) {
-	system, _, needc, offerc, cancel := startTestSystem(2, 4, 1.0)
+	system, _, mgr, cancel := startTestSystem(2, 4, 1.0)
 	defer cancel()
 
-	needc <- 4
-	m := <-offerc
+	mgr.Need(4)
+	m := <-mgr.Offer()
 	system.Kill(m.Machine)
 	for m.health != machineLost {
-		needc <- 0
+		mgr.Need(0)
 	}
 	if got, want := system.Wait(2), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
@@ -142,7 +142,7 @@ func TestMachineQ(t *testing.T) {
 	}
 }
 
-func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.System, b *bigmachine.B, needc chan int, offerc chan *sliceMachine, cancel func()) {
+func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.System, b *bigmachine.B, m *machineManager, cancel func()) {
 	system = testsystem.New()
 	system.Machineprocs = machinep
 	// Customize timeouts so that tests run faster.
@@ -152,8 +152,7 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	b = bigmachine.Start(system)
 	var ctx context.Context
 	ctx, cancel = context.WithCancel(context.Background())
-	needc = make(chan int)
-	offerc = make(chan *sliceMachine)
-	go manageMachines(ctx, b, nil, maxp, maxLoad, needc, offerc)
+	m = newMachineManager(b, nil, maxp, maxLoad)
+	go m.Do(ctx)
 	return
 }

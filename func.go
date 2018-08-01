@@ -31,9 +31,21 @@ var (
 
 // A FuncValue represents a Bigslice function, as returned by Func.
 type FuncValue struct {
-	fn    reflect.Value
-	args  []reflect.Type
-	index int
+	fn        reflect.Value
+	args      []reflect.Type
+	index     int
+	exclusive bool
+}
+
+// Exclusive marks this func to require mutually exclusive machine
+// allocation.
+//
+// NOTE: This is an experimental API that may change.
+func (f *FuncValue) Exclusive() *FuncValue {
+	fv := new(FuncValue)
+	*fv = *f
+	fv.exclusive = true
+	return fv
 }
 
 // NumIn returns the number of input arguments to f.
@@ -51,7 +63,7 @@ func (f *FuncValue) Invocation(args ...interface{}) Invocation {
 		argTypes[i] = reflect.TypeOf(arg)
 	}
 	f.typecheck(argTypes...)
-	return newInvocation(uint64(f.index), args...)
+	return newInvocation(uint64(f.index), f.exclusive, args...)
 }
 
 // Apply invokes the function f with the provided arguments,
@@ -139,18 +151,20 @@ func Func(fn interface{}) *FuncValue {
 //
 // Invocations must be created by newInvocation.
 type Invocation struct {
-	Index uint64
-	Func  uint64
-	Args  []interface{}
+	Index     uint64
+	Func      uint64
+	Args      []interface{}
+	Exclusive bool
 }
 
 var invocationIndex uint64
 
-func newInvocation(fn uint64, args ...interface{}) Invocation {
+func newInvocation(fn uint64, exclusive bool, args ...interface{}) Invocation {
 	return Invocation{
-		Index: atomic.AddUint64(&invocationIndex, 1),
-		Func:  fn,
-		Args:  args,
+		Index:     atomic.AddUint64(&invocationIndex, 1),
+		Func:      fn,
+		Args:      args,
+		Exclusive: exclusive,
 	}
 }
 

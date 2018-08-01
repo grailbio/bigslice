@@ -279,34 +279,61 @@ type machineDone struct {
 	Err error
 }
 
-// ManageMachines manages a cluster of sliceMachines until the
-// provided context is canceled. Maxp determines the maximum number
-// of procs that may be allocated; needc is a channel that indicates
-// an (additive) number of procs needed. The currently least loaded,
-// healthy machine is offered on channel offerc.
+// MachineManager manages a cluster of sliceMachines, load balancing requests
+// among them. MachineManagers are constructed newMachineManager.
+type machineManager struct {
+	b       *bigmachine.B
+	group   *status.Group
+	maxp    int
+	maxLoad float64
+	needc   chan int
+	offerc  chan *sliceMachine
+}
+
+// NewMachineManager returns a new machineManager paramterized by the
+// provided arguments. Maxp determines the maximum number of procs
+// that may be allocated, maxLoad determines the maximum fraction of
+// machine procs that may be allocated to user work.
 //
-// After a machine is retrieved by way of offerc, the client
-// dispatches an operation on it. Clients call (*sliceMachine).Done
-// to indicate that the operation was completed, freeing a proc on
-// the machine. Clients may also report a task-related error, which
-// is used to put the machine on probation. Once a machine is on
-// probation, it is taken out after either (1) a successful result is
-// reported, or (2) a timeout expires.
+// The cluster is not managed until machineManager.Do is called by the user.
+func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64) *machineManager {
+	return &machineManager{
+		b:       b,
+		group:   group,
+		maxp:    maxp,
+		maxLoad: maxLoad,
+		needc:   make(chan int),
+		offerc:  make(chan *sliceMachine),
+	}
+}
+
+// Offer is a channel to which idle sliceMachines are sent.
+// Each send indicates an idle capacity of one proc.
+func (m *machineManager) Offer() <-chan *sliceMachine {
+	return m.offerc
+}
+
+// Need indicates that an additional n procs are needed.
+// Requests are canceled by passing negative values.
+func (m *machineManager) Need(n int) {
+	m.needc <- n
+}
+
+// Do starts machine management. The user typically calls this
+// asynchronously. Do services requests for machine capacity and
+// monitors machine health: stopped machines are considered lost and
+// removed from management.
 //
-// ManageMachines also monitors machine health through the
-// bigmachine-reported status; machines that are stopped are
-// considered lost and taken out of rotation.
-//
-// ManageMachines attempts to maintain at least as many procs
-// as are currently needed (as indicated by client's requests to
-// channel needc); thus when a machine is lost, it may be replaced
-// with an other should it be needed.
-func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, maxp int, maxLoad float64, needc <-chan int, offerc chan<- *sliceMachine) {
+// Do attempts to maintain at least as many procs as are currently
+// needed (as indicated by client's calls to Need); thus when a
+// machine is lost, it may be replaced with another should it be
+// needed.
+func (m *machineManager) Do(ctx context.Context) {
 	var (
 		need, pending int
 		// Scale each machine's maxprocs by the max load factor so that
 		// maxp is interpreted as the maximum number of usable procs.
-		machprocs      = max(1, int(float64(b.System().Maxprocs())*maxLoad))
+		machprocs      = max(1, int(float64(m.b.System().Maxprocs())*m.maxLoad))
 		starterrc      = make(chan error)
 		startc         = make(chan []*sliceMachine)
 		stoppedc       = make(chan *sliceMachine)
@@ -317,11 +344,13 @@ func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, m
 	)
 	// Scale maxp up by the load slack so that we don't over or underallocate.
 	for {
-		var m *sliceMachine
-		var mc chan<- *sliceMachine
-		if len(machines) > 0 && machines[0].Load() < maxLoad {
-			m = machines[0]
-			mc = offerc
+		var (
+			mach  *sliceMachine
+			machc chan<- *sliceMachine
+		)
+		if len(machines) > 0 && machines[0].Load() < m.maxLoad {
+			mach = machines[0]
+			machc = m.offerc
 		}
 		if len(probation) == 0 {
 			probationTimer = nil
@@ -333,67 +362,67 @@ func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, m
 			timec = probationTimer.C
 		}
 		select {
-		case mc <- m:
-			m.curprocs++
-			heap.Fix(&machines, m.index)
+		case machc <- mach:
+			mach.curprocs++
+			heap.Fix(&machines, mach.index)
 		case <-timec:
-			m := probation[0]
-			m.health = machineOk
-			log.Printf("removing machine %s from probation", m.Addr)
+			mach := probation[0]
+			mach.health = machineOk
+			log.Printf("removing machine %s from probation", mach.Addr)
 			heap.Remove(&probation, 0)
-			heap.Push(&machines, m)
+			heap.Push(&machines, mach)
 		case done := <-donec:
-			m := done.sliceMachine
-			m.curprocs--
+			mach := done.sliceMachine
+			mach.curprocs--
 			switch {
-			case done.Err != nil && m.health == machineOk:
-				log.Error.Printf("putting machine %s on probation after error: %v", m, done.Err)
-				m.health = machineProbation
-				heap.Remove(&machines, m.index)
-				m.lastFailure = time.Now()
-				heap.Push(&probation, m)
-			case done.Err == nil && m.health == machineProbation:
-				log.Printf("machine %s returned successful result; removing probation", m)
-				m.health = machineOk
-				heap.Remove(&probation, m.index)
-				heap.Push(&machines, m)
-			case m.health == machineLost:
+			case done.Err != nil && mach.health == machineOk:
+				log.Error.Printf("putting machine %s on probation after error: %v", mach, done.Err)
+				mach.health = machineProbation
+				heap.Remove(&machines, mach.index)
+				mach.lastFailure = time.Now()
+				heap.Push(&probation, mach)
+			case done.Err == nil && mach.health == machineProbation:
+				log.Printf("machine %s returned successful result; removing probation", mach)
+				mach.health = machineOk
+				heap.Remove(&probation, mach.index)
+				heap.Push(&machines, mach)
+			case mach.health == machineLost:
 				// In this case, the machine has already been removed from the heap.
-			case m.health == machineProbation:
-				m.lastFailure = time.Now()
-				heap.Fix(&probation, m.index)
-			case m.health == machineOk:
-				heap.Fix(&machines, m.index)
+			case mach.health == machineProbation:
+				mach.lastFailure = time.Now()
+				heap.Fix(&probation, mach.index)
+			case mach.health == machineOk:
+				heap.Fix(&machines, mach.index)
 			default:
 				panic("invalid machine state")
 			}
-		case n := <-needc:
+		case n := <-m.needc:
 			need += n
 		case err := <-starterrc:
 			log.Error.Printf("error starting machines: %v", err)
 			pending -= machprocs
 		case started := <-startc:
 			pending -= machprocs
-			for _, m := range started {
-				heap.Push(&machines, m)
-				m.donec = donec
-				go func(m *sliceMachine) {
-					<-m.Wait(bigmachine.Stopped)
-					stoppedc <- m
-				}(m)
+			for _, mach := range started {
+				heap.Push(&machines, mach)
+				mach.donec = donec
+				go func(mach *sliceMachine) {
+					<-mach.Wait(bigmachine.Stopped)
+					stoppedc <- mach
+				}(mach)
 			}
-		case m := <-stoppedc:
+		case mach := <-stoppedc:
 			// Remove the machine from management. We let the sliceMachine
 			// instance deal with failing the tasks.
-			log.Error.Printf("machine %s stopped with error %s", m, m.Err())
-			switch m.health {
+			log.Error.Printf("machine %s stopped with error %s", mach, mach.Err())
+			switch mach.health {
 			case machineOk:
-				heap.Remove(&machines, m.index)
+				heap.Remove(&machines, mach.index)
 			case machineProbation:
-				heap.Remove(&probation, m.index)
+				heap.Remove(&probation, mach.index)
 			}
-			m.health = machineLost
-			m.Status.Done()
+			mach.health = machineLost
+			mach.Status.Done()
 		case <-ctx.Done():
 			return
 		}
@@ -401,12 +430,12 @@ func manageMachines(ctx context.Context, b *bigmachine.B, group *status.Group, m
 		// TODO(marius): consider scaling down when we don't need as many
 		// resources any more; his would involve moving results to other
 		// machines or to another storage medium.
-		if have := (len(machines) + len(probation)) * machprocs; have+pending < need && have+pending < maxp {
+		if have := (len(machines) + len(probation)) * machprocs; have+pending < need && have+pending < m.maxp {
 			pending += machprocs
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/machprocs, have, pending/machprocs, pending)
 			go func() {
-				machines, err := startMachines(ctx, b, group, 1)
+				machines, err := startMachines(ctx, m.b, m.group, 1)
 				if err != nil {
 					starterrc <- err
 				} else {

@@ -75,9 +75,6 @@ type bigmachineExecutor struct {
 	sess *Session
 	b    *bigmachine.B
 
-	offerc chan *sliceMachine
-	needc  chan int
-
 	status *status.Group
 
 	mu sync.Mutex
@@ -92,6 +89,12 @@ type bigmachineExecutor struct {
 	// I don't see a clean way around it.
 	invocations    map[uint64]bigslice.Invocation
 	invocationDeps map[uint64]map[uint64]bool
+
+	// Managers is the set of machine machine managers used
+	// by this executor. By default tasks use managers[0]; but
+	// tasks that are marked as exclusive use a manager indexed
+	// by their invocation.
+	managers []*machineManager
 }
 
 func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
@@ -112,9 +115,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.invocations = make(map[uint64]bigslice.Invocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
-	b.offerc = make(chan *sliceMachine)
-	b.needc = make(chan int)
-	go manageMachines(context.Background(), b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad(), b.needc, b.offerc)
+
 	return b.b.Shutdown
 }
 
@@ -129,6 +130,19 @@ func (b *bigmachineExecutor) Runnable(task *Task) {
 	task.Broadcast()
 	task.Unlock()
 	go b.run(task)
+}
+
+func (b *bigmachineExecutor) manager(i int) *machineManager {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i >= len(b.managers) {
+		b.managers = append(b.managers, nil)
+	}
+	if b.managers[i] == nil {
+		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad())
+		go b.managers[i].Do(context.Background())
+	}
+	return b.managers[i]
 }
 
 type invocationRef struct{ Index uint64 }
@@ -194,15 +208,22 @@ func (b *bigmachineExecutor) run(task *Task) {
 	ctx := context.Background()
 	task.Status.Print("waiting for a machine")
 
-	b.need(1)
-	defer b.need(-1)
+	// Use the default/shared cluster unless the func is exclusive.
+	cluster := 0
+	if task.Invocation.Exclusive {
+		cluster = int(task.Invocation.Index)
+	}
+	mgr := b.manager(cluster)
+
+	mgr.Need(1)
+	defer mgr.Need(-1)
 
 	var m *sliceMachine
 	select {
 	case <-ctx.Done():
 		task.Error(ctx.Err())
 		return
-	case m = <-b.offerc:
+	case m = <-mgr.Offer():
 	}
 
 	numTasks := m.Stats.Int("tasks")
@@ -337,11 +358,6 @@ func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition i
 		Machine:       m.Machine,
 		TaskPartition: taskPartition{task.Name, partition},
 	}
-}
-
-// Need indicates the n additional procs are needed.
-func (b *bigmachineExecutor) need(n int) {
-	b.needc <- n
 }
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
