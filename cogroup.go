@@ -162,6 +162,9 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		max     = out.Len()
 		lessBuf = frame.Make(slicetype.New(c.op.Out(0)), 2, 2)
 	)
+	if max == 0 {
+		panic("bigslice.Cogroup: max == 0")
+	}
 	// BUG: this is gnarly
 	for n < max && len(c.heap.Buffers) > 0 {
 		// First, gather all the records that have the same key.

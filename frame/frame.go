@@ -100,7 +100,7 @@ func Make(types slicetype.Type, len, cap int) Frame {
 		cap:  cap,
 	}
 	for i := range f.data {
-		v := reflect.MakeSlice(reflect.SliceOf(types.Out(i)), len, cap)
+		v := reflect.MakeSlice(reflect.SliceOf(types.Out(i)), cap, cap)
 		f.data[i] = newData(v)
 	}
 	return f

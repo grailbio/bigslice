@@ -87,7 +87,7 @@ func Main(main func(sess *exec.Session, args []string) error) {
 		addr   = flag.String("addr", ":3333", "address of local diagnostic web server")
 		// TODO(marius): this should eventually be maximum parallelism, once the underlying
 		// executors are dynamic.
-		p       = flag.Int("p", 0, "target parallelism")
+		p       = flag.Int("p", 0, "target parallelism; inferred if 0")
 		maxLoad = flag.Float64("maxload", exec.DefaultMaxLoad, "maximum machine load")
 	)
 	log.AddFlags()
@@ -112,7 +112,9 @@ func Main(main func(sess *exec.Session, args []string) error) {
 			log.Fatalf("target parallelism (-p) must be specified for system %s", *system)
 		}
 	}
-	options = append(options, exec.Parallelism(*p))
+	if *p > 0 {
+		options = append(options, exec.Parallelism(*p))
+	}
 	options = append(options, exec.MaxLoad(*maxLoad))
 	top := new(status.Status)
 	options = append(options, exec.Status(top))

@@ -162,6 +162,20 @@ func TestSwap(t *testing.T) {
 	assertEqual(t, g.Slice(1, g.Len()), f.Slice(0, f.Len()-1))
 }
 
+func TestValue(t *testing.T) {
+	f := fuzzFrame(100)
+	if got, want := f.Value(0).Len(), f.Len(); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	var g Frame
+	for i := 0; i < 100; i++ {
+		g = AppendFrame(g, f.Slice(0, 1))
+		if got, want := g.Value(0).Len(), g.Len(); got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestClear(t *testing.T) {
 	f := fuzzFrame(100)
 	f.Slice(1, 50).Clear()
