@@ -335,10 +335,16 @@ func (f Frame) Swap(i, j int) {
 	}
 }
 
-// Clear zeros the memory of this data frame.
-func (f Frame) Clear() {
-	for _, c := range f.data {
-		zero(c.typ, add(c.ptr, uintptr(f.off)*c.typ.size), f.len)
+// Zero zeros the memory of column i
+func (f Frame) Zero(i int) {
+	c := f.data[i]
+	zero(c.typ, add(c.ptr, uintptr(f.off)*c.typ.size), f.len)
+}
+
+// ZeroAll zeros the memory all columnns.
+func (f Frame) ZeroAll() {
+	for i := range f.data {
+		f.Zero(i)
 	}
 }
 

@@ -87,11 +87,20 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 		if d.buf == nil {
 			d.buf = make([]reflect.Value, f.NumOut())
 			for i := range d.buf {
-				d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
+				if f.Out(i).Kind() != reflect.Slice {
+					d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
+				}
 			}
 		}
 		// Read the next batch.
 		for i := 0; i < f.NumOut(); i++ {
+			// Reset slice columns that contain slices since these may
+			// be reused by Gob across decodes.
+			if d.off+n == d.len {
+				if t := f.Out(i); t.Kind() == reflect.Slice {
+					d.buf[i] = reflect.New(reflect.SliceOf(t))
+				}
+			}
 			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
 				if d.err == io.EOF {
 					d.err = EOF

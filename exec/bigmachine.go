@@ -744,7 +744,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					if err := partitions[p].Encode(partitionv[p]); err != nil {
 						return err
 					}
-					partitionv[p].Clear()
+					partitionv[p].ZeroAll()
 					lens[p] = 0
 				}
 			}

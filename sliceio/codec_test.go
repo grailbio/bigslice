@@ -22,6 +22,7 @@ var (
 	typeOfString     = reflect.TypeOf("")
 	typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
 	typeOfInt        = reflect.TypeOf(0)
+	typeOfSliceOfInt = reflect.SliceOf(typeOfInt)
 )
 
 func TestCodec(t *testing.T) {
@@ -40,6 +41,9 @@ func TestCodec(t *testing.T) {
 	enc := NewEncoder(&b)
 
 	in := frame.Slices(c0, c1)
+	if err := enc.Encode(in); err != nil {
+		t.Fatal(err)
+	}
 	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
@@ -83,15 +87,17 @@ func TestDecodingReader(t *testing.T) {
 	var (
 		col1 []string
 		col2 []int
+		col3 [][]int
 	)
 	fz.Fuzz(&col1)
 	fz.Fuzz(&col2)
+	fz.Fuzz(&col3)
 	var buf Buffer
 	for i := 0; i < len(col1); {
 		// Pick random batch size.
 		n := int(rand.Int31n(int32(len(col1) - i + 1)))
-		c1, c2 := col1[i:i+n], col2[i:i+n]
-		if err := buf.WriteColumns(reflect.ValueOf(c1), reflect.ValueOf(c2)); err != nil {
+		c1, c2, c3 := col1[i:i+n], col2[i:i+n], col3[i:i+n]
+		if err := buf.WriteColumns(reflect.ValueOf(c1), reflect.ValueOf(c2), reflect.ValueOf(c3)); err != nil {
 			t.Fatal(err)
 		}
 		i += n
@@ -101,8 +107,9 @@ func TestDecodingReader(t *testing.T) {
 	var (
 		col1x []string
 		col2x []int
+		col3x [][]int
 	)
-	if err := ReadAll(context.Background(), r, &col1x, &col2x); err != nil {
+	if err := ReadAll(context.Background(), r, &col1x, &col2x, &col3x); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(col1, col1x) {
@@ -110,6 +117,9 @@ func TestDecodingReader(t *testing.T) {
 	}
 	if !reflect.DeepEqual(col2, col2x) {
 		t.Error("col2 mismatch")
+	}
+	if !reflect.DeepEqual(col3, col3x) {
+		t.Error("col3 mismatch")
 	}
 }
 

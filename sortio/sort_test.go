@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	typeOfString = reflect.TypeOf("")
-	typeOfInt    = reflect.TypeOf(0)
+	typeOfString        = reflect.TypeOf("")
+	typeOfInt           = reflect.TypeOf(0)
+	typeOfSliceOfString = reflect.SliceOf(typeOfString)
+	typeOfSliceOfInt    = reflect.SliceOf(typeOfInt)
 )
 
 // FuzzFrame creates a fuzzed frame of length n, where columns
@@ -38,6 +40,7 @@ func fuzzFrame(fz *fuzz.Fuzzer, n int, types ...reflect.Type) frame.Frame {
 type fuzzReader struct {
 	Fuzz *fuzz.Fuzzer
 	N    int
+	All  frame.Frame
 }
 
 func (f *fuzzReader) Read(ctx context.Context, out frame.Frame) (int, error) {
@@ -56,6 +59,7 @@ func (f *fuzzReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 			out.Index(i, j).Set(vp.Elem())
 		}
 	}
+	f.All = frame.AppendFrame(f.All, out.Slice(0, n))
 	return n, nil
 }
 
@@ -95,11 +99,14 @@ func TestMergeReader(t *testing.T) {
 		readers = make([]sliceio.Reader, M)
 	)
 	for i := range frames {
-		f := fuzzFrame(fz, N, typeOfString, typeOfString, typeOfString)
-		// Replace the third column with the concatenation of the two first
+		f := fuzzFrame(fz, N, typeOfString, typeOfString, typeOfSliceOfString)
+		// Replace the third column with a slice of of the two first
 		// columns so we can verify that the full rows are swapped.
 		for i := 0; i < f.Len(); i++ {
-			f.Index(2, i).SetString(f.Index(0, i).String() + f.Index(1, i).String())
+			s := reflect.MakeSlice(typeOfSliceOfString, 2, 2)
+			s.Index(0).Set(f.Index(0, i))
+			s.Index(1).Set(f.Index(1, i))
+			f.Index(2, i).Set(s)
 		}
 		sort.Sort(f)
 		frames[i] = f
@@ -123,6 +130,23 @@ func TestMergeReader(t *testing.T) {
 	if !sort.IsSorted(out) {
 		t.Error("frame not sorted")
 	}
+	var (
+		a = out.Interface(0).([]string)
+		b = out.Interface(1).([]string)
+		c = out.Interface(2).([][]string)
+	)
+	for i := range a {
+		if got, want := len(c[i]), 2; got != want {
+			t.Errorf("got %v, want %v for key %v", got, want, i)
+			continue
+		}
+		if got, want := c[i][0], a[i]; got != want {
+			t.Errorf("got %v, want %v for key %v", got, want, i)
+		}
+		if got, want := c[i][1], b[i]; got != want {
+			t.Errorf("got %v, want %v for key %v", got, want, i)
+		}
+	}
 	n, err = sliceio.ReadFull(ctx, m, out)
 	if got, want := err, sliceio.EOF; got != want {
 		t.Errorf("got %v, want %v", got, want)
@@ -135,10 +159,10 @@ func TestMergeReader(t *testing.T) {
 func TestSortReader(t *testing.T) {
 	const N = 1 << 20
 	var (
-		fz  = fuzz.NewWithSeed(12345)
-		r   = &fuzzReader{fz, N}
+		fz  = fuzz.NewWithSeed(123456)
+		r   = &fuzzReader{fz, N, frame.Frame{}}
 		ctx = context.Background()
-		typ = slicetype.New(typeOfString, typeOfInt)
+		typ = slicetype.New(typeOfString, typeOfInt, typeOfSliceOfInt)
 	)
 	sorted, err := SortReader(ctx, 1<<19, typ, r)
 	if err != nil {
@@ -163,5 +187,32 @@ func TestSortReader(t *testing.T) {
 	}
 	if !sort.IsSorted(out) {
 		t.Error("output not sorted")
+	}
+	sort.Sort(r.All)
+	// Just find unique keys since the sort is not stable.
+	keys := out.Interface(0).([]string)
+	if !reflect.DeepEqual(r.All.Interface(0), keys) {
+		t.Fatal("keys not equal")
+	}
+	keyCount := make(map[string]int)
+	for _, k := range keys {
+		keyCount[k]++
+	}
+	var (
+		outInts   = out.Interface(1).([]int)
+		allInts   = r.All.Interface(1).([]int)
+		outSlices = out.Interface(2).([][]int)
+		allSlices = r.All.Interface(2).([][]int)
+	)
+	for i, k := range keys {
+		if keyCount[k] > 1 {
+			continue
+		}
+		if got, want := outInts[i], allInts[i]; got != want {
+			t.Errorf("got %v, want %v for %d", got, want, i)
+		}
+		if got, want := outSlices[i], allSlices[i]; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v for %d", got, want, i)
+		}
 	}
 }

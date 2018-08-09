@@ -290,7 +290,7 @@ func (c *combiner) Combine(ctx context.Context, f frame.Frame) error {
 		if err := c.spill(spilled); err != nil {
 			return err
 		}
-		spilled.Clear()
+		spilled.ZeroAll()
 	}
 	return nil
 }

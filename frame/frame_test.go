@@ -176,14 +176,14 @@ func TestValue(t *testing.T) {
 	}
 }
 
-func TestClear(t *testing.T) {
+func TestZero(t *testing.T) {
 	f := fuzzFrame(100)
-	f.Slice(1, 50).Clear()
+	f.Slice(1, 50).ZeroAll()
 	g := Make(f, f.Len(), f.Len())
 	assertEqual(t, f.Slice(1, 50), g.Slice(0, 49))
 }
 
-func TestClearx(t *testing.T) {
+func TestZerox(t *testing.T) {
 	type struct1 struct {
 		a, b, c int
 	}
@@ -211,7 +211,7 @@ func TestClearx(t *testing.T) {
 		fz.Fuzz(slicep)
 		slice := reflect.Indirect(reflect.ValueOf(slicep)).Interface()
 		frame := Slices(slice)
-		frame.Clear()
+		frame.ZeroAll()
 		slicev := frame.Value(0)
 		zero := reflect.Zero(slicev.Type().Elem()).Interface()
 		for i := 0; i < slicev.Len(); i++ {

@@ -26,7 +26,7 @@ var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
 	log.Printf("cogroupTest(%d, %d)", nshard, nkey)
 	// Each shard produces a (shuffled) set of values for each key.
 
-	slice = bigslice.ReaderFunc(nshard, func(shard int, order *[]int, keys []string, values []int) (n int, err error) {
+	slice = bigslice.ReaderFunc(nshard, func(shard int, order *[]int, keys []string, values [][]int) (n int, err error) {
 		if *order == nil {
 			r := rand.New(rand.NewSource(rand.Int63()))
 			*order = r.Perm(nkey)
@@ -34,7 +34,7 @@ var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
 		var i int
 		for i < len(*order) && i < len(keys) {
 			keys[i] = fmt.Sprint((*order)[i])
-			values[i] = shard<<24 | (*order)[i]
+			values[i] = []int{shard<<24 | (*order)[i]}
 			i++
 		}
 		*order = (*order)[i:]
@@ -45,9 +45,6 @@ var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
 		return i, nil
 	})
 	slice = bigslice.Cogroup(slice)
-	slice = bigslice.Map(slice, func(key string, values []int) (string, []int) {
-		return key, values
-	})
 	return
 })
 
@@ -86,7 +83,7 @@ requires launching external clusters, and may run for a long time.
 		}
 		var (
 			keystr string
-			values []int
+			values [][]int
 		)
 		for scan.Scan(ctx, &keystr, &values) {
 			key, err := strconv.Atoi(keystr)
@@ -100,10 +97,17 @@ requires launching external clusters, and may run for a long time.
 			if got, want := len(values), *nshard; got != want {
 				errorf("wrong number of values for key %d: got %v, want %v", key, got, want)
 			} else {
-				sort.Ints(values)
+				flat := make([]int, len(values))
 				for i, v := range values {
+					if got, want := len(v), 1; got != want {
+						errorf("wrong number of values for key %d: got %v, want %v", key, got, want)
+					}
+					flat[i] = v[0]
+				}
+				sort.Ints(flat)
+				for i, v := range flat {
 					if got, want := v, i<<24|key; got != want {
-						errorf("wrong value for key %d: got %v, want %v", got, want)
+						errorf("wrong value for key %d: got %v, want %v", key, got, want)
 					}
 				}
 			}
