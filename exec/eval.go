@@ -64,11 +64,22 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 		task.all(tasks)
 	}
 	var (
-		donec   = make(chan struct{})
+		donec   = make(chan struct{}, 8)
 		errc    = make(chan error)
 		running int
 	)
 	for {
+		// Drain the done channel to coalesce update requests.
+	drain:
+		for {
+			select {
+			case <-donec:
+				running--
+			default:
+				break drain
+			}
+		}
+
 		todo := make(map[*Task]bool)
 		for _, task := range roots {
 			task.Lock()
