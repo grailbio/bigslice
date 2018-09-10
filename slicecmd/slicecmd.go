@@ -34,6 +34,7 @@ package slicecmd
 
 import (
 	"flag"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -43,6 +44,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/exec"
+	"github.com/grailbio/bigslice/sliceflags"
 )
 
 var (
@@ -129,4 +131,36 @@ func Main(main func(sess *exec.Session, args []string) error) {
 		log.Fatal(err)
 	}
 	os.Exit(0)
+}
+
+// InitBigSlice initializes bigslice according to the supplied flags.
+func InitBigSlice(bf sliceflags.Flags) (*exec.Session, error) {
+	options, err := bf.ExecOptions()
+	if err != nil {
+		return nil, err
+	}
+	sess := exec.Start(options...)
+	DisplayStatus(bf, sess)
+	return sess, nil
+}
+
+// DisplayStatus arranges for the bigslice execution status to be
+// displayed on the console and/or a web page depending on the flags
+// specified on the command line. The web page is hosted /debug/status
+// and http.DefaultServeMux.
+func DisplayStatus(bf sliceflags.Flags, sess *exec.Session) {
+	if bf.ConsoleStatus {
+		var console status.Reporter
+		go console.Go(os.Stdout, sess.Status())
+	}
+	if len(bf.HTTPAddress.Address) > 0 {
+		sess.HandleDebug(http.DefaultServeMux)
+		http.Handle("/debug/status", status.Handler(sess.Status()))
+		go func() {
+			fmt.Printf("HTTP Status at: %v\n", bf.HTTPAddress)
+			http.ListenAndServe(bf.HTTPAddress.Address, nil)
+
+		}()
+	}
+	return
 }
