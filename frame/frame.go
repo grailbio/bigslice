@@ -196,7 +196,7 @@ func Copy(dst, src Frame) (n int) {
 // AppendFrame appends src to dst, growing src if needed.
 func AppendFrame(dst, src Frame) Frame {
 	var i0, i1 int
-	if !dst.IsValid() {
+	if dst.IsZero() {
 		dst = Make(src, src.len, src.len)
 		i1 = src.len
 	} else {
@@ -221,9 +221,8 @@ func Compatible(f, g Frame) bool {
 	return true
 }
 
-// IsValid tells whether this frame is valid. A zero-valued frame
-// is not valid.
-func (f Frame) IsValid() bool { return f.data != nil }
+// IsZero tells whether this frame is zero-valued.
+func (f Frame) IsZero() bool { return f.data == nil }
 
 // NumOut implements slicetype.Type
 func (f Frame) NumOut() int { return len(f.data) }

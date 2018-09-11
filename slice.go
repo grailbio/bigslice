@@ -327,7 +327,7 @@ func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		return 0, errTypeError
 	}
 	n := out.Len()
-	if !m.in.IsValid() {
+	if m.in.IsZero() {
 		m.in = frame.Make(m.op.Slice, n, n)
 	} else {
 		m.in = m.in.Ensure(n)
@@ -420,7 +420,7 @@ func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err er
 		// rate is low: as we fill the output; we could degenerate into a
 		// case where we issue a call for each element. Consider input
 		// buffering instead.
-		if !f.in.IsValid() {
+		if f.in.IsZero() {
 			f.in = frame.Make(f.op, max-m, max-m)
 		} else {
 			f.in = f.in.Ensure(max - m)
@@ -519,7 +519,7 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			// out[0].Len() may not be related to an actually useful size, but we'll go with it.
 			// TODO(marius): maybe always default to a fixed chunk size? Or
 			// dynamically keep track of the average input:output ratio?
-			if !f.in.IsValid() {
+			if f.in.IsZero() {
 				f.in = frame.Make(f.op.Slice, out.Len(), out.Len())
 			} else {
 				f.in = f.in.Ensure(out.Len())
@@ -550,7 +550,7 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 	var err error
 	// We're EOF if we've encountered an EOF from the underlying
 	// reader, there's no buffered output, and no buffered input.
-	if f.eof && !f.out.IsValid() && f.begIn == f.endIn {
+	if f.eof && f.out.Len() == 0 && f.begIn == f.endIn {
 		err = sliceio.EOF
 	}
 	return begOut, err

@@ -139,7 +139,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuff
 		in  frame.Frame
 	)
 	for {
-		if !in.IsValid() {
+		if in.IsZero() {
 			in = frame.Make(task, defaultChunksize, defaultChunksize)
 		}
 		n, err := out.Read(ctx, in)

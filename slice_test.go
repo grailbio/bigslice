@@ -407,6 +407,16 @@ func TestFlatmap(t *testing.T) {
 	assertEqual(t, slice, true, []string{"1024", "5000"})
 }
 
+func TestFlatmapBuffered(t *testing.T) {
+	zeros := make([]int, 1025)
+	slice := bigslice.Const(1, []int{0})
+	slice = bigslice.Flatmap(slice, func(i int) []int {
+		return zeros
+	})
+	// Drive it manually:
+	assertEqual(t, slice, false, zeros)
+}
+
 func TestFlatmapError(t *testing.T) {
 	input := bigslice.Const(1, []int{1, 2, 3})
 	expectTypeError(t, "flatmap: invalid flatmap function int", func() { bigslice.Flatmap(input, 123) })
