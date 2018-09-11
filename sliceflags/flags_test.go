@@ -56,3 +56,14 @@ func TestFlags(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestProfiles(t *testing.T) {
+	sliceflags.RegisterSystemProfile("my-app", "ec2:dataspace=500")
+	tf := &sliceflags.Flags{}
+	if err := tf.System.Set("my-app"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got, want := tf.System.String(), "EC2:dataspace=500"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

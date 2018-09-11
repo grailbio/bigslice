@@ -1,9 +1,13 @@
+// Package sliceflags provides flag support for use by bigslice command
+// line applications.
 package sliceflags
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,7 +22,8 @@ import (
 
 var (
 	mu        sync.Mutex
-	providers = map[string]Provider{}
+	providers = map[string]Provider{} // protected by mu
+	profiles  = map[string]string{}   // protected by mu
 )
 
 // Provider represents an instance provider that can be configured by setting
@@ -47,6 +52,41 @@ func RegisterSystemProvider(name string, provider Provider) {
 		log.Panicf("system %s is already registered", name)
 	}
 	providers[name] = provider
+}
+
+// RegisterSystemProfile registers a system 'profile' which
+// is a named shorthand for a system and any associated options.
+// For example an application that registers a profile of:
+//   sliceflags.RegisterSystemProfile("my-ec2-app", "ec2:dataspace=500")
+// can accept
+//   --system=my-ec2-app
+// as a synomyn for
+//   --system=ec2:dataspace=500
+func RegisterSystemProfile(name, profile string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, present := providers[name]; present {
+		log.Panicf("profile %s is already used as a provider name", name)
+	}
+	if _, present := profiles[name]; present {
+		log.Panicf("profile %s is already registered", name)
+	}
+	profiles[name] = profile
+}
+
+// ProvidersAndProfiles returns the supported providers and profiles.
+func ProvidersAndProfiles() ([]string, map[string]string) {
+	mu.Lock()
+	defer mu.Unlock()
+	prv := make([]string, 0, len(providers))
+	for k := range providers {
+		prv = append(prv, k)
+	}
+	prf := make(map[string]string, len(profiles))
+	for k, v := range profiles {
+		prf[k] = v
+	}
+	return prv, prf
 }
 
 // Internal represents an in-process bigslice execution instance.
@@ -122,8 +162,14 @@ func (ec2 *EC2) Set(v string) error {
 			return fmt.Errorf("not an int: %v", val)
 		}
 		ec2.Options[key] = uint(i)
-	case "instance":
+	case "instance", "profile":
 		ec2.Options[key] = val
+	case "ondemand":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("not a bool: %v", val)
+		}
+		ec2.Options[key] = b
 	default:
 		return fmt.Errorf("unsupported option: %v", key)
 	}
@@ -149,6 +195,10 @@ func (ec2 *EC2) ExecOption() exec.Option {
 			instance.Dataspace = val.(uint)
 		case "rootsize":
 			instance.Diskspace = val.(uint)
+		case "profile":
+			instance.InstanceProfile = val.(string)
+		case "ondemand":
+			instance.OnDemand = val.(bool)
 		}
 	}
 	return exec.Bigmachine(instance)
@@ -162,12 +212,13 @@ func init() {
 
 // SystemHelpShort is a short explanation of the allowed SystemFlags values.
 const SystemHelpShort = `
-a bigmachine system is specified as follows: {local,internal,ec2:[key=val,]
+a bigslice system is specified as follows: {local,internal,ec2:[key=val,],name}, use
+--<prefix>.system-help for more information.
 `
 
 // SystemHelpLong is a completion explanation of the allowed SystemFlags values.
 const SystemHelpLong = `
-A bigmachine system is specified as follows:
+A bigslice system is specified as follows:
 
 <system-type>:<options> where options is [key=value,]+
 
@@ -179,6 +230,13 @@ ec2: AWS EC2 execution. The supported options are:
     instance=<AWS instance type> - the AWS instance type, e.g. m4.xlarge
 	dataspace=<number> - size of the data volume in GiB, typically /mnt/data.
 	rootsize=<number> - size of the root volume in GiB.
+	on-demand - true to use on-demand rather than spot instances
+	profile - the aws instance profile to use instead of a default
+
+In addition, an application may register 'profiles' that are shorthand
+for the above, eg. "my-app" can be configured as a synonymn for
+ec2:m4.xlarge,dataspace=200. Use --<prefix>.system-help to learn about
+the configured providers and profiles.
 `
 
 // SystemFlag represents a flag that can be used to specify a bigmachine
@@ -197,32 +255,31 @@ func (sys *SystemFlag) String() string {
 	if sys.Options == nil {
 		return sys.Provider.Name()
 	}
-	opts := make([]string, 0, 5)
-	for _, v := range sys.Options {
-		opts = append(opts, v)
-	}
-	return fmt.Sprintf("%v:%v", sys.Provider.Name(), strings.Join(opts, ","))
+	return fmt.Sprintf("%v:%v", sys.Provider.Name(), strings.Join(sys.Options, ","))
 }
 
 // Set implements flag.Value.Set
 func (sys *SystemFlag) Set(v string) error {
 	parts := strings.Split(v, ":")
-	name := ""
-	switch len(parts) {
-	case 2:
+	name := parts[0]
+	hasOpts := len(parts) > 1
+	if hasOpts {
 		sys.Options = strings.Split(parts[1], ",")
-		fallthrough
-	case 1:
-		name = parts[0]
-	default:
-		return fmt.Errorf("invalid format expected <type>:<options>, got %v", v)
 	}
 	mu.Lock()
-	defer mu.Unlock()
 	provider, ok := providers[name]
 	if !ok {
-		return fmt.Errorf("unspported system type: %v", sys.Provider)
+		profile, ok := profiles[name]
+		mu.Unlock()
+		if !ok {
+			return fmt.Errorf("unsupported system or profile type: %v", sys.Provider)
+		}
+		if hasOpts {
+			return fmt.Errorf("options are not allowed with profile names, %v expands to %v", name, profile)
+		}
+		return sys.Set(profile)
 	}
+	mu.Unlock()
 	for _, opt := range sys.Options {
 		if err := provider.Set(opt); err != nil {
 			return err
@@ -242,27 +299,41 @@ func (sys *SystemFlag) Get() interface{} {
 // a bigslice command.
 type Flags struct {
 	System        SystemFlag
+	SystemHelp    bool
 	HTTPAddress   cmdutil.NetworkAddressFlag
 	ConsoleStatus bool
 	Parallelism   int
 	LoadFactor    float64
+	fs            *flag.FlagSet
+}
+
+// Output returns an appropriate io.Writer for printing out help/usage
+// messages as per the underlying flag.Flagset.
+func (bf *Flags) Output() io.Writer {
+	if bf.fs == nil {
+		return os.Stderr
+	}
+	if wr := bf.fs.Output(); wr != nil {
+		return wr
+	}
+	return os.Stderr
 }
 
 // RegisterFlags registers the bigslice command line flags with the supplied
 // flag set. The flag names will be prefixed with the supplied prefix.
 func RegisterFlags(fs *flag.FlagSet, bf *Flags, prefix string) {
-	fs.Var(&bf.System, prefix+"system", SystemHelpShort)
-	bf.System.Set("local")
-	bf.System.Specified = false
-	fs.Var(&bf.HTTPAddress, prefix+"http", "address of http status server")
-	fs.BoolVar(&bf.ConsoleStatus, prefix+"console-status", false, "print status to stdout")
-	fs.IntVar(&bf.Parallelism, prefix+"parallelism", 0, "maximum degree of parallelism to use in terms of CPU cores, 0 requests an appropriate default for the system")
-	fs.Float64Var(&bf.LoadFactor, prefix+"load-factor", exec.DefaultMaxLoad, "maximum machine load specified as a percentage")
+	RegisterFlagsWithDefaults(fs, bf, prefix, Defaults{
+		System:        "local",
+		HTTPAddress:   "",
+		ConsoleStatus: false,
+		Parallelism:   0,
+		LoadFactor:    exec.DefaultMaxLoad,
+	})
 }
 
 // ExecOptions parses the flag values and returns a slice of exec.Options
 // that represent the actions specified by those flags.
-func (bf Flags) ExecOptions() ([]exec.Option, error) {
+func (bf *Flags) ExecOptions() ([]exec.Option, error) {
 	options := []exec.Option{exec.Status(&status.Status{})}
 	options = append(options, bf.System.Provider.ExecOption())
 	if bf.Parallelism > 0 {
@@ -272,4 +343,30 @@ func (bf Flags) ExecOptions() ([]exec.Option, error) {
 	}
 	options = append(options, exec.MaxLoad(bf.LoadFactor))
 	return options, nil
+}
+
+// Defaults represents default values for the supported flags.
+type Defaults struct {
+	System        string
+	HTTPAddress   string
+	ConsoleStatus bool
+	Parallelism   int
+	LoadFactor    float64
+}
+
+// RegisterFlagsWithDefaults registers the bigslice command line flags with
+// the supplied flag set and defaults. The flag names will be prefixed with the
+// supplied prefix.
+func RegisterFlagsWithDefaults(fs *flag.FlagSet, bf *Flags, prefix string, defaults Defaults) {
+	fs.Var(&bf.System, prefix+"system", SystemHelpShort)
+	bf.System.Set(defaults.System)
+	bf.System.Specified = false
+	fs.Var(&bf.HTTPAddress, prefix+"http", "address of http status server")
+	bf.HTTPAddress.Set(defaults.HTTPAddress)
+	bf.HTTPAddress.Specified = false
+	fs.BoolVar(&bf.ConsoleStatus, prefix+"console-status", defaults.ConsoleStatus, "print status to stdout")
+	fs.IntVar(&bf.Parallelism, prefix+"parallelism", defaults.Parallelism, "maximum degree of parallelism to use in terms of CPU cores, 0 requests an appropriate default for the system")
+	fs.Float64Var(&bf.LoadFactor, prefix+"load-factor", defaults.LoadFactor, "maximum machine load specified as a percentage")
+	fs.BoolVar(&bf.SystemHelp, prefix+"system-help", false, "provide help on system providers and profiles")
+	bf.fs = fs
 }

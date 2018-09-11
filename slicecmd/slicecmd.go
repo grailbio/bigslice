@@ -14,13 +14,6 @@
 //			applicationFlag1 = flag.Int(...)
 //			applicationFlag2 = ...
 //		)
-//		// Register systems. This can be done in package initialization as well.
-//		slicecmd.RegisterSystem("ec2", &ec2system.System{
-//			InstanceType: "m4.16xlarge",
-//		})
-//		slicecmd.RegisterSystem("ec2test", &ec2system.System{
-//			InstanceType: "t2.nano",
-//		})
 //		slicecmd.Main(func(sess *bigslice.Session, args []string) error) {
 //			ctx := context.Background()
 //			if err := sess.Run(ctx, MyComputation); err != nil {
@@ -38,6 +31,8 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"sort"
+	"strings"
 	"sync" // Pprof is included to be exposed on the local diagnostic web server.
 
 	"github.com/grailbio/base/log"
@@ -64,8 +59,8 @@ func RegisterSystem(name string, system bigmachine.System) {
 	systems[name] = system
 }
 
-// Main is the entry point for a slicecmd. Main does not return; it
-// should be called after other initialization is performed. Main
+// Main is a convenient entry point for a slicecmd. Main does not return;
+// it should be called after other initialization is performed. Main
 // parses (global) flags, and configures bigslice accordingly. Main
 // then invokes the provided func with a bigslice session which can
 // be used to run bigslice computations. Main also passes the
@@ -79,55 +74,25 @@ func RegisterSystem(name string, system bigmachine.System) {
 // returns with an error, it is reported and the process exits with
 // code 1, otherwise it exits successfully.
 //
-// TODO(marius): abstract this into a struct so that it can be more
-// easily be used with command line utilities like Vanadium's.
+// Integration with other command line processing is best achieved using
+// the sliceflags package and InitBigSlice and DisplayStatus functions.
 func Main(main func(sess *exec.Session, args []string) error) {
-	var (
-		// TODO(marius): consider letting the system flag itself take parameters, e.g.,
-		// 	-system ec2,r3.8xlarge
-		system = flag.String("system", "", "the bigmachine system on which to run, defaults to local")
-		addr   = flag.String("addr", ":3333", "address of local diagnostic web server")
-		// TODO(marius): this should eventually be maximum parallelism, once the underlying
-		// executors are dynamic.
-		p       = flag.Int("p", 0, "target parallelism; inferred if 0")
-		maxLoad = flag.Float64("maxload", exec.DefaultMaxLoad, "maximum machine load")
-	)
+	var fl sliceflags.Flags
+	sliceflags.RegisterFlagsWithDefaults(flag.CommandLine, &fl, "",
+		sliceflags.Defaults{
+			System:        "internal",
+			HTTPAddress:   ":3333",
+			ConsoleStatus: false,
+			Parallelism:   0,
+			LoadFactor:    0.95,
+		})
 	log.AddFlags()
 	flag.Parse()
-	var options []exec.Option
-	switch *system {
-	case "":
-		// Use in-process evaluation instead of bigmachine out-of-process
-		// by default. The latter is mostly useful for debugging bigmachine
-		// issues.
-		options = append(options, exec.Local)
-	case "local":
-		options = append(options, exec.Bigmachine(bigmachine.Local))
-	default:
-		impl := systems[*system]
-		if impl == nil {
-			log.Fatalf("system %s not found", *system)
-		}
-		options = append(options, exec.Bigmachine(impl))
-		// TODO(marius): get rid of this requirement once the bigmachine executor is dynamic.
-		if *p == 0 {
-			log.Fatalf("target parallelism (-p) must be specified for system %s", *system)
-		}
-	}
-	if *p > 0 {
-		options = append(options, exec.Parallelism(*p))
-	}
-	options = append(options, exec.MaxLoad(*maxLoad))
-	top := new(status.Status)
-	options = append(options, exec.Status(top))
-	sess := exec.Start(options...)
-	sess.HandleDebug(http.DefaultServeMux)
-	http.Handle("/debug/status", status.Handler(top))
-	go func() {
-		log.Printf("http.ListenAndServe %s: %v", *addr, http.ListenAndServe(*addr, nil))
-	}()
-	err := main(sess, flag.Args())
+	sess, err := InitBigSlice(fl)
 	if err != nil {
+		log.Fatal(err)
+	}
+	if err := main(sess, flag.Args()); err != nil {
 		log.Fatal(err)
 	}
 	os.Exit(0)
@@ -135,6 +100,23 @@ func Main(main func(sess *exec.Session, args []string) error) {
 
 // InitBigSlice initializes bigslice according to the supplied flags.
 func InitBigSlice(bf sliceflags.Flags) (*exec.Session, error) {
+	if bf.SystemHelp {
+		providers, profiles := sliceflags.ProvidersAndProfiles()
+		sort.Strings(providers)
+		wr := bf.Output()
+		str := []string{}
+		fmt.Fprintf(wr, "%s\n\n", sliceflags.SystemHelpLong)
+		fmt.Fprintf(wr, "The available providers are: %v\n",
+			strings.Join(providers, ", "))
+		for k, v := range profiles {
+			str = append(str, fmt.Sprintf("%v is shorthand for: %v\n", k, v))
+		}
+		sort.Strings(str)
+		for _, s := range str {
+			wr.Write([]byte(s))
+		}
+		os.Exit(0)
+	}
 	options, err := bf.ExecOptions()
 	if err != nil {
 		return nil, err
