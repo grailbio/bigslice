@@ -252,7 +252,7 @@ func (sys *SystemFlag) String() string {
 	if sys.Provider == nil {
 		return ""
 	}
-	if sys.Options == nil {
+	if len(sys.Options) == 0 {
 		return sys.Provider.Name()
 	}
 	return fmt.Sprintf("%v:%v", sys.Provider.Name(), strings.Join(sys.Options, ","))
@@ -260,31 +260,33 @@ func (sys *SystemFlag) String() string {
 
 // Set implements flag.Value.Set
 func (sys *SystemFlag) Set(v string) error {
-	parts := strings.Split(v, ":")
-	name := parts[0]
-	hasOpts := len(parts) > 1
-	if hasOpts {
-		sys.Options = strings.Split(parts[1], ",")
+	parse := func(s string) (name string, options []string) {
+		parts := strings.SplitN(s, ":", 2)
+		name = parts[0]
+		if len(parts) > 1 {
+			options = strings.Split(parts[1], ",")
+		}
+		return
 	}
+
+	name, options := parse(v)
 	mu.Lock()
-	provider, ok := providers[name]
-	if !ok {
-		profile, ok := profiles[name]
-		mu.Unlock()
-		if !ok {
-			return fmt.Errorf("unsupported system or profile type: %v", sys.Provider)
-		}
-		if hasOpts {
-			return fmt.Errorf("options are not allowed with profile names, %v expands to %v", name, profile)
-		}
-		return sys.Set(profile)
+	if profile, ok := profiles[name]; ok {
+		var profileOptions []string
+		name, profileOptions = parse(profile)
+		options = append(profileOptions, options...)
 	}
+	provider, ok := providers[name]
 	mu.Unlock()
-	for _, opt := range sys.Options {
+	if !ok {
+		return fmt.Errorf("unsupported system or profile type: %v", name)
+	}
+	for _, opt := range options {
 		if err := provider.Set(opt); err != nil {
 			return err
 		}
 	}
+	sys.Options = options
 	sys.Provider = provider
 	sys.Specified = true
 	return nil
