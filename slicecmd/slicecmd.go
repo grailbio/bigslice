@@ -139,10 +139,11 @@ func DisplayStatus(bf sliceflags.Flags, sess *exec.Session) {
 		sess.HandleDebug(http.DefaultServeMux)
 		http.Handle("/debug/status", status.Handler(sess.Status()))
 		go func() {
-			fmt.Printf("HTTP Status at: %v\n", bf.HTTPAddress)
-			http.ListenAndServe(bf.HTTPAddress.Address, nil)
-
+			log.Printf("HTTP Status at: %v\n", bf.HTTPAddress)
+			err := http.ListenAndServe(bf.HTTPAddress.Address, nil)
+			if err != nil {
+				log.Error.Printf("Failed to start HTTP at: %v: %v\n", bf.HTTPAddress, err)
+			}
 		}()
 	}
-	return
 }
