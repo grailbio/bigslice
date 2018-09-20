@@ -106,7 +106,7 @@ func zero(typ dataType, p unsafe.Pointer, n int) {
 	default: // slow path
 		zero := reflect.Zero(typ.Type)
 		for i := 0; i < n; i++ {
-			reflect.NewAt(typ, p).Elem().Set(zero)
+			reflect.NewAt(typ.Type, p).Elem().Set(zero)
 			p = add(p, typ.size)
 		}
 	}
