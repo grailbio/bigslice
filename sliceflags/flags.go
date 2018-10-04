@@ -325,8 +325,8 @@ func (bf *Flags) Output() io.Writer {
 // flag set. The flag names will be prefixed with the supplied prefix.
 func RegisterFlags(fs *flag.FlagSet, bf *Flags, prefix string) {
 	RegisterFlagsWithDefaults(fs, bf, prefix, Defaults{
-		System:        "local",
-		HTTPAddress:   "",
+		System:        "internal",
+		HTTPAddress:   ":3333",
 		ConsoleStatus: false,
 		Parallelism:   0,
 		LoadFactor:    exec.DefaultMaxLoad,

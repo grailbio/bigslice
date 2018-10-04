@@ -78,14 +78,7 @@ func RegisterSystem(name string, system bigmachine.System) {
 // the sliceflags package and InitBigSlice and DisplayStatus functions.
 func Main(main func(sess *exec.Session, args []string) error) {
 	var fl sliceflags.Flags
-	sliceflags.RegisterFlagsWithDefaults(flag.CommandLine, &fl, "",
-		sliceflags.Defaults{
-			System:        "internal",
-			HTTPAddress:   ":3333",
-			ConsoleStatus: false,
-			Parallelism:   0,
-			LoadFactor:    0.95,
-		})
+	sliceflags.RegisterFlags(flag.CommandLine, &fl, "")
 	log.AddFlags()
 	flag.Parse()
 	sess, err := InitBigSlice(fl)
