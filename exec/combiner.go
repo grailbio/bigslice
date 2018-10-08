@@ -68,7 +68,8 @@ type combiningFrame struct {
 	data frame.Frame
 
 	// Scratch stores the scratch slice of data.
-	scratch frame.Frame
+	scratch     frame.Frame
+	scratchCall [2]reflect.Value
 
 	// Threshold is the current a
 	threshold int
@@ -153,7 +154,9 @@ func (c *combiningFrame) combine(n int) {
 				c.added()
 				break
 			} else if !c.data.Less(idx, c.cap+i) && !c.data.Less(c.cap+i, idx) {
-				rvs := c.Combiner.Call([]reflect.Value{c.data.Index(1, idx), c.scratch.Index(1, i)})
+				c.scratchCall[0] = c.data.Index(1, idx)
+				c.scratchCall[1] = c.scratch.Index(1, i)
+				rvs := c.Combiner.Call(c.scratchCall[:])
 				c.data.Index(1, idx).Set(rvs[0])
 				c.hits[idx]++
 				break
