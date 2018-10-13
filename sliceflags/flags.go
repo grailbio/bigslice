@@ -211,10 +211,7 @@ func init() {
 }
 
 // SystemHelpShort is a short explanation of the allowed SystemFlags values.
-const SystemHelpShort = `
-a bigslice system is specified as follows: {local,internal,ec2:[key=val,],name}, use
---<prefix>.system-help for more information.
-`
+const SystemHelpShort = `a bigslice system is specified as follows: {local,internal,ec2:[key=val,],name}, use --<prefix>.system-help for more information.`
 
 // SystemHelpLong is a completion explanation of the allowed SystemFlags values.
 const SystemHelpLong = `
