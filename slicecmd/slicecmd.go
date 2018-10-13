@@ -75,13 +75,13 @@ func RegisterSystem(name string, system bigmachine.System) {
 // code 1, otherwise it exits successfully.
 //
 // Integration with other command line processing is best achieved using
-// the sliceflags package and InitBigSlice and DisplayStatus functions.
+// the sliceflags package and Init and DisplayStatus functions.
 func Main(main func(sess *exec.Session, args []string) error) {
 	var fl sliceflags.Flags
 	sliceflags.RegisterFlags(flag.CommandLine, &fl, "")
 	log.AddFlags()
 	flag.Parse()
-	sess, err := InitBigSlice(fl)
+	sess, err := Init(fl)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,8 +91,8 @@ func Main(main func(sess *exec.Session, args []string) error) {
 	os.Exit(0)
 }
 
-// InitBigSlice initializes bigslice according to the supplied flags.
-func InitBigSlice(bf sliceflags.Flags) (*exec.Session, error) {
+// Init initializes bigslice according to the supplied flags.
+func Init(bf sliceflags.Flags) (*exec.Session, error) {
 	if bf.SystemHelp {
 		providers, profiles := sliceflags.ProvidersAndProfiles()
 		sort.Strings(providers)
