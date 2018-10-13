@@ -9,6 +9,7 @@ import (
 	"encoding/gob"
 	"io"
 	"reflect"
+	"unsafe"
 
 	"github.com/grailbio/bigslice/frame"
 )
@@ -69,6 +70,7 @@ type decodingReader struct {
 	dec      *gob.Decoder
 	off, len int
 	buf      []reflect.Value // points to slices
+	zeroers  []func(ptr uintptr, len int)
 	err      error
 }
 
@@ -86,21 +88,29 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 	for d.off == d.len {
 		if d.buf == nil {
 			d.buf = make([]reflect.Value, f.NumOut())
+			d.zeroers = make([]func(uintptr, int), len(d.buf))
 			for i := range d.buf {
-				if f.Out(i).Kind() != reflect.Slice {
+				elem := f.Out(i)
+				d.buf[i] = reflect.New(reflect.SliceOf(elem))
+				if canZeroSliceOf(elem) {
+					d.zeroers[i] = zero(elem)
+				}
+			}
+		} else {
+			for i, v := range d.buf {
+				if zero := d.zeroers[i]; zero != nil {
+					v = reflect.Indirect(v)
+					zero(v.Pointer(), v.Len())
+				} else {
+					// We have not choice but to discard the whole slice
+					// and start anew.
 					d.buf[i] = reflect.New(reflect.SliceOf(f.Out(i)))
 				}
 			}
+
 		}
 		// Read the next batch.
 		for i := 0; i < f.NumOut(); i++ {
-			// Reset slice columns that contain slices since these may
-			// be reused by Gob across decodes.
-			if d.off+n == d.len {
-				if t := f.Out(i); t.Kind() == reflect.Slice {
-					d.buf[i] = reflect.New(reflect.SliceOf(t))
-				}
-			}
 			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
 				if d.err == io.EOF {
 					d.err = EOF
@@ -118,4 +128,114 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 		d.off += n
 	}
 	return n, nil
+}
+
+func slice(ptr uintptr, len int) unsafe.Pointer {
+	var h reflect.SliceHeader
+	h.Data = ptr
+	h.Len = len
+	h.Cap = len
+	return unsafe.Pointer(&h)
+}
+
+func zero(t reflect.Type) func(ptr uintptr, len int) {
+	switch t.Kind() {
+	case reflect.Ptr:
+		return func(ptr uintptr, len int) {
+			ps := *(*[]unsafe.Pointer)(slice(ptr, len))
+			for i := range ps {
+				ps[i] = unsafe.Pointer(uintptr(0))
+			}
+		}
+	case reflect.Slice:
+		return func(ptr uintptr, len int) {
+			ps := *(*[]reflect.SliceHeader)(slice(ptr, len))
+			for i := range ps {
+				*(*unsafe.Pointer)(unsafe.Pointer(&ps[i].Data)) = unsafe.Pointer(uintptr(0))
+				ps[i].Len = 0
+				ps[i].Cap = 0
+			}
+		}
+	case reflect.String:
+		return func(ptr uintptr, len int) {
+			strs := *(*[]string)(slice(ptr, len))
+			for i := range strs {
+				strs[i] = ""
+			}
+		}
+	}
+	// Value types:
+	switch t.Size() {
+	case 8:
+		return func(ptr uintptr, len int) {
+			vs := *(*[]int64)(slice(ptr, len))
+			for i := range vs {
+				vs[i] = 0
+			}
+		}
+	case 4:
+		return func(ptr uintptr, len int) {
+			vs := *(*[]int32)(slice(ptr, len))
+			for i := range vs {
+				vs[i] = 0
+			}
+		}
+	case 2:
+		return func(ptr uintptr, len int) {
+			vs := *(*[]int16)(slice(ptr, len))
+			for i := range vs {
+				vs[i] = 0
+			}
+		}
+	case 1:
+		return func(ptr uintptr, len int) {
+			vs := *(*[]int8)(slice(ptr, len))
+			for i := range vs {
+				vs[i] = 0
+			}
+		}
+	}
+
+	// Slow case: reinterpret to []byte, and set that. Note that the
+	// compiler should be able to optimize this too. In this case
+	// it's always a value type, so this is always safe to do.
+	size := t.Size()
+	return func(ptr uintptr, len int) {
+		var h reflect.SliceHeader
+		h.Data = ptr
+		h.Len = int(size) * len
+		h.Cap = h.Len
+		b := *(*[]byte)(unsafe.Pointer(&h))
+		for i := range b {
+			b[i] = 0
+		}
+	}
+}
+
+func canZeroSliceOf(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Ptr, reflect.String, reflect.Slice:
+		return true
+	default:
+		return isValueType(t)
+	}
+}
+
+func isValueType(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uintptr, reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
+		return true
+	case reflect.Array:
+		return isValueType(t.Elem())
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if !isValueType(t.Field(i).Type) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

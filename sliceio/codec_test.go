@@ -7,6 +7,7 @@ package sliceio
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -123,6 +124,50 @@ func TestDecodingReader(t *testing.T) {
 	}
 }
 
+func TestDecodingReaderWithZeros(t *testing.T) {
+	// Gob, in its infinite cleverness, does not transmit zero values.
+	// However, it apparently also does not zero out zero values in
+	// structs that are reused. This requires special handling that is
+	// tested here.
+	type fields struct{ A, B, C int }
+	var b bytes.Buffer
+	in := []fields{{1, 2, 3}, {1, 0, 3}}
+	enc := NewEncoder(&b)
+	enc.Encode(frame.Slices(in[0:1]))
+	enc.Encode(frame.Slices(in[1:2]))
+
+	r := NewDecodingReader(&b)
+	ctx := context.Background()
+
+	var out []fields
+	if err := ReadAll(ctx, r, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := out, in; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestDecodingSlices(t *testing.T) {
+	// Gob will reuse slices during decoding if we're not careful.
+	var b bytes.Buffer
+	in := [][]string{{"a", "b"}, {"c", "d"}}
+	enc := NewEncoder(&b)
+	enc.Encode(frame.Slices(in[0:1]))
+	enc.Encode(frame.Slices(in[1:2]))
+
+	r := NewDecodingReader(&b)
+	ctx := context.Background()
+	var out [][]string
+	if err := ReadAll(ctx, r, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out, in; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
 func TestEmptyDecodingReader(t *testing.T) {
 	r := NewDecodingReader(bytes.NewReader(nil))
 	f := frame.Make(slicetype.New(typeOfString, typeOfInt), 100, 100)
@@ -139,5 +184,133 @@ func TestEmptyDecodingReader(t *testing.T) {
 	}
 	if got, want := err, EOF; got != want {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func testRoundTrip(t *testing.T, cols ...interface{}) {
+	t.Helper()
+	var N = 1000
+	if testing.Short() {
+		N = 10
+	}
+	var Stride = N / 5
+	fz := fuzz.New()
+	fz.NilChance(0)
+	fz.NumElements(N, N)
+	for i := range cols {
+		ptr := reflect.New(reflect.TypeOf(cols[i]))
+		fz.Fuzz(ptr.Interface())
+		cols[i] = reflect.Indirect(ptr).Interface()
+	}
+	var b bytes.Buffer
+	enc := NewEncoder(&b)
+	for i := 0; i < N; i += Stride {
+		j := i + Stride
+		if j > N {
+			j = N
+		}
+		args := make([]interface{}, len(cols))
+		for k := range args {
+			args[k] = reflect.ValueOf(cols[k]).Slice(i, j).Interface()
+		}
+		if err := enc.Encode(frame.Slices(args...)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := make([]interface{}, len(cols))
+	for i := range args {
+		// Create an empty slice from the end of the parent slice.
+		slice := reflect.ValueOf(cols[i]).Slice(N, N)
+		ptr := reflect.New(slice.Type())
+		reflect.Indirect(ptr).Set(slice)
+		args[i] = ptr.Interface()
+	}
+	if err := ReadAll(context.Background(), NewDecodingReader(&b), args...); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range cols {
+		got := reflect.Indirect(reflect.ValueOf(args[i])).Interface()
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestTypes(t *testing.T) {
+	types := [][]interface{}{
+		{[]int{}, []string{}},
+		{[]struct{ A, B, C int }{}},
+		{[][]string{}, []int{}},
+		{[]struct {
+			A *int
+			B string
+		}{}, []*int{}},
+		{[]rune{}, []byte{}, [][]byte{}, []int16{}, []int8{}, []*[]string{}, []int64{}},
+	}
+	for _, cols := range types {
+		testRoundTrip(t, cols...)
+	}
+}
+
+var zeroTypes = []reflect.Type{
+	reflect.TypeOf(0),
+	reflect.TypeOf(""),
+	reflect.TypeOf([]byte{}),
+	reflect.TypeOf(struct{ A, B int }{}),
+	reflect.TypeOf([]int{}),
+	reflect.TypeOf([10]int16{}),
+	reflect.TypeOf([]*int{}),
+}
+
+func TestZero(t *testing.T) {
+	const N = 100
+	fz := fuzz.New()
+
+	for _, typ := range zeroTypes {
+		if !canZeroSliceOf(typ) {
+			t.Errorf("can't zero slice of %v", typ)
+			continue
+		}
+		slice := reflect.MakeSlice(reflect.SliceOf(typ), N, N)
+		for i := 0; i < N; i++ {
+			fz.Fuzz(slice.Index(i).Addr().Interface())
+		}
+		z := zero(typ)
+		z(slice.Pointer(), N)
+		zeroValue := reflect.Zero(typ)
+		for i := 0; i < N; i++ {
+			if got, want := slice.Index(i), zeroValue; !reflect.DeepEqual(got.Interface(), want.Interface()) {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		}
+	}
+
+	types := []reflect.Type{
+		reflect.TypeOf(map[string]int{}),
+		reflect.TypeOf(struct{ A, B *int }{}),
+		reflect.TypeOf([10]*int{}),
+	}
+	for _, typ := range types {
+		if canZeroSliceOf(typ) {
+			t.Errorf("shouldn't be able to zero type %v", typ)
+		}
+	}
+
+}
+
+func BenchmarkZero(b *testing.B) {
+	for _, n := range []int{8, 32, 64, 256, 1024} {
+		for _, typ := range zeroTypes {
+			b.Run(fmt.Sprintf("type=%v,n=%d", typ, n), func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(n * int(typ.Size())))
+				data := reflect.MakeSlice(reflect.SliceOf(typ), n, n).Pointer()
+				z := zero(typ)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					z(data, n)
+				}
+			})
+		}
 	}
 }
