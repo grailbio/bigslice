@@ -57,6 +57,7 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 		if math.Abs(float64(f.Len()-targetRows)/float64(targetRows)) > 0.05 {
 			f = f.Ensure(targetRows)
 		}
+		f.ZeroAll()
 	}
 	readers, err := spill.Readers()
 	if err != nil {
@@ -90,9 +91,10 @@ func (f FrameBuffer) Pos() int {
 // is returned if the underlying reader returns an error.
 // EOF is returned if no more data are available.
 func (f *FrameBuffer) Fill(ctx context.Context) error {
-	if f.Frame.Len() < f.Frame.Cap() {
-		f.Frame = f.Frame.Slice(0, f.Frame.Cap())
+	if f.Index != f.Len {
+		panic("FrameBuffer.Fill: fill on nonempty buffer")
 	}
+	f.Frame.ZeroAll()
 	var err error
 	f.Len, err = f.Reader.Read(ctx, f.Frame)
 	if err != nil && err != sliceio.EOF {

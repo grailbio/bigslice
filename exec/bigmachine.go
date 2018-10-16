@@ -752,6 +752,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err == sliceio.EOF {
 				break
 			}
+			in.ZeroAll()
 		}
 		// Flush remaining data.
 		for p, n := range lens {
@@ -777,6 +778,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err == sliceio.EOF {
 				break
 			}
+			in.ZeroAll()
 		}
 	}
 

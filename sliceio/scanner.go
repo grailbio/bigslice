@@ -62,6 +62,7 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 			s.err = EOF
 			return false
 		}
+		s.in.ZeroAll()
 		n, err := s.Reader.Read(ctx, s.in)
 		if err != nil && err != EOF {
 			s.err = err

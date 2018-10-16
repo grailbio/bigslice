@@ -18,6 +18,7 @@ import (
 	"text/tabwriter"
 	"unsafe"
 
+	"github.com/grailbio/bigslice/internal/zero"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -337,7 +338,7 @@ func (f Frame) Swap(i, j int) {
 // Zero zeros the memory of column i
 func (f Frame) Zero(i int) {
 	c := f.data[i]
-	zero(c.typ, add(c.ptr, uintptr(f.off)*c.typ.size), f.len)
+	zero.Unsafe(c.typ.Type, uintptr(c.ptr)+uintptr(f.off)*c.typ.size, f.len)
 }
 
 // ZeroAll zeros the memory all columnns.

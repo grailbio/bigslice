@@ -35,7 +35,7 @@ func (q *topHeap) Pop() interface{} {
 
 func topn(counts []int, n int) []int {
 	if n == 0 {
-		log.Panicf("topn: n=0, counts=%", counts)
+		log.Panicf("topn: n=0, counts=%d", counts)
 	}
 	if m := len(counts); m < n {
 		n = m

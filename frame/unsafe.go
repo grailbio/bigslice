@@ -69,49 +69,6 @@ func assign(typ dataType, dst, src unsafe.Pointer) {
 	typedmemmove(typ.ptr, dst, src)
 }
 
-func zero(typ dataType, p unsafe.Pointer, n int) {
-	switch {
-	case !typ.pointers:
-		// Represent as a byte slice and zero it. Loops that
-		// zero memory are optimized by the Go compiler.
-		h := sliceHeader{
-			Data: p,
-			Len:  n * int(typ.size),
-			Cap:  n * int(typ.size),
-		}
-		b := *(*[]byte)(unsafe.Pointer(&h))
-		for i := range b {
-			b[i] = 0
-		}
-	case typ.size == ptrSize:
-		h := sliceHeader{
-			Data: p,
-			Len:  n,
-			Cap:  n,
-		}
-		ps := *(*[]unsafe.Pointer)(unsafe.Pointer(&h))
-		for i := range ps {
-			ps[i] = nil
-		}
-	case typ.Type.Kind() == reflect.String: // a common type
-		h := sliceHeader{
-			Data: p,
-			Len:  n,
-			Cap:  n,
-		}
-		s := *(*[]string)(unsafe.Pointer(&h))
-		for i := range s {
-			s[i] = ""
-		}
-	default: // slow path
-		zero := reflect.Zero(typ.Type)
-		for i := 0; i < n; i++ {
-			reflect.NewAt(typ.Type, p).Elem().Set(zero)
-			p = add(p, typ.size)
-		}
-	}
-}
-
 func add(base unsafe.Pointer, off uintptr) unsafe.Pointer {
 	return unsafe.Pointer(uintptr(base) + off)
 }

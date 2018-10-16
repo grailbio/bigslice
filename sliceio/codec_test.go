@@ -7,7 +7,6 @@ package sliceio
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -249,68 +248,5 @@ func TestTypes(t *testing.T) {
 	}
 	for _, cols := range types {
 		testRoundTrip(t, cols...)
-	}
-}
-
-var zeroTypes = []reflect.Type{
-	reflect.TypeOf(0),
-	reflect.TypeOf(""),
-	reflect.TypeOf([]byte{}),
-	reflect.TypeOf(struct{ A, B int }{}),
-	reflect.TypeOf([]int{}),
-	reflect.TypeOf([10]int16{}),
-	reflect.TypeOf([]*int{}),
-}
-
-func TestZero(t *testing.T) {
-	const N = 100
-	fz := fuzz.New()
-
-	for _, typ := range zeroTypes {
-		if !canZeroSliceOf(typ) {
-			t.Errorf("can't zero slice of %v", typ)
-			continue
-		}
-		slice := reflect.MakeSlice(reflect.SliceOf(typ), N, N)
-		for i := 0; i < N; i++ {
-			fz.Fuzz(slice.Index(i).Addr().Interface())
-		}
-		z := zero(typ)
-		z(slice.Pointer(), N)
-		zeroValue := reflect.Zero(typ)
-		for i := 0; i < N; i++ {
-			if got, want := slice.Index(i), zeroValue; !reflect.DeepEqual(got.Interface(), want.Interface()) {
-				t.Errorf("got %v, want %v", got, want)
-			}
-		}
-	}
-
-	types := []reflect.Type{
-		reflect.TypeOf(map[string]int{}),
-		reflect.TypeOf(struct{ A, B *int }{}),
-		reflect.TypeOf([10]*int{}),
-	}
-	for _, typ := range types {
-		if canZeroSliceOf(typ) {
-			t.Errorf("shouldn't be able to zero type %v", typ)
-		}
-	}
-
-}
-
-func BenchmarkZero(b *testing.B) {
-	for _, n := range []int{8, 32, 64, 256, 1024} {
-		for _, typ := range zeroTypes {
-			b.Run(fmt.Sprintf("type=%v,n=%d", typ, n), func(b *testing.B) {
-				b.ReportAllocs()
-				b.SetBytes(int64(n * int(typ.Size())))
-				data := reflect.MakeSlice(reflect.SliceOf(typ), n, n).Pointer()
-				z := zero(typ)
-				b.ResetTimer()
-				for i := 0; i < b.N; i++ {
-					z(data, n)
-				}
-			})
-		}
 	}
 }

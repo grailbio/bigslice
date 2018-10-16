@@ -130,6 +130,7 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 			break
 		}
 		buf = buf.Slice(0, buf.Cap())
+		buf.ZeroAll()
 	}
 	return nil
 }

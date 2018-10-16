@@ -180,7 +180,10 @@ func TestZero(t *testing.T) {
 	f := fuzzFrame(100)
 	f.Slice(1, 50).ZeroAll()
 	g := Make(f, f.Len(), f.Len())
-	assertEqual(t, f.Slice(1, 50), g.Slice(0, 49))
+	Copy(g, f)
+	assertEqual(t, f.Slice(1, 50), Make(f, 49, 49))
+	assertEqual(t, f.Slice(0, 1), g.Slice(0, 1))
+	assertEqual(t, f.Slice(50, f.Len()), g.Slice(50, g.Len()))
 }
 
 func TestZerox(t *testing.T) {
