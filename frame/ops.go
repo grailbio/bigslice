@@ -33,7 +33,7 @@ type Ops struct {
 	HashWithSeed func(i int, seed uint32) uint32
 
 	// Swap swaps two elements in a slice. It is implemented generically
-	// and cannot be overriden by a user implementation.
+	// and cannot be overridden by a user implementation.
 	swap func(i, j int)
 }
 
@@ -87,6 +87,17 @@ func init() {
 		return Ops{
 			Less:         func(i, j int) bool { return bytes.Compare(slice[i], slice[j]) < 0 },
 			HashWithSeed: func(i int, seed uint32) uint32 { return murmur3.Sum32WithSeed(slice[i], seed) },
+		}
+	})
+	RegisterOps(func(slice []bool) Ops {
+		return Ops{
+			Less: func(i, j int) bool { return !slice[i] && slice[j] },
+			HashWithSeed: func(i int, seed uint32) uint32 {
+				if slice[i] {
+					return seed + 1
+				}
+				return seed
+			},
 		}
 	})
 }

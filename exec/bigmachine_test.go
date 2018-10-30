@@ -173,11 +173,12 @@ func TestBigmachineCompiler(t *testing.T) {
 	defer stop()
 
 	tasks, slice, inv := compileFunc(func() bigslice.Slice {
-		return bigslice.Const(1, []int{})
+		return bigslice.Const(10, []int{})
 	})
+	firstTasks := tasks
 	run(t, x, tasks, TaskOk)
 	tasks, _, _ = compileFunc(func() bigslice.Slice {
-		return bigslice.Map(&Result{Slice: slice, inv: inv}, func(i int) int { return i * 2 })
+		return bigslice.Map(&Result{Slice: slice, inv: inv, tasks: firstTasks}, func(i int) int { return i * 2 })
 	})
 	run(t, x, tasks, TaskOk)
 }

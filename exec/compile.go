@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -105,6 +106,20 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 		if err != nil {
 			return nil, err
 		}
+		// These needn't be shuffle deps, for example if we terminated
+		// pipelining early because we're reusing a result or because we're
+		// doing a shuffle-free join.
+		if !dep.Shuffle {
+			if len(tasks) != len(deptasks) {
+				log.Panicf("tasks:%d deptasks:%d", len(tasks), len(deptasks))
+			}
+			for shard := range tasks {
+				tasks[shard].Deps = append(tasks[shard].Deps,
+					TaskDep{[]*Task{deptasks[shard]}, 0, dep.Expand, ""})
+			}
+			continue
+		}
+
 		var combineKey string
 		if lastSlice.Combiner() != nil {
 			combineKey = name + "_combiner"

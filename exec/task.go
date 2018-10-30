@@ -80,6 +80,7 @@ func (s TaskState) String() string {
 type TaskDep struct {
 	Tasks     []*Task
 	Partition int
+
 	// Expand indicates that the task's dependencies for a given
 	// partition should not be merged, but rather passed individually to
 	// the task implementation.

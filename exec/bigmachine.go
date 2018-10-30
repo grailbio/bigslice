@@ -171,7 +171,8 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	// Now traverse the invocation graph bottom-up, making sure
 	// everything on the machine is compiled. We produce a valid order,
 	// but we don't capture opportunities for parallel compilations.
-	// This seems needless for most uses.
+	// TODO(marius): allow for parallel compilation as some users are
+	// performing expensive computations inside of bigslice.Funcs.
 	var (
 		todo        = []uint64{inv.Index}
 		invocations []bigslice.Invocation

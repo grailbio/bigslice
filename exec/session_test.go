@@ -13,11 +13,19 @@ import (
 	"github.com/grailbio/bigslice"
 )
 
+func rangeSlice(i, j int) []int {
+	s := make([]int, j-i)
+	for k := range s {
+		s[k] = i + k
+	}
+	return s
+}
+
 func TestSessionIterative(t *testing.T) {
 	var nvalues, nadd int
 	values := bigslice.Func(func() bigslice.Slice {
 		nvalues++
-		return bigslice.Const(1, []int{1, 2, 3})
+		return bigslice.Const(5, rangeSlice(0, 1000))
 	})
 	add := bigslice.Func(func(x int, slice bigslice.Slice) bigslice.Slice {
 		return bigslice.Map(slice, func(i int) int {
@@ -52,14 +60,14 @@ func TestSessionIterative(t *testing.T) {
 		if err := scan.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := ints, []int{11, 12, 13}; !reflect.DeepEqual(got, want) {
+		if got, want := ints, rangeSlice(10, 1010); !reflect.DeepEqual(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
 	if got, want := nvalues, nrun+1; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := nadd, nrun*5*3; got != want {
+	if got, want := nadd, nrun*5*1000; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
