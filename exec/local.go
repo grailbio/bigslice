@@ -6,9 +6,12 @@ package exec
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"sync"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
@@ -127,7 +130,7 @@ func (*localExecutor) HandleDebug(*http.ServeMux) {}
 // BufferOutput reads the output from reader and places it in a
 // task buffer. If the output is partitioned, bufferOutput invokes
 // the task's partitioner in order to determine the correct partition.
-func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuffer, error) {
+func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf taskBuffer, err error) {
 	if task.NumOut() == 0 {
 		_, err := out.Read(ctx, frame.Empty)
 		if err == sliceio.EOF {
@@ -135,10 +138,15 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (taskBuff
 		}
 		return nil, err
 	}
-	var (
-		buf = make(taskBuffer, task.NumPartition)
-		in  frame.Frame
-	)
+	buf = make(taskBuffer, task.NumPartition)
+	var in frame.Frame
+	defer func() {
+		if e := recover(); e != nil {
+			stack := debug.Stack()
+			err = fmt.Errorf("panic while evaluating slice: %v\n%s", e, string(stack))
+			err = errors.E(err, errors.Fatal)
+		}
+	}()
 	for {
 		if in.IsZero() {
 			in = frame.Make(task, defaultChunksize, defaultChunksize)

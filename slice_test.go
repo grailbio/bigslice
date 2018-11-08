@@ -533,3 +533,25 @@ func TestScan(t *testing.T) {
 		}
 	}
 }
+
+func TestPanic(t *testing.T) {
+	slice := bigslice.Const(1, []int{1, 2, 3})
+	slice = bigslice.Map(slice, func(i int) int {
+		panic(i)
+	})
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	ctx := context.Background()
+	for name, opt := range executors {
+		sess := exec.Start(opt)
+		// TODO(marius): faster teardown in bigmachine so that we can call this here.
+		// defer sess.Shutdown()
+		_, err := sess.Run(ctx, fn)
+		if err == nil {
+			t.Errorf("executor %s: expected error", name)
+			continue
+		}
+		if msg := err.Error(); !strings.Contains(msg, "panic while evaluating slice") {
+			t.Errorf("wrong error message %q", msg)
+		}
+	}
+}
