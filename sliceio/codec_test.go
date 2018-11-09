@@ -7,6 +7,8 @@ package sliceio
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -18,6 +20,34 @@ import (
 
 type testStruct struct{ A, B, C int }
 
+func init() {
+	frame.RegisterOps(func(slice []testStruct) frame.Ops {
+		return frame.Ops{
+			Encode: func(e frame.Encoder, i, j int) error {
+				p, err := json.Marshal(slice[i:j])
+				if err != nil {
+					return err
+				}
+				return e.Encode(p)
+			},
+			Decode: func(d frame.Decoder, i, j int) error {
+				var p []byte
+				if err := d.Decode(&p); err != nil {
+					return err
+				}
+				x := slice[i:j]
+				if err := json.Unmarshal(p, &x); err != nil {
+					return err
+				}
+				if len(x) != j-i {
+					return errors.New("bad json decode")
+				}
+				return nil
+			},
+		}
+	})
+}
+
 var (
 	typeOfString     = reflect.TypeOf("")
 	typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
@@ -26,7 +56,7 @@ var (
 )
 
 func TestCodec(t *testing.T) {
-	const N = 100
+	const N = 1000
 	fz := fuzz.New()
 	fz.NilChance(0)
 	fz.NumElements(N, N)
@@ -47,40 +77,62 @@ func TestCodec(t *testing.T) {
 	if err := enc.Encode(in); err != nil {
 		t.Fatal(err)
 	}
-	out := []reflect.Value{
-		reflect.New(reflect.SliceOf(typeOfString)),
-		reflect.New(reflect.SliceOf(typeOfTestStruct)),
-	}
-	dec := NewDecoder(&b)
-	if err := dec.Decode(out...); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < in.NumOut(); i++ {
-		if !reflect.DeepEqual(in.Interface(i), out[i].Elem().Interface()) {
-			t.Errorf("column %d mismatch", i)
+	data := b.Bytes()
+	ctx := context.Background()
+	for _, chunkSize := range []int{1, N / 3, N / 2, N, N * 2} {
+		dec := NewDecodingReader(bytes.NewReader(data))
+		out := frame.Make(in, N*2, N*2)
+		for i := 0; i < N*2; {
+			j := i + chunkSize
+			if j > N*2 {
+				j = N * 2
+			}
+			n, err := dec.Read(ctx, out.Slice(i, j))
+			if err != nil {
+				t.Fatal(err)
+			}
+			i += n
+		}
+		for i := 0; i < in.NumOut(); i++ {
+			if !reflect.DeepEqual(in.Interface(i), out.Slice(0, N).Interface(i)) {
+				t.Errorf("column %d mismatch", i)
+			}
+			if !reflect.DeepEqual(in.Interface(i), out.Slice(N, N*2).Interface(i)) {
+				t.Errorf("column %d mismatch", i)
+			}
+		}
+		n, err := dec.Read(ctx, out)
+		if got, want := err, EOF; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+		if got, want := n, 0; got != want {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	}
-	// Make sure we don't reallocate if we're providing slices with enough
-	// capacity already.
-	outptrs := make([]uintptr, len(out))
-	for i := range out {
-		outptrs[i] = out[i].Pointer() // points to the slice header's data
-	}
-	if err := enc.Encode(in); err != nil {
-		t.Fatal(err)
-	}
-	if err := dec.Decode(out...); err != nil {
-		t.Fatal(err)
-	}
-	for i := range out {
-		if outptrs[i] != out[i].Pointer() {
-			t.Errorf("column slice %d reallocated", i)
+
+	/*
+		// Make sure we don't reallocate if we're providing slices with enough
+		// capacity already.
+		outptrs := make([]uintptr, len(out))
+		for i := range out {
+			outptrs[i] = out[i].Pointer() // points to the slice header's data
 		}
-	}
+		if err := enc.Encode(in); err != nil {
+			t.Fatal(err)
+		}
+		if err := dec.Decode(out...); err != nil {
+			t.Fatal(err)
+		}
+		for i := range out {
+			if outptrs[i] != out[i].Pointer() {
+				t.Errorf("column slice %d reallocated", i)
+			}
+		}
+	*/
 }
 
 func TestDecodingReader(t *testing.T) {
-	const N = 10000
+	const N = 1000
 	fz := fuzz.New()
 	fz.NilChance(0)
 	fz.NumElements(N, N)

@@ -32,6 +32,15 @@ type Ops struct {
 	// of a slice.
 	HashWithSeed func(i int, seed uint32) uint32
 
+	// Encode encodes a slice of the underlying vector. Encode is
+	// optional, and overrides the default encoding (gob) used when
+	// serializing and deserializing frames. Encode and decode must
+	// always be specified together.
+	Encode func(enc Encoder, i, j int) error
+
+	// Decode decodes a slice encoded by Encode(i, j).
+	Decode func(dec Decoder, i, j int) error
+
 	// Swap swaps two elements in a slice. It is implemented generically
 	// and cannot be overridden by a user implementation.
 	swap func(i, j int)
@@ -69,7 +78,11 @@ func makeSliceOps(typ reflect.Type, slice reflect.Value) Ops {
 	if !ok {
 		return Ops{}
 	}
-	return make.Call([]reflect.Value{slice})[0].Interface().(Ops)
+	ops := make.Call([]reflect.Value{slice})[0].Interface().(Ops)
+	if (ops.Encode != nil) != (ops.Decode != nil) {
+		panic("encode and decode not defined together")
+	}
+	return ops
 }
 
 // CanCompare returns whether values of the provided type are comparable.

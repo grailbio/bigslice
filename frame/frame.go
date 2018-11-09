@@ -370,6 +370,26 @@ func (f Frame) HashWithSeed(i int, seed uint32) uint32 {
 	return f.data[0].ops.HashWithSeed(i+f.off, seed)
 }
 
+// HasCodec returns whether column col has a type-specific
+// codec.
+func (f Frame) HasCodec(col int) bool {
+	return f.data[col].ops.Encode != nil
+}
+
+// Encode encodes column col of this frame. The given scratch
+// buffer may be used by the encode function to avoid extra
+// allocation. Encode may only be invoked for columns where
+// HasCodec is true.
+func (f Frame) Encode(col int, e Encoder) error {
+	return f.data[col].ops.Encode(e, f.off, f.off+f.len)
+}
+
+// Decode decodes a column col as encoded by Frame.Encode. may only
+// Decode be invoked for columns where HasCodec is true.
+func (f Frame) Decode(col int, d Decoder) error {
+	return f.data[col].ops.Decode(d, f.off, f.off+f.len)
+}
+
 // String returns a descriptive string of the frame.
 func (f Frame) String() string {
 	types := make([]string, f.NumOut())

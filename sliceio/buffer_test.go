@@ -12,6 +12,7 @@ import (
 
 // Buffer buffers serialized slice output in memory. The data are stored
 // as a gob-stream where records are as batches in column-major form.
+// Intended for testing only.
 type Buffer struct {
 	bytes.Buffer
 
@@ -24,7 +25,13 @@ func (s *Buffer) WriteColumns(columns ...reflect.Value) error {
 	if s.enc == nil {
 		s.enc = gob.NewEncoder(&s.Buffer)
 	}
+	if err := s.enc.Encode(columns[0].Len()); err != nil {
+		return err
+	}
 	for i := range columns {
+		if err := s.enc.Encode(false); err != nil {
+			return err
+		}
 		if err := s.enc.EncodeValue(columns[i]); err != nil {
 			return err
 		}

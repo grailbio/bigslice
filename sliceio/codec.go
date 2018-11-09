@@ -7,57 +7,78 @@ package sliceio
 import (
 	"context"
 	"encoding/gob"
+	"errors"
 	"io"
 	"reflect"
+	"unsafe"
 
 	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/internal/zero"
 )
+
+type session map[interface{}]interface{}
+
+func (s session) Store(key, value interface{}) { s[key] = value }
+func (s session) Load(key interface{}) (value interface{}, ok bool) {
+	value, ok = s[key]
+	return
+}
+
+type gobEncoder struct {
+	*gob.Encoder
+	session
+}
+
+func newGobEncoder(w io.Writer) *gobEncoder {
+	return &gobEncoder{
+		Encoder: gob.NewEncoder(w),
+		session: make(session),
+	}
+}
+
+type gobDecoder struct {
+	*gob.Decoder
+	session
+}
+
+func newGobDecoder(r io.Reader) *gobDecoder {
+	return &gobDecoder{
+		Decoder: gob.NewDecoder(r),
+		session: make(session),
+	}
+}
 
 // An Encoder manages transmission of slices through an underlying
 // io.Writer. The stream of slice values represented by batches of
 // rows stored in column-major order. Streams can be read by a
 // Decoder.
 type Encoder struct {
-	enc *gob.Encoder
+	enc *gobEncoder
 }
 
 // NewEncoder returns a a new Encoder that streams slices into the
 // provided writer.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{gob.NewEncoder(w)}
+	return &Encoder{newGobEncoder(w)}
 }
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
 func (e *Encoder) Encode(f frame.Frame) error {
-	for i := 0; i < f.NumOut(); i++ {
-		if err := e.enc.EncodeValue(f.Value(i)); err != nil {
+	if err := e.enc.Encode(f.Len()); err != nil {
+		return err
+	}
+	for col := 0; col < f.NumOut(); col++ {
+		codec := f.HasCodec(col)
+		if err := e.enc.Encode(codec); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// A Decoder manages the receipt of slices, as encoded by an Encoder,
-// through an underlying io.Reader.
-type Decoder struct {
-	dec *gob.Decoder
-}
-
-// NewDecoder returns a new Decoder that reads an encoded input
-// stream from the provided io.Reader.
-func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{gob.NewDecoder(r)}
-}
-
-// Decode decodes a batch of columns from the encoded stream.
-// The provided values should be pointers to slices. The slices are
-// reallocated if they do not have enough room for the next batch
-// of columns.
-func (d *Decoder) Decode(columnptrs ...reflect.Value) error {
-	for i := range columnptrs {
-		if err := d.dec.DecodeValue(columnptrs[i]); err != nil {
+		var err error
+		if codec {
+			err = f.Encode(col, e.enc)
+		} else {
+			err = e.enc.EncodeValue(f.Value(col))
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -67,52 +88,90 @@ func (d *Decoder) Decode(columnptrs ...reflect.Value) error {
 // DecodingReader provides a Reader on top of a gob stream
 // encoded with batches of rows stored in column-major order.
 type decodingReader struct {
-	dec      *gob.Decoder
-	off, len int
-	buf      []reflect.Value // points to slices
-	err      error
+	dec *gobDecoder
+	buf frame.Frame
+	err error
 }
 
 // NewDecodingReader returns a new Reader that decodes values from
 // the provided stream. Since values are streamed in vectors, decoding
 // reader must buffer values until they are read by the consumer.
 func NewDecodingReader(r io.Reader) Reader {
-	return &decodingReader{dec: gob.NewDecoder(r)}
+	return &decodingReader{dec: newGobDecoder(r)}
 }
 
 func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	if d.err != nil {
 		return 0, d.err
 	}
-	for d.off == d.len {
-		if d.buf == nil {
-			d.buf = make([]reflect.Value, f.NumOut())
-			for i := range d.buf {
-				elem := f.Out(i)
-				d.buf[i] = reflect.New(reflect.SliceOf(elem))
+	for d.buf.Len() == 0 {
+		if d.err = d.dec.Decode(&n); d.err != nil {
+			if d.err == io.EOF {
+				d.err = EOF
 			}
-		} else {
-			for _, v := range d.buf {
-				zero.Slice(reflect.Indirect(v))
-			}
+			return 0, d.err
 		}
-		// Read the next batch.
-		for i := 0; i < f.NumOut(); i++ {
-			if d.err = d.dec.DecodeValue(d.buf[i]); d.err != nil {
-				if d.err == io.EOF {
-					d.err = EOF
-				}
+		// In most cases, we should be able to decode directly into the
+		// provided frame without any buffering.
+		if n <= f.Len() {
+			if d.err = d.decode(f.Slice(0, n)); d.err != nil {
 				return 0, d.err
 			}
+			return n, nil
 		}
-		d.off = 0
-		d.len = d.buf[0].Elem().Len()
-	}
-	if d.len > 0 {
-		for i := 0; i < f.NumOut(); i++ {
-			n = reflect.Copy(f.Value(i), d.buf[i].Elem().Slice(d.off, d.len))
+		// Otherwise we have to buffer the decoded frame.
+		if d.buf.IsZero() {
+			d.buf = frame.Make(f, n, n)
+		} else {
+			d.buf = d.buf.Ensure(n)
 		}
-		d.off += n
+		if d.err = d.decode(d.buf); d.err != nil {
+			return 0, d.err
+		}
 	}
+	n = frame.Copy(f, d.buf)
+	d.buf = d.buf.Slice(n, d.buf.Len())
 	return n, nil
+}
+
+// Decode a batch of column vectors into the provided frame.
+// The frame is preallocated and is guaranteed to have enough
+// space to decode all of the values.
+func (d *decodingReader) decode(f frame.Frame) error {
+	for col := 0; col < f.NumOut(); col++ {
+		var codec bool
+		if err := d.dec.Decode(&codec); err != nil {
+			return err
+		}
+		if codec && !f.HasCodec(col) {
+			return errors.New("column encoded with custom codec but no codec available on receipt")
+		}
+		if codec {
+			if err := f.Decode(col, d.dec); err != nil {
+				return err
+			}
+			continue
+		}
+		// Arrange for gob to decode directly into the frame's underlying
+		// slice. We have to do some gymnastics to produce a pointer to
+		// this value (which we'll anyway discard) so that gob can do its
+		// job.
+		sh := f.SliceHeader(col)
+		var p []unsafe.Pointer
+		ptr := unsafe.Pointer(&p)
+		*(*reflect.SliceHeader)(ptr) = sh
+		v := reflect.NewAt(reflect.SliceOf(f.Out(col)), ptr)
+		err := d.dec.DecodeValue(v)
+		if err != nil {
+			if err == io.EOF {
+				return EOF
+			}
+			return err
+		}
+		// This is guaranteed by gob, but it seems worthy of some defensive programming here.
+		if (*(*reflect.SliceHeader)(ptr)).Data != sh.Data {
+			panic("gob reallocated a slice")
+		}
+	}
+	return nil
 }
