@@ -21,6 +21,8 @@ import (
 type testStruct struct{ A, B, C int }
 
 func init() {
+	var key = frame.FreshKey()
+
 	frame.RegisterOps(func(slice []testStruct) frame.Ops {
 		return frame.Ops{
 			Encode: func(e frame.Encoder, i, j int) error {
@@ -31,12 +33,15 @@ func init() {
 				return e.Encode(p)
 			},
 			Decode: func(d frame.Decoder, i, j int) error {
-				var p []byte
-				if err := d.Decode(&p); err != nil {
+				var p *[]byte
+				if d.State(key, &p) {
+					*p = []byte{}
+				}
+				if err := d.Decode(p); err != nil {
 					return err
 				}
 				x := slice[i:j]
-				if err := json.Unmarshal(p, &x); err != nil {
+				if err := json.Unmarshal(*p, &x); err != nil {
 					return err
 				}
 				if len(x) != j-i {
@@ -49,10 +54,8 @@ func init() {
 }
 
 var (
-	typeOfString     = reflect.TypeOf("")
-	typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
-	typeOfInt        = reflect.TypeOf(0)
-	typeOfSliceOfInt = reflect.SliceOf(typeOfInt)
+	typeOfString = reflect.TypeOf("")
+	typeOfInt    = reflect.TypeOf(0)
 )
 
 func TestCodec(t *testing.T) {
@@ -300,5 +303,35 @@ func TestTypes(t *testing.T) {
 	}
 	for _, cols := range types {
 		testRoundTrip(t, cols...)
+	}
+}
+
+func TestSession(t *testing.T) {
+	s := make(session)
+	k1, k2 := frame.FreshKey(), frame.FreshKey()
+	var x *int
+	if !s.State(k1, &x) {
+		t.Fatal("k1 not initialized")
+	}
+	var y *string
+	if !s.State(k2, &y) {
+		t.Fatal("k2 not initialized")
+	}
+	*y = "ok"
+
+	x = nil
+	if s.State(k1, &x) {
+		t.Fatal("k1 initialized twice")
+	}
+	if got, want := *x, 0; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	y = nil
+	if s.State(k2, &y) {
+		t.Fatal("k2 initialized twice")
+	}
+	if got, want := *y, "ok"; got != want {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

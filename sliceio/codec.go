@@ -15,12 +15,21 @@ import (
 	"github.com/grailbio/bigslice/frame"
 )
 
-type session map[interface{}]interface{}
+type session map[frame.Key]reflect.Value
 
-func (s session) Store(key, value interface{}) { s[key] = value }
-func (s session) Load(key interface{}) (value interface{}, ok bool) {
-	value, ok = s[key]
-	return
+func (s session) State(key frame.Key, state interface{}) (fresh bool) {
+	v, ok := s[key]
+	if !ok {
+		typ := reflect.TypeOf(state).Elem()
+		if typ.Kind() == reflect.Ptr {
+			v = reflect.New(typ.Elem())
+		} else {
+			v = reflect.Zero(typ)
+		}
+		s[key] = v
+	}
+	reflect.Indirect(reflect.ValueOf(state)).Set(v)
+	return !ok
 }
 
 type gobEncoder struct {

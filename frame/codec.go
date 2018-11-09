@@ -4,16 +4,26 @@
 
 package frame
 
+import "sync/atomic"
+
+// Key represents a key that can be used to store session specific
+// state.
+type Key uint64
+
 // Session is a key-value store that is used by frame codecs to
 // store session-specific state.
 type Session interface {
-	// Store associates the provided key with value. Store
-	// previous values associated with the key.
-	Store(key, value interface{})
-	// Load returns the value associated with key, as well
-	// as a boolean indicating whether a nonempty entry
-	// was found.
-	Load(key interface{}) (value interface{}, ok bool)
+	// State retrieves the session state for the provided key
+	// into the pointer state. If state is not a pointer, then
+	// State will panic. State returns true the first time the key
+	// is encountered in the session. This is typically used by
+	// user code to initialize the state.
+	//
+	// If the state value is a pointer, then the first call to State
+	// sets the state pointer (a pointer to a pointer) to a newly
+	// allocated value. Otherwise it is set to a zero value of the
+	// value type.
+	State(key Key, state interface{}) bool
 }
 
 // An Encoder manages transmission of data over a connection or file.
@@ -29,4 +39,12 @@ type Decoder interface {
 	// Decode decodes a value from the underlying stream using
 	// Gob.
 	Decode(v interface{}) error
+}
+
+var key uint64
+
+// FreshKey returns a unique key that can be used to store
+// state in sessions.
+func FreshKey() Key {
+	return Key(atomic.AddUint64(&key, 1))
 }
