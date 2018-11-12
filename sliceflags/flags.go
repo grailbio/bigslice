@@ -60,7 +60,7 @@ func RegisterSystemProvider(name string, provider Provider) {
 //   sliceflags.RegisterSystemProfile("my-ec2-app", "ec2:dataspace=500")
 // can accept
 //   --system=my-ec2-app
-// as a synomyn for
+// as a synonym for
 //   --system=ec2:dataspace=500
 func RegisterSystemProfile(name, profile string) {
 	mu.Lock()
