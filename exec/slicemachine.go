@@ -14,6 +14,7 @@ import (
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/base/sync/once"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
@@ -41,11 +42,11 @@ type sliceMachine struct {
 
 	// Compiles ensures that each invocation is compiled exactly once on
 	// the machine.
-	Compiles taskOnce
+	Compiles once.Map
 
 	// Commits keeps track of which combine keys have been committed
 	// on the machine, so that they are run exactly once on the machine.
-	Commits taskOnce
+	Commits once.Map
 
 	Stats  *stats.Map
 	Status *status.Task

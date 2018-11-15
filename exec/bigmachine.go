@@ -24,6 +24,7 @@ import (
 	"github.com/grailbio/base/retry"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/base/sync/ctxsync"
+	"github.com/grailbio/base/sync/once"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/frame"
@@ -415,7 +416,7 @@ type worker struct {
 
 	mu       sync.Mutex
 	cond     *ctxsync.Cond
-	compiles taskOnce
+	compiles once.Map
 	tasks    map[uint64]map[string]*Task
 	slices   map[uint64]bigslice.Slice
 	stats    *stats.Map
