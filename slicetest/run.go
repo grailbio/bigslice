@@ -33,6 +33,16 @@ func Run(t *testing.T, slice bigslice.Slice) *sliceio.Scanner {
 	return res.Scan(ctx)
 }
 
+// RunErr evaluates the provided slice in local execution mode
+// and returns the error, if any.
+func RunErr(slice bigslice.Slice) error {
+	ctx := context.Background()
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	sess := exec.Start(exec.Local)
+	_, err := sess.Run(ctx, fn)
+	return err
+}
+
 // ScanAll scans all entries from the scanner into the provided
 // columns, which must be pointers to slices of the correct column
 // types. For example, to read all values for a Slice<int, string>:
