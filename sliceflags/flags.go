@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/user"
 	"runtime"
 	"strconv"
 	"strings"
@@ -186,7 +187,15 @@ func (ec2 *EC2) ExecOption() exec.Option {
 	if ec2.Options == nil {
 		return exec.Bigmachine(&ec2system.System{})
 	}
-	instance := &ec2system.System{}
+	instance := &ec2system.System{
+		Username: "unknown",
+	}
+	u, err := user.Current()
+	if err == nil {
+		instance.Username = u.Username
+	} else {
+		log.Printf("newec2: get current user: %v", err)
+	}
 	for key, val := range ec2.Options {
 		switch key {
 		case "instance":
