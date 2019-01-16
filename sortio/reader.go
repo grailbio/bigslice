@@ -85,19 +85,23 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		}
 		// TODO(marius): pass a vector of values to be combined, if it is supported
 		// by the combiner.
-		var key, val reflect.Value
+		vcol := out.NumOut() - 1
+		var combined reflect.Value
 		for i, buf := range combine {
+			val := buf.Frame.Index(vcol, buf.Index)
 			if i == 0 {
-				key = buf.Frame.Index(0, buf.Index)
-				val = buf.Frame.Index(1, buf.Index)
+				combined = val
 			} else {
-				val = r.combiner.Call([]reflect.Value{val, buf.Frame.Index(1, buf.Index)})[0]
+				combined = r.combiner.Call([]reflect.Value{combined, val})[0]
 			}
 		}
 		// Emit the output before overwriting the frame. Note that key and val are
 		// references to slice elements.
-		out.Index(0, n).Set(key)
-		out.Index(1, n).Set(val)
+
+		// Copy key columns first, and then set the combined value.
+		frame.Copy(out.Slice(n, n+1), combine[0].Frame.Slice(combine[0].Index, combine[0].Index+1))
+		out.Index(vcol, n).Set(combined)
+
 		for _, buf := range combine {
 			buf.Index++
 			if buf.Index == buf.Len {

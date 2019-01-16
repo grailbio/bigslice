@@ -18,6 +18,11 @@ type Type interface {
 	NumOut() int
 	// Out returns the data type of the ith column.
 	Out(i int) reflect.Type
+	// Prefix returns the number of columns in the type
+	// which are considered the type's prefix. A type's
+	// prefix is the set of columns which are considered
+	// the type's key columns for operations like reduce.
+	Prefix() int
 }
 
 type typeSlice []reflect.Type
@@ -29,6 +34,7 @@ func New(types ...reflect.Type) Type {
 
 func (t typeSlice) NumOut() int            { return len(t) }
 func (t typeSlice) Out(i int) reflect.Type { return t[i] }
+func (t typeSlice) Prefix() int            { return 1 }
 
 // Assignable reports whether column type in can be
 // assigned to out.
@@ -87,6 +93,8 @@ func (a appendType) Out(i int) reflect.Type {
 	return a.t2.Out(i - a.t1.NumOut())
 }
 
+func (a appendType) Prefix() int { return a.t1.Prefix() }
+
 func Append(t1, t2 Type) Type {
 	return appendType{t1, t2}
 }
@@ -105,6 +113,15 @@ func (s sliceType) Out(i int) reflect.Type {
 		panic("invalid index")
 	}
 	return s.t.Out(s.i + i)
+}
+
+// BUG(marius): prefixes are lost when slicing a type.
+func (s sliceType) Prefix() int {
+	// TODO(marius): figure out how to properly compute
+	// prefixes for appended types and sliced types.
+	// This is currently only used in places which do not
+	// accept prefixes anyway.
+	return 1
 }
 
 func Slice(t Type, i, j int) Type {

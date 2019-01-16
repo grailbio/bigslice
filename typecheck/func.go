@@ -10,6 +10,12 @@ import (
 	"github.com/grailbio/bigslice/slicetype"
 )
 
+type funcSliceType struct {
+	reflect.Type
+}
+
+func (funcSliceType) Prefix() int { return 1 }
+
 // Func deconstructs a function's argument and return types into
 // slicetypes. If x is not a function, Func returns false.
 func Func(x interface{}) (arg, ret slicetype.Type, ok bool) {
@@ -24,5 +30,5 @@ func Func(x interface{}) (arg, ret slicetype.Type, ok bool) {
 	for i := 0; i < t.NumIn(); i++ {
 		in[i] = t.In(i)
 	}
-	return slicetype.New(in...), t, true
+	return slicetype.New(in...), funcSliceType{t}, true
 }

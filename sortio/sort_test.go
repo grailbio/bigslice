@@ -216,3 +216,47 @@ func TestSortReader(t *testing.T) {
 		}
 	}
 }
+
+func TestReduceReader(t *testing.T) {
+	const (
+		N = 1000
+		M = 10
+	)
+	var (
+		ints = make([]int, N)
+		strs = make([]string, N)
+	)
+	for i := range ints {
+		ints[i] = i
+		strs[i] = "x"
+	}
+	f := frame.Slices(ints, strs, ints)
+	f = f.Prefixed(2)
+	readers := make([]sliceio.Reader, M)
+	for i := range readers {
+		readers[i] = sliceio.FrameReader(f)
+	}
+	reducer := Reduce(f, "testreduce", readers, reflect.ValueOf(func(x, y int) int { return x + y }))
+	var (
+		outIntsKey []int
+		outStrsKey []string
+		outIntsVal []int
+	)
+	if err := sliceio.ReadAll(context.Background(), reducer, &outIntsKey, &outStrsKey, &outIntsVal); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(outIntsKey), N; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range outIntsKey {
+		if got, want := outIntsKey[i], i; got != want {
+			t.Errorf("index %d: got %v, want %v", i, got, want)
+		}
+		if got, want := outStrsKey[i], "x"; got != want {
+			t.Errorf("index %d: got %v, want %v", i, got, want)
+		}
+		if got, want := outIntsVal[i], i*M; got != want {
+			t.Errorf("index %d: got %v, want %v", i, got, want)
+		}
+	}
+}

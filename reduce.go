@@ -25,6 +25,10 @@ import (
 // reduced to their aggregated value aggressively. This can often
 // speed up computations significantly.
 //
+// The slice to be reduced must have exactly 1 residual column: that is,
+// its prefix must leave just one column as the value column to be
+// aggregated.
+//
 // TODO(marius): Reduce currently maintains the working set of keys
 // in memory, and is thus appropriate only where the working set can
 // fit in memory. For situations where this is not the case, Cogroup
@@ -35,21 +39,18 @@ import (
 // definitions so that we can combine-read all partitions on one machine
 // simultaneously.
 func Reduce(slice Slice, reduce interface{}) Slice {
-	arg, ret, ok := typecheck.Func(reduce)
-	if !ok {
-		typecheck.Panicf(1, "reduce: invalid reduce function %T", reduce)
-	}
-	if slice.NumOut() != 2 {
-		typecheck.Panic(1, "reduce: input slice must have exactly two columns")
-	}
-	if arg.NumOut() != 2 || arg.Out(0) != slice.Out(1) || arg.Out(1) != slice.Out(1) || ret.NumOut() != 1 || ret.Out(0) != slice.Out(1) {
-		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, slice.Out(1), slice.Out(1), slice.Out(1))
+	if res := slice.NumOut() - slice.Prefix(); res != 1 {
+		typecheck.Panicf(1, "the slice must only have one 1 residual column; has %d", res)
 	}
 	if !canMakeCombiningFrame(slice) {
 		typecheck.Panicf(1, "cannot combine values for keys of type %s", slice.Out(0))
 	}
-	if !frame.CanHash(slice.Out(0)) {
-		typecheck.Panicf(1, "key type %s is not partitionable", slice.Out(0))
+	arg, ret, ok := typecheck.Func(reduce)
+	if !ok {
+		typecheck.Panicf(1, "reduce: invalid reduce function %T", reduce)
+	}
+	if arg.NumOut() != 2 || arg.Out(0) != slice.Out(1) || arg.Out(1) != slice.Out(1) || ret.NumOut() != 1 || ret.Out(0) != slice.Out(1) {
+		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, slice.Out(1), slice.Out(1), slice.Out(1))
 	}
 	return &reduceSlice{slice, reflect.ValueOf(reduce)}
 }
@@ -75,5 +76,10 @@ func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
 func canMakeCombiningFrame(typ slicetype.Type) bool {
-	return typ.NumOut() == 2 && frame.CanHash(typ.Out(0)) && frame.CanCompare(typ.Out(0))
+	for i := 0; i < typ.Prefix(); i++ {
+		if !frame.CanHash(typ.Out(i)) || !frame.CanCompare(typ.Out(i)) {
+			return false
+		}
+	}
+	return true
 }

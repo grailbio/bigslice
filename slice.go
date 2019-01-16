@@ -71,10 +71,8 @@ const (
 // perform their own dynamic type checking. Schematically we write
 // the n-ary slice with types t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
 type Slice interface {
-	// NumOut returns the number of columns in this slice.
-	NumOut() int
-	// Out returns the data type of a column.
-	Out(column int) reflect.Type
+	slicetype.Type
+
 	// Op is a descriptive name of the operation that this Slice
 	// represents.
 	Op() string
@@ -130,6 +128,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 }
 
 func (*constSlice) Op() string               { return "const" }
+func (*constSlice) Prefix() int              { return 1 }
 func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
@@ -226,6 +225,7 @@ func ReaderFunc(nshard int, read interface{}) Slice {
 }
 
 func (*readerFuncSlice) Op() string               { return "reader" }
+func (*readerFuncSlice) Prefix() int              { return 1 }
 func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
@@ -587,6 +587,8 @@ type foldSlice struct {
 // Schematically:
 //
 //	Fold(Slice<t1, t2, ..., tn>, func(accum acctype, v2 t2, ..., vn tn) acctype) Slice<t1, acctype>
+//
+// BUG(marius): Fold does not yet support slice grouping
 func Fold(slice Slice, fold interface{}) Slice {
 	if n := slice.NumOut(); n < 2 {
 		typecheck.Panicf(1, "Fold can be applied only for slices with at least two columns; got %d", n)
@@ -748,6 +750,26 @@ func (s *scanReader) Read(ctx context.Context, out frame.Frame) (n int, err erro
 func (s scanSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	return &scanReader{s, shard, deps[0]}
 }
+
+type prefixSlice struct {
+	Slice
+	prefix int
+}
+
+// Prefixed returns a slice with the provided prefix. A prefix determines
+// the number of columns (starting at 0) in the slice that compose the
+// key values for that slice for operations like reduce.
+func Prefixed(slice Slice, prefix int) Slice {
+	if prefix <= 1 {
+		typecheck.Panic(1, "prefixed: prefix must include at least one column")
+	}
+	if prefix > slice.NumOut() {
+		typecheck.Panicf(1, "prefixed: prefix %d is greater than number of columns %d", prefix, slice.NumOut())
+	}
+	return &prefixSlice{slice, prefix}
+}
+
+func (p *prefixSlice) Prefix() int { return p.prefix }
 
 // String returns a string describing the slice and its type.
 func String(slice Slice) string {

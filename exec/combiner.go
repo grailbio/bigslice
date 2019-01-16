@@ -43,7 +43,7 @@ const (
 	hashMaxCapacity = 1 << 29
 )
 
-// TODO(marius): use ARC or something similary adaptive when
+// TODO(marius): use ARC or something similarly adaptive when
 // compacting and spilling combiner frames? It could make a big
 // difference if keys have varying degrees of temporal locality.
 
@@ -62,6 +62,9 @@ type combiningFrame struct {
 	Combiner reflect.Value
 
 	typ slicetype.Type
+
+	// vcol is the index of the column that stores the combined value.
+	vcol int
 
 	// Data is the data frame that is being combined. It stores both
 	// the hash table and a scratch table.
@@ -86,24 +89,19 @@ type combiningFrame struct {
 	mask int
 }
 
-// CanMakeCombiningFrame tells whether the provided Frame type can be
-// be made into a combining frame.
-func canMakeCombiningFrame(typ slicetype.Type) bool {
-	return typ.NumOut() == 2 && frame.CanHash(typ.Out(0)) && frame.CanCompare(typ.Out(0))
-}
-
 // MakeCombiningFrame creates and returns a new CombiningFrame with
 // the provided type and combiner. MakeCombiningFrame panics if there
 // is type disagreement. N and nscratch determine the initial frame
 // size and scratch space size respective. The initial frame size
 // must be a power of two.
 func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value, n, nscratch int) *combiningFrame {
-	if typ.NumOut() != 2 {
-		typecheck.Panicf(1, "combining frame expects 2 columns, got %d", typ.NumOut())
+	if res := typ.NumOut() - typ.Prefix(); res != 1 {
+		typecheck.Panicf(1, "combining frame expects 1 residual column, got %d", res)
 	}
 	c := &combiningFrame{
 		Combiner: combiner,
 		typ:      typ,
+		vcol:     typ.NumOut() - 1,
 	}
 	_, _, _ = c.make(n, nscratch)
 	return c
@@ -145,6 +143,7 @@ func (c *combiningFrame) Combine(f frame.Frame) {
 
 // Combine combines n items in the scratch space.
 func (c *combiningFrame) combine(n int) {
+	// TODO(marius): use cuckoo hashing
 	for i := 0; i < n; i++ {
 		idx := int(c.scratch.HashWithSeed(i, hashSeed)) & c.mask
 		for try := 1; ; try++ {
@@ -154,10 +153,10 @@ func (c *combiningFrame) combine(n int) {
 				c.added()
 				break
 			} else if !c.data.Less(idx, c.cap+i) && !c.data.Less(c.cap+i, idx) {
-				c.scratchCall[0] = c.data.Index(1, idx)
-				c.scratchCall[1] = c.scratch.Index(1, i)
+				c.scratchCall[0] = c.data.Index(c.vcol, idx)
+				c.scratchCall[1] = c.scratch.Index(c.vcol, i)
 				rvs := c.Combiner.Call(c.scratchCall[:])
-				c.data.Index(1, idx).Set(rvs[0])
+				c.data.Index(c.vcol, idx).Set(rvs[0])
 				c.hits[idx]++
 				break
 			} else {

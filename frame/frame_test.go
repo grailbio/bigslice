@@ -250,6 +250,17 @@ func TestSort(t *testing.T) {
 	if !sort.IsSorted(f) {
 		t.Error("failed to sort")
 	}
+
+	n := f.Len()
+	g := Make(f, n*2, n*2)
+	Copy(g, f)
+	f.Zero(1) // make sure these are all empty strings so that the sort tests grouping
+	Copy(g.Slice(n, n*2), f)
+	g = g.Prefixed(2)
+	sort.Sort(g)
+	if !sort.IsSorted(g) {
+		t.Error("failed to sort (grouped)")
+	}
 }
 
 var copySizes = [...]int{8, 32, 256, 1024, 65536}

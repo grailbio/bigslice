@@ -84,6 +84,9 @@ type Frame struct {
 	// base pointers, the offset represents the 0 index of
 	// this frame. Len and cap are relative to the offset.
 	off, len, cap int
+
+	// Prefix is the index of the last column in the frame's prefix.
+	prefix int
 }
 
 // Empty is the empty frame.
@@ -96,9 +99,10 @@ func Make(types slicetype.Type, len, cap int) Frame {
 		panic("frame.Make: invalid len, cap")
 	}
 	f := Frame{
-		data: make([]data, types.NumOut()),
-		len:  len,
-		cap:  cap,
+		data:   make([]data, types.NumOut()),
+		len:    len,
+		cap:    cap,
+		prefix: types.Prefix() - 1,
 	}
 	for i := range f.data {
 		v := reflect.MakeSlice(reflect.SliceOf(types.Out(i)), cap, cap)
@@ -231,6 +235,9 @@ func (f Frame) NumOut() int { return len(f.data) }
 // Out implements slicetype.Type.
 func (f Frame) Out(i int) reflect.Type { return f.data[i].typ.Type }
 
+// Prefix implements slicetype.Type.
+func (f Frame) Prefix() int { return f.prefix + 1 }
+
 // Slice returns the frame f[i:j]. It panics if indices are out of bounds.
 func (f Frame) Slice(i, j int) Frame {
 	if i < 0 || j < i || j > f.cap {
@@ -241,6 +248,7 @@ func (f Frame) Slice(i, j int) Frame {
 		f.off + i,
 		j - i,
 		f.cap - i,
+		f.prefix,
 	}
 }
 
@@ -328,6 +336,16 @@ func (f Frame) UnsafeIndexAddr(col, i int) uintptr {
 	return uintptr(f.data[col].ptr) + uintptr(f.off+i)*f.data[col].typ.size
 }
 
+// Prefixed returns f with the given prefix.
+func (f Frame) Prefixed(prefix int) Frame {
+	if prefix > len(f.data) || prefix < 0 {
+		panic(fmt.Sprintf("frame.Prefix: prefix %d is invalid for frame with %d columns", prefix, len(f.data)))
+	}
+	g := f
+	g.prefix = prefix - 1
+	return g
+}
+
 // Swap swaps rows i and j in frame f.
 func (f Frame) Swap(i, j int) {
 	for k := range f.data {
@@ -356,18 +374,31 @@ func (f Frame) ZeroAll() {
 // TODO(marius): this method presents an unnecessary indirection;
 // provide a way to get at a sort.Interface directly.
 func (f Frame) Less(i, j int) bool {
-	return f.data[0].ops.Less(i+f.off, j+f.off)
+	for col := 0; col < f.prefix; col++ {
+		switch {
+		case f.data[col].ops.Less(i+f.off, j+f.off):
+			return true
+		case f.data[col].ops.Less(j+f.off, i+f.off):
+			return false
+		}
+	}
+	return f.data[f.prefix].ops.Less(i+f.off, j+f.off)
 }
 
-// Hash returns a 32-bit hash of the first column of frame f.
+// Hash returns a 32-bit hash of the first column of frame f with
+// a seed of 0.
 func (f Frame) Hash(i int) uint32 {
-	return f.data[0].ops.HashWithSeed(i+f.off, 0)
+	return f.HashWithSeed(i, 0)
 }
 
 // HashWithSeed returns a 32-bit seeded hash of the first column of
 // frame f.
 func (f Frame) HashWithSeed(i int, seed uint32) uint32 {
-	return f.data[0].ops.HashWithSeed(i+f.off, seed)
+	var hash uint32
+	for col := 0; col < f.prefix; col++ {
+		hash ^= f.data[col].ops.HashWithSeed(i+f.off, seed)
+	}
+	return hash ^ f.data[f.prefix].ops.HashWithSeed(i+f.off, seed)
 }
 
 // HasCodec returns whether column col has a type-specific

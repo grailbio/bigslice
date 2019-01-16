@@ -28,10 +28,12 @@ type cogroupSlice struct {
 //	Cogroup(Slice<tk, t11, ..., t1n>, Slice<tk, t21, ..., t2n>, ..., Slice<tk, tm2, ..., tmn>)
 //		Slice<tk, []t11, ..., []t1n, []t21, ..., []tmn>
 //
-// It thus implemnets a form of generalized JOIN and GROUP.
+// It thus implements a form of generalized JOIN and GROUP.
 //
 // Cogroup uses the first column of each slice as its key; keys must be
 // partitionable.
+//
+// BUG(marius): Cogroup does not yet support prefixes.
 //
 // TODO(marius): don't require spilling to disk when the input data
 // set is small enough.
@@ -46,6 +48,9 @@ func Cogroup(slices ...Slice) Slice {
 	}
 	var keyType reflect.Type
 	for i, slice := range slices {
+		if slice.Prefix() != 1 {
+			typecheck.Panicf(1, "cogroup: slice has prefix=%d, expected prefix=1", slice.Prefix())
+		}
 		if slice.NumOut() == 0 {
 			typecheck.Panicf(1, "cogroup: slice %d has no columns", i)
 		}
@@ -84,12 +89,12 @@ func Cogroup(slices ...Slice) Slice {
 	}
 }
 
-func (c *cogroupSlice) NumShard() int        { return c.numShard }
-func (c *cogroupSlice) ShardType() ShardType { return HashShard }
-
+func (c *cogroupSlice) NumShard() int          { return c.numShard }
+func (c *cogroupSlice) ShardType() ShardType   { return HashShard }
 func (c *cogroupSlice) NumOut() int            { return len(c.out) }
 func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
 func (c *cogroupSlice) Op() string             { return "cogroup" }
+func (*cogroupSlice) Prefix() int              { return 1 }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
 func (*cogroupSlice) Combiner() *reflect.Value { return nil }
