@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
@@ -59,43 +58,73 @@ type Executor interface {
 func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots []*Task, group *status.Group) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	tasks := make(map[*Task]bool)
+
+	// First initialize scheduler state. We build three maps and a todo list:
+	var (
+		// Tasks is the full set of tasks that will be run by this evaluation.
+		// They do not include tasks that are handed to us from a previous
+		// evaluation, for example as a dependency introduced during
+		// an iterative Bigslice session.
+		tasks = make(map[*Task]bool)
+		// Pending stores the number of pending dependencies for a
+		// particular task. When the count reaches 0, the task is then
+		// runnable.
+		pending = make(map[*Task]int)
+		// Deps stores the set of dependees for a given task: it is the
+		// reverse set of edges for a given task in the graph. This is used
+		// to maintain the completion counts stored in complete.
+		deps = make(map[*Task][]*Task)
+		// Todo is the current list of tasks that are ready. They should be
+		// marked runnable by the scheduler.
+		todo []*Task
+	)
 	for _, task := range roots {
-		task.all(tasks)
+		initialize(task, tasks, pending, &todo, deps)
 	}
 	var (
-		donec   = make(chan struct{}, 8)
+		donec   = make(chan *Task, 8)
 		errc    = make(chan error)
 		running int
 	)
-	for {
-		// Drain the done channel to coalesce update requests.
+	for len(todo) > 0 || running > 0 {
+		group.Printf("tasks: runnable: %d/%d", running, len(tasks))
 	drain:
-		for {
+		for len(todo) == 0 && running > 0 {
 			select {
-			case <-donec:
-				running--
-			default:
-				break drain
-			}
-		}
-
-		todo := make(map[*Task]bool)
-		for _, task := range roots {
-			task.Lock()
-			err := addReady(todo, task)
-			task.Unlock()
-			if err != nil {
+			case err := <-errc:
+				if err == nil {
+					panic("not nil err")
+				}
 				return err
+			case task := <-donec:
+				running--
+				task.Lock()
+				if task.state == TaskLost {
+					// Resubmit lost tasks when we can.
+					if task.CombineKey != "" {
+						return fmt.Errorf("unrecoverable combine task %v lost", task)
+					}
+					task.state = TaskInit
+					todo = append(todo, task)
+					task.Unlock()
+					continue drain
+				}
+				if task.state != TaskOk {
+					panic("exec.Eval: invalid task state " + task.state.String())
+				}
+				task.Unlock()
+				for _, deptask := range deps[task] {
+					pending[deptask]--
+					if pending[deptask] == 0 {
+						todo = append(todo, deptask)
+					}
+				}
 			}
-		}
-		if len(todo) == 0 && running == 0 {
-			break
 		}
 
 		// Mark each ready task as runnable and keep track of them.
 		// The executor manages parallelism.
-		for task := range todo {
+		for _, task := range todo {
 			log.Debug.Printf("runnable: %s", task)
 			// TODO(marius): this will result in multiple task entries when there is
 			// concurrent evaluation, perhaps status should be managed by Task.
@@ -122,75 +151,40 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				if err != nil {
 					errc <- err
 				} else {
-					donec <- struct{}{}
+					donec <- task
 				}
 			}(task)
 		}
-
-		var stateCounts [maxState]int
-		for task := range tasks {
-			task.Lock()
-			stateCounts[task.state]++
-			task.Unlock()
-		}
-		states := make([]string, maxState)
-		for state, count := range stateCounts {
-			states[state] = fmt.Sprintf("%s=%d", TaskState(state), count)
-		}
-		group.Printf("tasks: %s", strings.Join(states, " "))
-		select {
-		case <-donec:
-			running--
-		case err := <-errc:
-			return err
-		}
+		todo = todo[:0]
 	}
 	return nil
 }
 
-// AddReady  adds all tasks that are runnable but not yet running to
-// the provided tasks set. AddReady requires that task is locked on
-// entry.
-//
-// AddReady locks sub-tasks while traversing the graph. Since task
-// graphs are DAGs and children are always traversed in the same
-// order, concurrent addReady invocations will not deadlock.
-func addReady(tasks map[*Task]bool, task *Task) error {
+// Initialize initializes the evaluator run list state required for scheduling.
+// See the comment in Eval for a detailed explanation of the function of
+// these lists.
+func initialize(task *Task, tasks map[*Task]bool, pending map[*Task]int, todo *[]*Task, reverse map[*Task][]*Task) bool {
+	// This can be true when we're handed tasks from a previous run,
+	// e.g., during an iterative session.
+	if task.state != TaskInit {
+		return false
+	}
 	if tasks[task] {
-		return nil
+		return true
 	}
-	switch task.state {
-	case TaskInit:
-	case TaskWaiting, TaskRunning, TaskOk:
-		// We only add back lost tasks after they've been acknowledged
-		// by the main evaluation loop.
-		return nil
-	case TaskLost:
-		// If we encounter a lost task, we re-initialize it.
-		if task.CombineKey != "" {
-			return fmt.Errorf("unrecoverable combine task %v lost", task)
-		}
-		task.state = TaskInit
-	case TaskErr:
-		return task.err
-	default:
-		panic("unhandled task state")
-	}
-
+	tasks[task] = true
 	ready := true
 	for _, dep := range task.Deps {
 		for _, deptask := range dep.Tasks {
-			deptask.Lock()
-			err := addReady(tasks, deptask)
-			ready = ready && deptask.state == TaskOk
-			deptask.Unlock()
-			if err != nil {
-				return err
+			reverse[deptask] = append(reverse[deptask], task)
+			pending[task]++
+			if initialize(deptask, tasks, pending, todo, reverse) {
+				ready = false
 			}
 		}
 	}
 	if ready {
-		tasks[task] = true
+		*todo = append(*todo, task)
 	}
-	return nil
+	return true
 }

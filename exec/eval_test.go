@@ -7,6 +7,7 @@ package exec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -171,5 +172,67 @@ func TestResubmitLostTask(t *testing.T) {
 
 	if err := test.Wait(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type benchExecutor struct{ *testing.B }
+
+func (benchExecutor) Start(*Session) (shutdown func()) {
+	return func() {}
+}
+
+func (b benchExecutor) Runnable(task *Task) {
+	task.Lock()
+	switch task.state {
+	case TaskWaiting, TaskRunning:
+		b.Fatalf("invalid task state %s", task.state)
+	}
+	// Go directly to done to let the scheduler do its work.
+	task.state = TaskOk
+	task.Broadcast()
+	task.Unlock()
+}
+
+func (benchExecutor) Reader(context.Context, *Task, int) sliceio.Reader {
+	panic("not implemented")
+}
+
+func (benchExecutor) HandleDebug(handler *http.ServeMux) {
+	panic("not implemented")
+}
+
+func BenchmarkEval(b *testing.B) {
+	compile := func() ([]*Task, bigslice.Invocation) {
+		tasks, _, inv := compileFunc(func() bigslice.Slice {
+			const (
+				Nstage = 5
+				Nshard = 1000
+			)
+			keys := make([]string, Nshard*2)
+			for i := range keys {
+				keys[i] = fmt.Sprint(i)
+			}
+			values := make([]int, Nshard*2)
+			for i := range values {
+				values[i] = i
+			}
+
+			slice := bigslice.Const(Nshard, keys, values)
+			for stage := 0; stage < Nstage; stage++ {
+				slice = bigslice.Reduce(slice, func(i, j int) int { return i + j })
+			}
+			return slice
+		})
+		return tasks, inv
+	}
+	ctx := context.Background()
+	for i := 0; i < b.N; i++ {
+		tasks, inv := compile()
+		if i == 0 {
+			b.Log("ntask=", len(tasks))
+		}
+		if err := Eval(ctx, benchExecutor{b}, inv, tasks, nil); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
