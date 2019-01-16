@@ -268,9 +268,9 @@ compile:
 	// Populate the run request. Include the locations of all dependent
 	// outputs so that the receiving worker can read from them.
 	req := taskRunRequest{
-		Task:       task.Name,
+		Name:       task.Name,
 		Invocation: task.Invocation.Index,
-		Locations:  make(map[string]string),
+		Locations:  make(map[TaskName]string),
 	}
 	g, _ := errgroup.WithContext(ctx)
 	for _, dep := range task.Deps {
@@ -417,7 +417,7 @@ type worker struct {
 	mu       sync.Mutex
 	cond     *ctxsync.Cond
 	compiles once.Map
-	tasks    map[uint64]map[string]*Task
+	tasks    map[uint64]map[TaskName]*Task
 	slices   map[uint64]bigslice.Slice
 	stats    *stats.Map
 
@@ -431,7 +431,7 @@ type worker struct {
 
 func (w *worker) Init(b *bigmachine.B) error {
 	w.cond = ctxsync.NewCond(&w.mu)
-	w.tasks = make(map[uint64]map[string]*Task)
+	w.tasks = make(map[uint64]map[TaskName]*Task)
 	w.slices = make(map[uint64]bigslice.Slice)
 	w.combiners = make(map[string][]chan *combiner)
 	w.combinerStates = make(map[string]combinerState)
@@ -490,7 +490,7 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 		for _, task := range tasks {
 			task.all(all)
 		}
-		named := make(map[string]*Task)
+		named := make(map[TaskName]*Task)
 		for task := range all {
 			named[task.Name] = task
 		}
@@ -507,11 +507,11 @@ type taskRunRequest struct {
 	// Invocation is the invocation from which the task was compiled.
 	Invocation uint64
 
-	// Task is the name of the task compiled from Invocation.
-	Task string
+	// Name is the name of the task compiled from Invocation.
+	Name TaskName
 
 	// Locations contains the locations of the output of each dependency.
-	Locations map[string]string
+	Locations map[TaskName]string
 }
 
 type taskRunReply struct{} // nothing here yet
@@ -525,9 +525,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	if named == nil {
 		return errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))
 	}
-	task := named[req.Task]
+	task := named[req.Name]
 	if task == nil {
-		return errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Task))
+		return errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Name))
 	}
 
 	task.Lock()
@@ -554,7 +554,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			err = errors.E(err, errors.Fatal)
 		}
 		if err != nil {
-			log.Printf("task %s error: %v", req.Task, err)
+			log.Printf("task %s error: %v", req.Name, err)
 			task.Error(errors.Recover(err))
 		} else {
 			task.Set(TaskOk)
@@ -606,7 +606,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				}
 				r := &machineReader{
 					Machine:       machine,
-					TaskPartition: taskPartition{dep.CombineKey, dep.Partition},
+					TaskPartition: taskPartition{TaskName{Op: dep.CombineKey}, dep.Partition},
 				}
 				in = append(in, &statsReader{r, recordsIn})
 				defer r.Close()
@@ -905,15 +905,15 @@ func (w *worker) Stats(ctx context.Context, _ struct{}, values *stats.Values) er
 
 // TaskPartition names a partition of a task.
 type taskPartition struct {
-	// Task is the name of the task whose output is to be read.
-	Task string
+	// Name is the name of the task whose output is to be read.
+	Name TaskName
 	// Partition is the partition number to read.
 	Partition int
 }
 
 // Stat returns the SliceInfo for a slice.
 func (w *worker) Stat(ctx context.Context, tp taskPartition, info *sliceInfo) (err error) {
-	*info, err = w.store.Stat(ctx, tp.Task, tp.Partition)
+	*info, err = w.store.Stat(ctx, tp.Name, tp.Partition)
 	return
 }
 
@@ -952,7 +952,7 @@ func (w *worker) writeCombiner(key string) {
 		g.Go(func() error {
 			w.commitLimiter.Acquire(ctx, 1)
 			defer w.commitLimiter.Release(1)
-			wc, err := w.store.Create(ctx, key, part)
+			wc, err := w.store.Create(ctx, TaskName{Op: key}, part)
 			if err != nil {
 				return err
 			}
@@ -987,7 +987,7 @@ func (w *worker) writeCombiner(key string) {
 //
 // TODO(marius): should we flush combined outputs explicitly?
 func (w *worker) Read(ctx context.Context, req readRequest, rc *io.ReadCloser) (err error) {
-	*rc, err = w.store.Open(ctx, req.Task, req.Partition, req.Offset)
+	*rc, err = w.store.Open(ctx, req.Name, req.Partition, req.Offset)
 	return
 }
 
@@ -1005,8 +1005,8 @@ type machineRPCReader struct {
 
 // readRequest is the request payload for Worker.Run
 type readRequest struct {
-	// Task is the name of the task whose output is to be read.
-	Task string
+	// Name is the name of the task whose output is to be read.
+	Name TaskName
 	// Partition is the partition number to read.
 	Partition int
 	// Offset is the start offset of the read
@@ -1021,10 +1021,10 @@ func (r *machineRPCReader) Read(data []byte) (int, error) {
 		if r.reader == nil {
 			if r.retries > 0 {
 				log.Printf("Worker.Read %s: retrying(%d) rpc from offset %d",
-					r.taskPartition.Task, r.retries, r.bytes)
+					r.taskPartition.Name, r.retries, r.bytes)
 			}
 			if err := r.machine.RetryCall(r.ctx, "Worker.Read",
-				readRequest{r.taskPartition.Task, r.taskPartition.Partition, r.bytes}, &r.reader); err != nil {
+				readRequest{r.taskPartition.Name, r.taskPartition.Partition, r.bytes}, &r.reader); err != nil {
 				// machine.Call retries on temp errors, so we don't need to retry here.
 				r.err = err
 				return 0, r.err

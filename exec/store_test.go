@@ -23,7 +23,8 @@ func testStore(t *testing.T, store Store) {
 	var data []byte
 	fz.Fuzz(&data)
 	ctx := context.Background()
-	wc, err := store.Create(ctx, "test", 0)
+	task := TaskName{Op: "test", Shard: 1, NumShard: 2}
+	wc, err := store.Create(ctx, task, 0)
 	if err != nil {
 		t.Error(err)
 		return
@@ -33,7 +34,7 @@ func testStore(t *testing.T, store Store) {
 		return
 	}
 	// Make sure the buffer isn't available until it's closed.
-	_, err = store.Open(ctx, "test", 0, 0)
+	_, err = store.Open(ctx, task, 0, 0)
 	if err == nil {
 		t.Error("store prematurely unavailable")
 	} else if !errors.Is(errors.NotExist, err) {
@@ -43,7 +44,7 @@ func testStore(t *testing.T, store Store) {
 		t.Error(err)
 		return
 	}
-	info, err := store.Stat(ctx, "test", 0)
+	info, err := store.Stat(ctx, task, 0)
 	if err != nil {
 		t.Error(err)
 	} else {
@@ -55,7 +56,7 @@ func testStore(t *testing.T, store Store) {
 		}
 	}
 
-	rc, err := store.Open(ctx, "test", 0, 0)
+	rc, err := store.Open(ctx, task, 0, 0)
 	if err != nil {
 		t.Error(err)
 		return

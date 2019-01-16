@@ -94,6 +94,36 @@ type TaskDep struct {
 	CombineKey string
 }
 
+// A TaskName uniquely names a task by its constituent components.
+// Tasks with 0 shards are taken to be combiner tasks: they are
+// machine-local buffers of combiner outputs for some (non-overlapping)
+// subset of shards for a task.
+type TaskName struct {
+	// Op is a unique string describing the operation that is provided
+	// by the task.
+	Op string
+	// Shard and NumShard describe the shard processed by this task
+	// and the total number of shards to be processed.
+	Shard, NumShard int
+}
+
+// String returns a canonical representation of the task name,
+// formatted as:
+//
+//	{n.Op}@{n.NumShard}:{n.Shard}
+//	{n.Op}_combiner
+func (n TaskName) String() string {
+	if n.NumShard == 0 {
+		return n.Op + "_combiner"
+	}
+	return fmt.Sprintf("%s@%d:%d", n.Op, n.NumShard, n.Shard)
+}
+
+// IsCombiner returns whether the named task is a combiner task.
+func (n TaskName) IsCombiner() bool {
+	return n.NumShard == 0
+}
+
 // A Task represents a concrete computational task. Tasks form graphs
 // through dependencies; task graphs are compiled from slices.
 //
@@ -107,9 +137,9 @@ type Task struct {
 	// Invocation is the task's invocation, i.e. the Func invocation
 	// from which this task was compiled.
 	Invocation bigslice.Invocation
-	// Name is the name of the task. Tasks are named universally: they
-	// should be unique among all possible tasks in a bigslice session.
-	Name string
+	// Name is the name of the task. Tasks are named uniquely inside each
+	// Bigslice session.
+	Name TaskName
 	// Do starts computation for this task, returning a reader that
 	// computes batches of values on demand. Do is invoked with readers
 	// for the task's dependencies.
@@ -295,7 +325,7 @@ func (t *Task) All() []*Task {
 		tasks = append(tasks, task)
 	}
 	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].Name < tasks[j].Name
+		return tasks[i].Name.String() < tasks[j].Name.String()
 	})
 	return tasks
 }

@@ -66,11 +66,11 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 	for i := len(slices) - 1; i >= 0; i-- {
 		ops = append(ops, slices[i].Op())
 	}
-	name := namer.New(strings.Join(ops, "_"))
+	opName := namer.New(strings.Join(ops, "_"))
 	for i := range tasks {
 		tasks[i] = &Task{
 			Type:         slices[0],
-			Name:         fmt.Sprintf("%s@%d:%d", name, len(tasks), i),
+			Name:         TaskName{Op: opName, Shard: i, NumShard: len(tasks)},
 			Invocation:   inv,
 			NumPartition: 1,
 		}
@@ -122,7 +122,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 
 		var combineKey string
 		if lastSlice.Combiner() != nil {
-			combineKey = name + "_combiner"
+			combineKey = opName
 		}
 		// Assign a partitioner and partition width our dependencies, so that
 		// these are properly partitioned at the time of computation.

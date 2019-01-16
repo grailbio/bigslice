@@ -9,8 +9,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/ioutil"
+	"strconv"
 	"sync"
 
 	"github.com/grailbio/base/errors"
@@ -37,41 +39,41 @@ type writeCommitter interface {
 	Discard(ctx context.Context) error
 }
 
-// Store is an abstraction that stores data named by task and partition.
+// Store is an abstraction that stores partitioned data as produced by a task.
 type Store interface {
 	// Create returns a writer that populates data for the given
 	// task name and partition. The data is not be available
 	// to Open until the returned closer has been closed.
 	//
 	// TODO(marius): should we allow writes to be discarded as well?
-	Create(ctx context.Context, task string, partition int) (writeCommitter, error)
+	Create(ctx context.Context, task TaskName, partition int) (writeCommitter, error)
 
 	// Open returns a ReadCloser from which the stored contents of the named task
 	// and partition can be read. If the task and partition are not stored, an
 	// error with kind errors.NotExist is returned. The offset specifies the byte
 	// position from which to read.
-	Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error)
+	Open(ctx context.Context, task TaskName, partition int, offset int64) (io.ReadCloser, error)
 
 	// Stat returns metadata for the stored slice.
-	Stat(ctx context.Context, task string, partition int) (sliceInfo, error)
+	Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error)
 }
 
 // MemoryStore is a store implementation that maintains in-memory buffers
 // of task output.
 type memoryStore struct {
 	mu     sync.Mutex
-	tasks  map[string][][]byte
-	counts map[string][]int64
+	tasks  map[TaskName][][]byte
+	counts map[TaskName][]int64
 }
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
-		tasks:  make(map[string][][]byte),
-		counts: make(map[string][]int64),
+		tasks:  make(map[TaskName][][]byte),
+		counts: make(map[TaskName][]int64),
 	}
 }
 
-func (m *memoryStore) get(task string, partition int) ([]byte, int64) {
+func (m *memoryStore) get(task TaskName, partition int) ([]byte, int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.tasks[task]) <= partition {
@@ -80,7 +82,7 @@ func (m *memoryStore) get(task string, partition int) ([]byte, int64) {
 	return m.tasks[task][partition], m.counts[task][partition]
 }
 
-func (m *memoryStore) put(task string, partition int, p []byte, count int64) error {
+func (m *memoryStore) put(task TaskName, partition int, p []byte, count int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for len(m.tasks[task]) <= partition {
@@ -100,7 +102,7 @@ func (m *memoryStore) put(task string, partition int, p []byte, count int64) err
 
 type memoryWriter struct {
 	bytes.Buffer
-	task      string
+	task      TaskName
 	partition int
 	store     *memoryStore
 }
@@ -113,7 +115,7 @@ func (m *memoryWriter) Commit(ctx context.Context, count int64) error {
 	return m.store.put(m.task, m.partition, m.Buffer.Bytes(), count)
 }
 
-func (m *memoryStore) Create(ctx context.Context, task string, partition int) (writeCommitter, error) {
+func (m *memoryStore) Create(ctx context.Context, task TaskName, partition int) (writeCommitter, error) {
 	if b, _ := m.get(task, partition); b != nil {
 		return nil, errors.E(errors.Exists, fmt.Sprintf("create %s[%d]", task, partition))
 	}
@@ -124,7 +126,7 @@ func (m *memoryStore) Create(ctx context.Context, task string, partition int) (w
 	}, nil
 }
 
-func (m *memoryStore) Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error) {
+func (m *memoryStore) Open(ctx context.Context, task TaskName, partition int, offset int64) (io.ReadCloser, error) {
 	p, _ := m.get(task, partition)
 	if p == nil {
 		return nil, errors.E(errors.NotExist, fmt.Sprintf("open %s[%d]", task, partition))
@@ -135,7 +137,7 @@ func (m *memoryStore) Open(ctx context.Context, task string, partition int, offs
 	return ioutil.NopCloser(bytes.NewReader(p[offset:])), nil
 }
 
-func (m *memoryStore) Stat(ctx context.Context, task string, partition int) (sliceInfo, error) {
+func (m *memoryStore) Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error) {
 	b, n := m.get(task, partition)
 	if b == nil {
 		return sliceInfo{}, errors.E(errors.NotExist, fmt.Sprintf("stat %s[%d]", task, partition))
@@ -151,12 +153,21 @@ func (m *memoryStore) Stat(ctx context.Context, task string, partition int) (sli
 // S3).
 type fileStore struct {
 	// Prefix is the grailfile prefix under which task data are stored.
-	// A task's output is stored at "{Prefix}{task}p{partition}".
+	// A task's output is stored at "{Prefix}/{ophash}/{op}/{shardspec}/p{partition}".
 	Prefix string
 }
 
-func (s *fileStore) path(task string, partition int) string {
-	return fmt.Sprintf("%s%sp%03d", s.Prefix, task, partition)
+func (s *fileStore) path(task TaskName, partition int) string {
+	h := fnv.New32a()
+	h.Write([]byte(task.String()))
+	h0 := int64(h.Sum(nil)[0])
+	path := file.Join(s.Prefix, strconv.FormatInt(h0, 16), task.Op)
+	if task.IsCombiner() {
+		path = file.Join(path, "combiner")
+	} else {
+		path = file.Join(path, fmt.Sprintf("%03d-of-%03d", task.Shard, task.NumShard))
+	}
+	return file.Join(path, fmt.Sprintf("p%03d", partition))
 }
 
 type fileWriter struct {
@@ -173,15 +184,16 @@ func (w *fileWriter) Commit(ctx context.Context, count int64) error {
 	return closeFile(ctx, w.File)
 }
 
-func (s *fileStore) Create(ctx context.Context, task string, partition int) (writeCommitter, error) {
-	f, err := file.Create(ctx, s.path(task, partition))
+func (s *fileStore) Create(ctx context.Context, task TaskName, partition int) (writeCommitter, error) {
+	path := s.path(task, partition)
+	f, err := file.Create(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	return &fileWriter{File: f, Writer: f.Writer(ctx)}, nil
 }
 
-func (s *fileStore) Open(ctx context.Context, task string, partition int, offset int64) (io.ReadCloser, error) {
+func (s *fileStore) Open(ctx context.Context, task TaskName, partition int, offset int64) (io.ReadCloser, error) {
 	f, err := file.Open(ctx, s.path(task, partition))
 	if err != nil {
 		return nil, err
@@ -203,7 +215,7 @@ func (s *fileStore) Open(ctx context.Context, task string, partition int, offset
 	}, nil
 }
 
-func (s *fileStore) Stat(ctx context.Context, task string, partition int) (sliceInfo, error) {
+func (s *fileStore) Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error) {
 	f, err := file.Open(ctx, s.path(task, partition))
 	if err != nil {
 		return sliceInfo{}, err
