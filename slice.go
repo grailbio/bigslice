@@ -760,7 +760,7 @@ type prefixSlice struct {
 // the number of columns (starting at 0) in the slice that compose the
 // key values for that slice for operations like reduce.
 func Prefixed(slice Slice, prefix int) Slice {
-	if prefix <= 1 {
+	if prefix < 1 {
 		typecheck.Panic(1, "prefixed: prefix must include at least one column")
 	}
 	if prefix > slice.NumOut() {
