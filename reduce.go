@@ -49,8 +49,9 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if !ok {
 		typecheck.Panicf(1, "reduce: invalid reduce function %T", reduce)
 	}
-	if arg.NumOut() != 2 || arg.Out(0) != slice.Out(1) || arg.Out(1) != slice.Out(1) || ret.NumOut() != 1 || ret.Out(0) != slice.Out(1) {
-		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, slice.Out(1), slice.Out(1), slice.Out(1))
+	outputType := slice.Out(slice.NumOut() - 1)
+	if arg.NumOut() != 2 || arg.Out(0) != outputType || arg.Out(1) != outputType || ret.NumOut() != 1 || ret.Out(0) != outputType {
+		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, outputType, outputType, outputType)
 	}
 	return &reduceSlice{slice, reflect.ValueOf(reduce)}
 }
