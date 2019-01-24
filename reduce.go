@@ -7,6 +7,7 @@ package bigslice
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
@@ -42,8 +43,8 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if res := slice.NumOut() - slice.Prefix(); res != 1 {
 		typecheck.Panicf(1, "the slice must only have one 1 residual column; has %d", res)
 	}
-	if !canMakeCombiningFrame(slice) {
-		typecheck.Panicf(1, "cannot combine values for keys of type %s", slice.Out(0))
+	if err := canMakeCombiningFrame(slice); err != nil {
+		typecheck.Panic(1, err.Error())
 	}
 	arg, ret, ok := typecheck.Func(reduce)
 	if !ok {
@@ -76,11 +77,16 @@ func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 
 // CanMakeCombiningFrame tells whether the provided Frame type can be
 // be made into a combining frame.
-func canMakeCombiningFrame(typ slicetype.Type) bool {
+// Returns an error if types cannot be combined.
+func canMakeCombiningFrame(typ slicetype.Type) error {
+	var failingTypes []string
 	for i := 0; i < typ.Prefix(); i++ {
 		if !frame.CanHash(typ.Out(i)) || !frame.CanCompare(typ.Out(i)) {
-			return false
+			failingTypes = append(failingTypes, typ.Out(i).String())
 		}
 	}
-	return true
+	if len(failingTypes) == 0 {
+		return nil
+	}
+	return fmt.Errorf("cannot combine values for keys of type: %s", strings.Join(failingTypes, ", "))
 }
