@@ -320,8 +320,8 @@ func TestMap(t *testing.T) {
 func TestMapError(t *testing.T) {
 	input := bigslice.Const(1, []string{"x", "y"})
 	expectTypeError(t, "map: invalid map function int", func() { bigslice.Map(input, 123) })
-	expectTypeError(t, "map: function func(int) string does not match input slice type slice[]string", func() { bigslice.Map(input, func(x int) string { return "" }) })
-	expectTypeError(t, "map: function func(int, int) string does not match input slice type slice[]string", func() { bigslice.Map(input, func(x, y int) string { return "" }) })
+	expectTypeError(t, "map: function func(int) string does not match input slice type slice[1]string", func() { bigslice.Map(input, func(x int) string { return "" }) })
+	expectTypeError(t, "map: function func(int, int) string does not match input slice type slice[1]string", func() { bigslice.Map(input, func(x, y int) string { return "" }) })
 	expectTypeError(t, "map: need at least one output column", func() { bigslice.Map(input, func(x string) {}) })
 }
 
@@ -358,8 +358,8 @@ func TestFilter(t *testing.T) {
 func TestFilterError(t *testing.T) {
 	input := bigslice.Const(1, []string{"x", "y"})
 	expectTypeError(t, "filter: invalid predicate function int", func() { bigslice.Filter(input, 123) })
-	expectTypeError(t, "filter: function func(int) bool does not match input slice type slice[]string", func() { bigslice.Filter(input, func(x int) bool { return false }) })
-	expectTypeError(t, "filter: function func(int, int) string does not match input slice type slice[]string", func() { bigslice.Filter(input, func(x, y int) string { return "" }) })
+	expectTypeError(t, "filter: function func(int) bool does not match input slice type slice[1]string", func() { bigslice.Filter(input, func(x int) bool { return false }) })
+	expectTypeError(t, "filter: function func(int, int) string does not match input slice type slice[1]string", func() { bigslice.Filter(input, func(x, y int) string { return "" }) })
 	expectTypeError(t, "filter: predicate must return a single boolean value", func() { bigslice.Filter(input, func(x string) {}) })
 	expectTypeError(t, "filter: predicate must return a single boolean value", func() { bigslice.Filter(input, func(x string) int { return 0 }) })
 	expectTypeError(t, "filter: predicate must return a single boolean value", func() { bigslice.Filter(input, func(x string) (bool, int) { return false, 0 }) })
@@ -432,9 +432,9 @@ func TestFlatmapBuffered(t *testing.T) {
 func TestFlatmapError(t *testing.T) {
 	input := bigslice.Const(1, []int{1, 2, 3})
 	expectTypeError(t, "flatmap: invalid flatmap function int", func() { bigslice.Flatmap(input, 123) })
-	expectTypeError(t, "flatmap: flatmap function func(string) []int does not match input slice type slice[]int", func() { bigslice.Flatmap(input, func(s string) []int { return nil }) })
+	expectTypeError(t, "flatmap: flatmap function func(string) []int does not match input slice type slice[1]int", func() { bigslice.Flatmap(input, func(s string) []int { return nil }) })
 	expectTypeError(t, "flatmap: flatmap function func(int) int is not vectorized", func() { bigslice.Flatmap(input, func(i int) int { return 0 }) })
-	expectTypeError(t, "flatmap: flatmap function func(int, int) []int does not match input slice type slice[]int", func() { bigslice.Flatmap(input, func(i, j int) []int { return nil }) })
+	expectTypeError(t, "flatmap: flatmap function func(int, int) []int does not match input slice type slice[1]int", func() { bigslice.Flatmap(input, func(i, j int) []int { return nil }) })
 
 }
 

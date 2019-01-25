@@ -8,6 +8,7 @@
 package slicetype
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -75,7 +76,7 @@ func String(typ Type) string {
 	for i := range elems {
 		elems[i] = typ.Out(i).String()
 	}
-	return "slice[]" + strings.Join(elems, ",")
+	return fmt.Sprintf("slice[%d]%s", typ.Prefix(), strings.Join(elems, ","))
 }
 
 type appendType struct {
