@@ -12,6 +12,7 @@ import (
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 const defaultChunksize = 1024
@@ -28,8 +29,12 @@ type reader struct {
 }
 
 // Reduce returns a Reader that merges and reduces a set of
-// sorted (and possibly combined) readers. For each
+// sorted (and possibly combined) readers. Reduce panics if
+// the provided type is not reducable.
 func Reduce(typ slicetype.Type, name string, readers []sliceio.Reader, combiner reflect.Value) sliceio.Reader {
+	if typ.NumOut()-typ.Prefix() != 1 {
+		typecheck.Panicf(1, "cannot reduce type %s", slicetype.String(typ))
+	}
 	return &reader{
 		typ:      typ,
 		name:     name,

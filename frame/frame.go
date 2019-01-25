@@ -367,9 +367,9 @@ func (f Frame) ZeroAll() {
 }
 
 // Less reports whether the row with index i should sort before the
-// element with index j. Less operates on the frame's first column,
-// and is available only if the operation is defined for the column's
-// type. See RegisterOps for more details.
+// element with index j. Less operates on the frame's prefix columns,
+// and is available only if the operation is defined for those column
+// types. See RegisterOps for more details.
 //
 // TODO(marius): this method presents an unnecessary indirection;
 // provide a way to get at a sort.Interface directly.
@@ -385,13 +385,13 @@ func (f Frame) Less(i, j int) bool {
 	return f.data[f.prefix].ops.Less(i+f.off, j+f.off)
 }
 
-// Hash returns a 32-bit hash of the first column of frame f with
+// Hash returns a 32-bit hash of the prefix columns of frame f with
 // a seed of 0.
 func (f Frame) Hash(i int) uint32 {
 	return f.HashWithSeed(i, 0)
 }
 
-// HashWithSeed returns a 32-bit seeded hash of the first column of
+// HashWithSeed returns a 32-bit seeded hash of the prefix columns of
 // frame f.
 func (f Frame) HashWithSeed(i int, seed uint32) uint32 {
 	var hash uint32
