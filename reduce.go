@@ -63,7 +63,7 @@ type reduceSlice struct {
 	combiner reflect.Value
 }
 
-func (r *reduceSlice) Op() string               { return "reduce" }
+func (*reduceSlice) Op() string                 { return "reduce" }
 func (*reduceSlice) NumDep() int                { return 1 }
 func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
 func (r *reduceSlice) Combiner() *reflect.Value { return &r.combiner }
