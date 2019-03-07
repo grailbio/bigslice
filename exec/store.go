@@ -36,7 +36,7 @@ type writeCommitter interface {
 	// provide the number of records written as metadata.
 	Commit(ctx context.Context, records int64) error
 	// Discard discards the writer; it will not be committed.
-	Discard(ctx context.Context) error
+	Discard(ctx context.Context)
 }
 
 // Store is an abstraction that stores partitioned data as produced by a task.
@@ -107,9 +107,7 @@ type memoryWriter struct {
 	store     *memoryStore
 }
 
-func (*memoryWriter) Discard(context.Context) error {
-	return nil
-}
+func (*memoryWriter) Discard(context.Context) {}
 
 func (m *memoryWriter) Commit(ctx context.Context, count int64) error {
 	return m.store.put(m.task, m.partition, m.Buffer.Bytes(), count)

@@ -701,13 +701,11 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		partitions[p] = part
 	}
 	defer func() {
-		for p, part := range partitions {
+		for _, part := range partitions {
 			if part == nil {
 				continue
 			}
-			if err := part.wc.Discard(ctx); err != nil {
-				log.Printf("discard %s partition %d: %v", task.Name, p, err)
-			}
+			part.wc.Discard(ctx)
 		}
 	}()
 	out := task.Do(in)

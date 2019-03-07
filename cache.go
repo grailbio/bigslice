@@ -90,9 +90,7 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 			}
 		}
 	} else {
-		if err := r.file.Discard(context.Background()); err != nil {
-			log.Error.Printf("%s: discard: %s", r.file.Name(), err)
-		}
+		r.file.Discard(context.Background())
 	}
 	return n, err
 }
