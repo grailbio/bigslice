@@ -132,9 +132,8 @@ func Start(options ...Option) *Session {
 // Run evaluates the slice returned by the bigslice func funcv
 // applied to the provided arguments. Tasks are run by the session's
 // executor. Run returns when the computation has completed, or else
-// on error. It is not safe to make concurrent calls to Run. Instead,
-// parallelism should be expressed in the bigslice computation
-// itself.
+// on error. It is safe to make concurrent calls to Run; the
+// underlying computation will be performed in parallel.
 func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
 	inv := funcv.Invocation(args...)
 	slice := inv.Invoke()
