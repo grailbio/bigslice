@@ -301,7 +301,50 @@ func TestReaderFuncError(t *testing.T) {
 	expectTypeError(t, "readerfunc: invalid reader function type func(string, string, []int) (int, error)", func() { bigslice.ReaderFunc(1, func(shard string, state string, x []int) (int, error) { panic("") }) })
 	expectTypeError(t, "readerfunc: function func(int, string, []int) error does not return (int, error)", func() { bigslice.ReaderFunc(1, func(shard int, state string, x []int) error { panic("") }) })
 	expectTypeError(t, "readerfunc: invalid reader function type func(int, string) (int, error)", func() { bigslice.ReaderFunc(1, func(shard int, state string) (int, error) { panic("") }) })
+}
 
+const readerFuncForgetEOFMessage = "warning: reader func returned empty vector"
+
+// TestReaderFuncForgetEOF runs a buggy ReaderFunc that never returns sliceio.EOF. We check that
+// bigslice prints a warning.
+func TestReaderFuncForgetEOF(t *testing.T) {
+	var logOut bytes.Buffer
+	log.SetOutput(&logOut)
+	const N = 500
+	slice := bigslice.ReaderFunc(1, func(_ int, state *int, _ []int) (int, error) {
+		// Simulate an empty input. Users should return sliceio.EOF immediately, but some forget
+		// and just return nil. Eventually return EOF so the test terminates.
+		if *state >= N {
+			return 0, sliceio.EOF
+		}
+		*state++
+		return 0, nil
+	})
+	assertEqual(t, slice, false, []int{})
+	if !strings.Contains(logOut.String(), readerFuncForgetEOFMessage) {
+		t.Errorf("expected empty vector log message, got: %q", logOut.String())
+	}
+}
+
+// TestReaderFuncNoForgetEOF complements TestReaderFuncForgetEOF, testing that no spurious log
+// messages are written if reader funcs return non-empty vectors.
+func TestReaderFuncNoForgetEOF(t *testing.T) {
+	var logOut bytes.Buffer
+	log.SetOutput(&logOut)
+	const N = 500
+	slice := bigslice.ReaderFunc(1, func(_ int, state *int, out []int) (int, error) {
+		// Simulate an empty input. Users should return sliceio.EOF immediately, but some forget
+		// and just return nil. Eventually return EOF so the test terminates.
+		if *state >= N {
+			return 0, sliceio.EOF
+		}
+		*state++
+		return 1, nil
+	})
+	assertEqual(t, slice, false, make([]int, N))
+	if strings.Contains(logOut.String(), readerFuncForgetEOFMessage) {
+		t.Errorf("expected no empty vector log message, got: %q", logOut.String())
+	}
 }
 
 func TestMap(t *testing.T) {

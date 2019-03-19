@@ -237,6 +237,10 @@ type readerFuncSliceReader struct {
 	state reflect.Value
 	shard int
 	err   error
+
+	// consecutiveEmptyCalls counts how many times op.read returned 0 elements consecutively.
+	// Many empty calls may mean the user forgot to return sliceio.EOF, so we log a warning.
+	consecutiveEmptyCalls int
 }
 
 func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
@@ -256,6 +260,15 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 	}
 	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out.Values()...))
 	n = int(rvs[0].Int())
+	if n == 0 {
+		r.consecutiveEmptyCalls++
+		if r.consecutiveEmptyCalls > 7 && r.consecutiveEmptyCalls&(r.consecutiveEmptyCalls-1) == 0 {
+			log.Printf("warning: reader func returned empty vector %d consecutive times; "+
+				"don't forget sliceio.EOF", r.consecutiveEmptyCalls)
+		}
+	} else {
+		r.consecutiveEmptyCalls = 0
+	}
 	if e := rvs[1].Interface(); e != nil {
 		if err := e.(error); err == sliceio.EOF || errors.Recover(err).Severity != errors.Unknown {
 			r.err = err
