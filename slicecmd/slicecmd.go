@@ -33,31 +33,12 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync" // Pprof is included to be exposed on the local diagnostic web server.
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
-	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/sliceflags"
 )
-
-var (
-	mu      sync.Mutex
-	systems = map[string]bigmachine.System{}
-)
-
-// RegisterSystem registers a bigmachine system for use in this
-// slicecmd. The named registration is recalled via the -system
-// flag.
-func RegisterSystem(name string, system bigmachine.System) {
-	mu.Lock()
-	defer mu.Unlock()
-	if systems[name] != nil {
-		log.Panicf("system %s is already registered", name)
-	}
-	systems[name] = system
-}
 
 // Main is a convenient entry point for a slicecmd. Main does not return;
 // it should be called after other initialization is performed. Main

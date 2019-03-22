@@ -15,7 +15,6 @@ import (
 	"strconv"
 
 	"github.com/grailbio/base/log"
-	"github.com/grailbio/bigmachine/ec2system"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/slicecmd"
@@ -65,9 +64,6 @@ requires launching external clusters, and may run for a long time.
 		nshard = flag.Int("nshard", 64, "number of shards")
 		nkey   = flag.Int("nkey", 1e6, "number of keys per shard")
 	)
-	slicecmd.RegisterSystem("ec2", &ec2system.System{
-		InstanceType: "m4.16xlarge",
-	})
 	slicecmd.Main(func(sess *exec.Session, args []string) error {
 		ctx := context.Background()
 		r, err := sess.Run(ctx, cogroupTest, *nshard, *nkey)

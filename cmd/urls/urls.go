@@ -24,7 +24,6 @@ import (
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/file/s3file"
 	"github.com/grailbio/base/log"
-	"github.com/grailbio/bigmachine/ec2system"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/slicecmd"
@@ -104,9 +103,6 @@ func main() {
 		n   = flag.Int("n", 1000, "number of shards to process")
 		out = flag.String("out", "", "output path")
 	)
-	slicecmd.RegisterSystem("ec2", &ec2system.System{
-		InstanceType: "r3.8xlarge",
-	})
 	slicecmd.Main(func(sess *exec.Session, args []string) error {
 		if *out == "" {
 			return errors.New("missing flag -out")
