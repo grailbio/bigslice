@@ -342,7 +342,11 @@ func RegisterFlags(fs *flag.FlagSet, bf *Flags, prefix string) {
 // ExecOptions parses the flag values and returns a slice of exec.Options
 // that represent the actions specified by those flags.
 func (bf *Flags) ExecOptions() ([]exec.Option, error) {
-	options := []exec.Option{exec.Status(&status.Status{})}
+	var sliceStatus status.Status
+	// Ensure bigmachine's group is displayed first.
+	_ = sliceStatus.Group(exec.BigmachineStatusGroup)
+
+	options := []exec.Option{exec.Status(&sliceStatus)}
 	options = append(options, bf.System.Provider.ExecOption())
 	if bf.Parallelism > 0 {
 		options = append(options, exec.Parallelism(bf.Parallelism))

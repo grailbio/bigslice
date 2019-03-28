@@ -33,6 +33,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const BigmachineStatusGroup = "bigmachine"
+
 func init() {
 	gob.Register(invocationRef{})
 }
@@ -112,7 +114,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	b.locations = make(map[*Task]*sliceMachine)
 	b.stats = make(map[string]stats.Values)
 	if status := sess.Status(); status != nil {
-		b.status = status.Group("bigmachine")
+		b.status = status.Group(BigmachineStatusGroup)
 	}
 	b.invocations = make(map[uint64]bigslice.Invocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
