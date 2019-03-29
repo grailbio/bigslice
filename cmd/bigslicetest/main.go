@@ -63,6 +63,7 @@ requires launching external clusters, and may run for a long time.
 	var (
 		nshard = flag.Int("nshard", 64, "number of shards")
 		nkey   = flag.Int("nkey", 1e6, "number of keys per shard")
+		wait   = flag.Bool("wait", false, "don't exit after completion")
 	)
 	slicecmd.Main(func(sess *exec.Session, args []string) error {
 		ctx := context.Background()
@@ -120,6 +121,9 @@ requires launching external clusters, and may run for a long time.
 			return errors.New("test errors")
 		}
 		fmt.Println("ok")
+		if *wait {
+			<-make(chan struct{})
+		}
 		return nil
 	})
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/gob"
 	"net/http"
+	"sync"
 
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -58,6 +59,11 @@ type Session struct {
 	maxLoad  float64
 	executor Executor
 	status   *status.Status
+
+	mu sync.Mutex
+	// roots stores all task roots compiled by this session;
+	// used for debugging.
+	roots map[*Task]struct{}
 }
 
 // An Option represents a session configuration parameter value.
@@ -112,7 +118,10 @@ func Status(status *status.Status) Option {
 // the lifetime of the binary. If no executor is configured, the session
 // is configured to use the bigmachine executor.
 func Start(options ...Option) *Session {
-	s := &Session{Context: context.Background()}
+	s := &Session{
+		Context: context.Background(),
+		roots:   make(map[*Task]struct{}),
+	}
 	for _, opt := range options {
 		opt(s)
 	}
@@ -146,6 +155,12 @@ func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...in
 	if s.status != nil {
 		group = s.status.Groupf("bigslice(%d)", inv.Index)
 	}
+	// Register all the tasks so they may be used in visualization.
+	s.mu.Lock()
+	for _, task := range tasks {
+		s.roots[task] = struct{}{}
+	}
+	s.mu.Unlock()
 	return &Result{
 		Slice: slice,
 		sess:  s,
@@ -179,6 +194,9 @@ func (s *Session) Status() *status.Status {
 
 func (s *Session) HandleDebug(handler *http.ServeMux) {
 	s.executor.HandleDebug(http.DefaultServeMux)
+	handler.Handle("/debug", http.HandlerFunc(s.handleDebug))
+	handler.Handle("/debug/tasks/graph", http.HandlerFunc(s.handleTasksGraph))
+	handler.Handle("/debug/tasks", http.HandlerFunc(s.handleTasks))
 }
 
 // A Result is the output of a Slice evaluation. It is the only type
