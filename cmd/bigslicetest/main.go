@@ -119,6 +119,7 @@ requires launching external clusters, and may run for a long time.
 		if !ok {
 			return errors.New("test errors")
 		}
+		fmt.Println("ok")
 		return nil
 	})
 }

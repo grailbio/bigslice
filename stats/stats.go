@@ -18,6 +18,15 @@ import (
 // Values is a snapshot of the values in a collection.
 type Values map[string]int64
 
+// Copy returns a copy of the values v.
+func (v Values) Copy() Values {
+	w := make(Values)
+	for k, v := range v {
+		w[k] = v
+	}
+	return w
+}
+
 // String returns an abbreviated string with the values in this
 // snapshot sorted by key.
 func (v Values) String() string {

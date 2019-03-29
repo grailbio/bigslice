@@ -79,6 +79,7 @@ type sliceMachine struct {
 	disk bigmachine.DiskInfo
 	mem  bigmachine.MemInfo
 	load bigmachine.LoadInfo
+	vals stats.Values
 }
 
 func (s *sliceMachine) String() string {
@@ -127,6 +128,8 @@ loop:
 			derr error
 			load bigmachine.LoadInfo
 			lerr error
+			vals stats.Values
+			verr error
 		)
 		g.Go(func() error {
 			mem, merr = s.Machine.MemInfo(gctx, false)
@@ -140,6 +143,10 @@ loop:
 			load, lerr = s.Machine.LoadInfo(gctx)
 			return nil
 		})
+		g.Go(func() error {
+			verr = s.Machine.Call(ctx, "Worker.Stats", struct{}{}, &vals)
+			return nil
+		})
 		_ = g.Wait()
 		cancel()
 		if merr != nil {
@@ -151,6 +158,9 @@ loop:
 		if lerr != nil {
 			log.Printf("loadinfo %s: %v", s.Machine.Addr, lerr)
 		}
+		if verr != nil {
+			log.Printf("stats %s: %v", s.Machine.Addr, verr)
+		}
 		s.mu.Lock()
 		if merr == nil {
 			s.mem = mem
@@ -160,6 +170,9 @@ loop:
 		}
 		if lerr == nil {
 			s.load = load
+		}
+		if verr == nil {
+			s.vals = vals
 		}
 		s.mu.Unlock()
 		s.UpdateStatus()
@@ -194,7 +207,9 @@ func (s *sliceMachine) Lost() bool {
 
 // UpdateStatus updates the machine's status.
 func (s *sliceMachine) UpdateStatus() {
-	values := make(stats.Values)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := s.vals.Copy()
 	s.Stats.AddAll(values)
 	var health string
 	switch s.health {
@@ -204,14 +219,12 @@ func (s *sliceMachine) UpdateStatus() {
 	case machineLost:
 		health = " (lost)"
 	}
-	s.mu.Lock()
 	s.Status.Printf("mem %s/%s disk %s/%s load %.1f/%.1f/%.1f counters %s%s",
 		data.Size(s.mem.System.Used), data.Size(s.mem.System.Total),
 		data.Size(s.disk.Usage.Used), data.Size(s.disk.Usage.Total),
 		s.load.Averages.Load1, s.load.Averages.Load5, s.load.Averages.Load15,
 		values, health,
 	)
-	s.mu.Unlock()
 }
 
 // Load returns the machine's load, i.e., the proportion of its

@@ -294,6 +294,7 @@ compile:
 			g.Go(func() error { return b.commit(ctx, m, key) })
 		}
 	}
+
 	task.Status.Print(m.Addr)
 	if err := g.Wait(); err != nil {
 		task.Errorf("failed to commit combiner: %v", err)
@@ -304,28 +305,6 @@ compile:
 	// TODO(marius): also aggregate stats across all tasks.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(statsPollInterval):
-			}
-			var vals stats.Values
-			if err := m.Call(ctx, "Worker.Stats", struct{}{}, &vals); err != nil {
-				if err != context.Canceled {
-					log.Error.Printf("Worker.Stats: %v", err)
-				}
-				return
-			}
-			task.Status.Printf("%s: %s", m.Addr, vals)
-			b.mu.Lock()
-			name := fmt.Sprintf("%s(%x)", task.Name, task.Invocation.Index)
-			b.stats[name] = vals
-			b.mu.Unlock()
-			b.updateStatus()
-		}
-	}()
 
 	task.Set(TaskRunning)
 	var reply taskRunReply
@@ -381,18 +360,6 @@ func (b *bigmachineExecutor) setLocation(task *Task, m *sliceMachine) {
 	b.mu.Lock()
 	b.locations[task] = m
 	b.mu.Unlock()
-}
-
-func (b *bigmachineExecutor) updateStatus() {
-	total := make(stats.Values)
-	b.mu.Lock()
-	for _, stat := range b.stats {
-		for k, v := range stat {
-			total[k] += v
-		}
-	}
-	b.mu.Unlock()
-	b.status.Print(total)
 }
 
 type combinerState int
