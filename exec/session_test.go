@@ -9,9 +9,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/sliceio"
 )
+
+func init() {
+	log.AddFlags()
+}
 
 func rangeSlice(i, j int) []int {
 	s := make([]int, j-i)
@@ -22,10 +28,25 @@ func rangeSlice(i, j int) []int {
 }
 
 func TestSessionIterative(t *testing.T) {
+	const (
+		Nelem  = 1000
+		Nshard = 5
+		Niter  = 5
+	)
 	var nvalues, nadd int
 	values := bigslice.Func(func() bigslice.Slice {
-		nvalues++
-		return bigslice.Const(5, rangeSlice(0, 1000))
+		return bigslice.ReaderFunc(Nshard, func(shard int, n *int, out []int) (int, error) {
+			beg, end := shardRange(Nelem, Nshard, shard)
+			beg += *n
+			t.Logf("shard %d beg %d end %d n %d", shard, beg, end, *n)
+			if beg >= end { // empty or done
+				nvalues++
+				return 0, sliceio.EOF
+			}
+			m := copy(out, rangeSlice(beg, end))
+			*n += m
+			return m, nil
+		})
 	})
 	add := bigslice.Func(func(x int, slice bigslice.Slice) bigslice.Slice {
 		return bigslice.Map(slice, func(i int) int {
@@ -37,13 +58,13 @@ func TestSessionIterative(t *testing.T) {
 		ctx  = context.Background()
 		nrun int
 	)
-	testSession(t, func(sess *Session) {
+	testSession(t, func(t *testing.T, sess *Session) {
 		nrun++
 		res, err := sess.Run(ctx, values)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < 5; i++ {
+		for i := 0; i < Niter; i++ {
 			res, err = sess.Run(ctx, add, i, res)
 			if err != nil {
 				t.Fatal(err)
@@ -64,10 +85,10 @@ func TestSessionIterative(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
-	if got, want := nvalues, nrun+1; got != want {
+	if got, want := nvalues, nrun*Nshard; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got, want := nadd, nrun*5*1000; got != want {
+	if got, want := nadd, nrun*Niter*1000; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
@@ -77,9 +98,27 @@ var executors = map[string]Option{
 	"Bigmachine.Test": Bigmachine(testsystem.New()),
 }
 
-func testSession(t *testing.T, run func(sess *Session)) {
-	for _, opt := range executors {
-		sess := Start(opt)
-		run(sess)
+func testSession(t *testing.T, run func(t *testing.T, sess *Session)) {
+	t.Helper()
+	for name, opt := range executors {
+		t.Run(name, func(t *testing.T) {
+			sess := Start(opt)
+			run(t, sess)
+		})
 	}
+}
+
+// shardRange gives the range covered by a shard.
+func shardRange(nelem, nshard, shard int) (beg, end int) {
+	elemsPerShard := (nelem + nshard - 1) / nshard
+	beg = elemsPerShard * shard
+	if beg >= nelem {
+		beg = 0
+		return
+	}
+	end = beg + elemsPerShard
+	if end > nelem {
+		end = nelem
+	}
+	return
 }

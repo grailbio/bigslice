@@ -298,7 +298,7 @@ func (t *Task) WriteGraph(w io.Writer) {
 			out[i] = fmt.Sprint(task.Out(i))
 		}
 		outstr := strings.Join(out, ",")
-		fmt.Fprintf(&tw, "\t%s\t%s\t%d\n", task.Name, outstr, task.NumPartition)
+		fmt.Fprintf(&tw, "\t%s\t%s\t%d [%s]\n", task.Name, outstr, task.NumPartition, task.State())
 	}
 	tw.Flush()
 	fmt.Fprintln(&tw, "dependencies:")
