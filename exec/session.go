@@ -7,9 +7,12 @@ package exec
 import (
 	"context"
 	"encoding/gob"
+	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
@@ -59,6 +62,8 @@ type Session struct {
 	maxLoad  float64
 	executor Executor
 	status   *status.Status
+
+	tracer *tracer
 
 	mu sync.Mutex
 	// roots stores all task roots compiled by this session;
@@ -135,6 +140,7 @@ func Start(options ...Option) *Session {
 		s.executor = newBigmachineExecutor(bigmachine.Local)
 	}
 	s.shutdown = s.executor.Start(s)
+	s.tracer = newTracer()
 	return s
 }
 
@@ -144,7 +150,11 @@ func Start(options ...Option) *Session {
 // on error. It is safe to make concurrent calls to Run; the
 // underlying computation will be performed in parallel.
 func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
-	inv := funcv.Invocation(args...)
+	location := "<unknown>"
+	if _, file, line, ok := runtime.Caller(1); ok {
+		location = fmt.Sprintf("%s:%d", file, line)
+	}
+	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
 	tasks, err := compile(make(taskNamer), inv, slice)
 	if err != nil {
@@ -197,6 +207,14 @@ func (s *Session) HandleDebug(handler *http.ServeMux) {
 	handler.Handle("/debug", http.HandlerFunc(s.handleDebug))
 	handler.Handle("/debug/tasks/graph", http.HandlerFunc(s.handleTasksGraph))
 	handler.Handle("/debug/tasks", http.HandlerFunc(s.handleTasks))
+	if s.tracer != nil {
+		handler.HandleFunc("/debug/trace", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Add("content-type", "application/json; charset=utf-8")
+			if err := s.tracer.Marshal(w); err != nil {
+				log.Error.Printf("exec.Session: /debug/trace: marshal: %v", err)
+			}
+		})
+	}
 }
 
 // A Result is the output of a Slice evaluation. It is the only type

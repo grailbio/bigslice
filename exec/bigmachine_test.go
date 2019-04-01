@@ -78,7 +78,7 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 	var maxIndex int
 	wg.Add(2 * N) //one for local invocation; one for remote
 	for i := 0; i < N; i++ {
-		inv := fn.Invocation(i)
+		inv := fn.Invocation("", i)
 		if ix := int(inv.Index); ix > maxIndex {
 			maxIndex = ix
 		}
@@ -214,7 +214,7 @@ func bigmachineTestExecutor() (exec *bigmachineExecutor, stop func()) {
 
 func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
 	fn := bigslice.Func(f)
-	inv := fn.Invocation()
+	inv := fn.Invocation("")
 	slice := inv.Invoke()
 	tasks, err := compile(make(taskNamer), inv, slice)
 	if err != nil {

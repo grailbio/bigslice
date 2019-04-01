@@ -7,6 +7,7 @@ package bigslice
 import (
 	"encoding/gob"
 	"reflect"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/grailbio/bigslice/typecheck"
@@ -35,6 +36,10 @@ type FuncValue struct {
 	args      []reflect.Type
 	index     int
 	exclusive bool
+
+	// file and line are the location at which the function was defined.
+	file string
+	line int
 }
 
 // Exclusive marks this func to require mutually exclusive machine
@@ -57,13 +62,13 @@ func (f *FuncValue) In(i int) reflect.Type { return f.args[i] }
 // Invocation creates an invocation representing the function f
 // applied to the provided arguments. Invocation panics with a type
 // error if the provided arguments do not match in type or arity.
-func (f *FuncValue) Invocation(args ...interface{}) Invocation {
+func (f *FuncValue) Invocation(location string, args ...interface{}) Invocation {
 	argTypes := make([]reflect.Type, len(args))
 	for i, arg := range args {
 		argTypes[i] = reflect.TypeOf(arg)
 	}
 	f.typecheck(argTypes...)
-	return newInvocation(uint64(f.index), f.exclusive, args...)
+	return newInvocation(location, uint64(f.index), f.exclusive, args...)
 }
 
 // Apply invokes the function f with the provided arguments,
@@ -138,6 +143,7 @@ func Func(fn interface{}) *FuncValue {
 	if atomic.AddInt32(&funcsBusy, -1) != 0 {
 		panic("bigslice.Func: data race")
 	}
+	_, v.file, v.line, _ = runtime.Caller(1)
 	return v
 }
 
@@ -155,16 +161,18 @@ type Invocation struct {
 	Func      uint64
 	Args      []interface{}
 	Exclusive bool
+	Location  string
 }
 
 var invocationIndex uint64
 
-func newInvocation(fn uint64, exclusive bool, args ...interface{}) Invocation {
+func newInvocation(location string, fn uint64, exclusive bool, args ...interface{}) Invocation {
 	return Invocation{
 		Index:     atomic.AddUint64(&invocationIndex, 1),
 		Func:      fn,
 		Args:      args,
 		Exclusive: exclusive,
+		Location:  location,
 	}
 }
 

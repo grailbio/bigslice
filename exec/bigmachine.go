@@ -6,6 +6,7 @@ package exec
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -192,7 +193,22 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 
 	for i := len(invocations) - 1; i >= 0; i-- {
 		err := m.Compiles.Do(invocations[i].Index, func() error {
-			return m.RetryCall(ctx, "Worker.Compile", invocations[i], nil)
+			inv := invocations[i]
+			// Flatten these into lists so that we don't capture further
+			// structure by JSON encoding down the line. We also truncate them
+			// so that, e.g., huge lists of arguments don't make it into the trace.
+			args := make([]string, len(inv.Args))
+			for i := range args {
+				args[i] = truncatef(inv.Args[i])
+			}
+			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
+			err := m.RetryCall(ctx, "Worker.Compile", inv, nil)
+			if err != nil {
+				b.sess.tracer.Event(m, inv, "E", "error", err)
+			} else {
+				b.sess.tracer.Event(m, inv, "E")
+			}
+			return err
 		})
 		if err != nil {
 			return err
@@ -306,23 +322,28 @@ compile:
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
 	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
 	m.Done(err)
 	switch {
 	case err == nil:
+		b.sess.tracer.Event(m, task, "E")
 		b.setLocation(task, m)
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
+		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
 		task.Error(err)
 	case errors.Match(fatalErr, err):
+		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)
 	default:
 		// Everything else we consider as the task being lost. It'll get
 		// resubmitted by the evaluator.
+		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "lost")
 		task.Status.Printf("lost task during task evaluation: %v", err)
 		task.Set(TaskLost)
 	}
@@ -1079,4 +1100,14 @@ func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error
 	n, err = s.reader.Read(ctx, f)
 	s.numRead.Add(int64(n))
 	return
+}
+
+func truncatef(v interface{}) string {
+	var b bytes.Buffer
+	fmt.Fprint(&b, v)
+	if b.Len() > 512 {
+		b.Truncate(512)
+		b.WriteString("(truncated)")
+	}
+	return b.String()
 }

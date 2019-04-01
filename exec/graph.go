@@ -31,6 +31,8 @@ var debugIndexHtml = `<!DOCTYPE html>
 <dd>bigslice task and machine status</dd>
 <dt><a href="/debug/tasks">/debug/tasks</a></dt>
 <dd>bigslice task graph</dd>
+<dt><a href="/debug/trace">/debug/trace</a></dt>
+<dd>Chrome-compatible event trace</dd>
 </dl>
 </body>
 </html>
