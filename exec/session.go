@@ -150,20 +150,33 @@ func Start(options ...Option) *Session {
 // on error. It is safe to make concurrent calls to Run; the
 // underlying computation will be performed in parallel.
 func (s *Session) Run(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
+	return s.run(ctx, 1, funcv, args...)
+}
+
+// Must is a version of Run that panics if the computation fails.
+func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...interface{}) *Result {
+	res, err := s.run(ctx, 1, funcv, args...)
+	if err != nil {
+		log.Panicf("exec.Run: %v", err)
+	}
+	return res
+}
+
+func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
 	location := "<unknown>"
-	if _, file, line, ok := runtime.Caller(1); ok {
+	if _, file, line, ok := runtime.Caller(calldepth + 1); ok {
 		location = fmt.Sprintf("%s:%d", file, line)
 	}
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
-	tasks, err := compile(make(taskNamer), inv, slice)
+	tasks, _, err := compile(make(taskNamer), inv, slice)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
-		group = s.status.Groupf("bigslice(%d)", inv.Index)
+		group = s.status.Groupf("run %s", location)
 	}
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()

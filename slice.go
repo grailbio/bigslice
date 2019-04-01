@@ -784,6 +784,19 @@ func Prefixed(slice Slice, prefix int) Slice {
 
 func (p *prefixSlice) Prefix() int { return p.prefix }
 
+// Unwrap returns the underlying slice if the provided slice is used
+// only to amend the type of the slice it composes.
+//
+// TODO(marius): this is required to properly compile slices that use the
+// prefix combinator; we should have a more general and robust solution
+// to this.
+func Unwrap(slice Slice) Slice {
+	if slice, ok := slice.(*prefixSlice); ok {
+		return slice.Slice
+	}
+	return slice
+}
+
 // String returns a string describing the slice and its type.
 func String(slice Slice) string {
 	types := make([]string, slice.NumOut())

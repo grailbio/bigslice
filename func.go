@@ -6,8 +6,10 @@ package bigslice
 
 import (
 	"encoding/gob"
+	"fmt"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync/atomic"
 
 	"github.com/grailbio/bigslice/typecheck"
@@ -162,6 +164,14 @@ type Invocation struct {
 	Args      []interface{}
 	Exclusive bool
 	Location  string
+}
+
+func (inv Invocation) String() string {
+	args := make([]string, len(inv.Args))
+	for i, arg := range args {
+		args[i] = fmt.Sprint(arg)
+	}
+	return fmt.Sprintf("%s(%d, %d) %s", inv.Location, inv.Func, inv.Index, strings.Join(args, " "))
 }
 
 var invocationIndex uint64

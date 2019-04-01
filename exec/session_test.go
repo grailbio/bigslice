@@ -7,11 +7,13 @@ package exec
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -93,6 +95,69 @@ func TestSessionIterative(t *testing.T) {
 	}
 }
 
+func TestSessionReuse(t *testing.T) {
+	const N = 1000
+	input := bigslice.Func(func() bigslice.Slice {
+		return bigslice.Const(5, rangeSlice(0, 1000))
+	})
+	var nmap int
+	mapper := bigslice.Func(func(slice bigslice.Slice) bigslice.Slice {
+		return bigslice.Map(slice, func(i int) (int, int, int) {
+			nmap++
+			return i, i, i
+		})
+	})
+	reducer := bigslice.Func(func(slice bigslice.Slice) bigslice.Slice {
+		slice = bigslice.Map(slice, func(x, y, z int) (int, int, int) { return 0, y / 2, z })
+		slice = bigslice.Prefixed(slice, 2)
+		slice = bigslice.Reduce(slice, func(a, e int) int { return a + e })
+		slice = bigslice.Map(slice, func(k1, k2, v int) (int, int) { return k2, v })
+		return slice
+	})
+	unmap := bigslice.Func(func(slice bigslice.Slice) bigslice.Slice {
+		return bigslice.Map(slice, func(x, y, z int) (int, int) { return x, y + z })
+	})
+	ctx := context.Background()
+	testSession(t, func(t *testing.T, sess *Session) {
+		nmap = 0
+		input := sess.Must(ctx, input)
+		mapped := sess.Must(ctx, mapper, input)
+		var wg sync.WaitGroup
+		var reduced *Result
+		wg.Add(1)
+		go func() {
+			reduced = sess.Must(ctx, reducer, mapped)
+			wg.Done()
+		}()
+		unmapped := sess.Must(ctx, unmap, mapped)
+		wg.Wait()
+		// The map results were reused:
+		if got, want := nmap, N; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+		// And we computed the correct results:
+		var (
+			f = readFrame(t, reduced, N/2)
+			k = f.Interface(0).([]int)
+			v = f.Interface(1).([]int)
+		)
+		for i := range k {
+			if got, want := v[i], k[i]*4+1; got != want {
+				t.Errorf("index %d: got %v, want %v", i, got, want)
+			}
+		}
+
+		f = readFrame(t, unmapped, N)
+		k = f.Interface(0).([]int)
+		v = f.Interface(1).([]int)
+		for i := range k {
+			if got, want := v[i], k[i]*2; got != want {
+				t.Errorf("index %d: got %v, want %v", i, got, want)
+			}
+		}
+	})
+}
+
 var executors = map[string]Option{
 	"Local":           Local,
 	"Bigmachine.Test": Bigmachine(testsystem.New()),
@@ -121,4 +186,18 @@ func shardRange(nelem, nshard, shard int) (beg, end int) {
 		end = nelem
 	}
 	return
+}
+
+func readFrame(t *testing.T, res *Result, n int) frame.Frame {
+	t.Helper()
+	f := frame.Make(res, n+1, n+1)
+	ctx := context.Background()
+	m, err := sliceio.ReadFull(ctx, res.Scan(ctx).Reader, f)
+	if err != sliceio.EOF {
+		t.Fatal(err)
+	}
+	if got, want := m, n; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	return f.Slice(0, n)
 }

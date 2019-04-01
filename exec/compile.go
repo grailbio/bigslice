@@ -19,7 +19,7 @@ import (
 func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 	for {
 		// Stop at *Results, so we can re-use previous tasks.
-		if _, ok := slice.(*Result); ok {
+		if _, ok := bigslice.Unwrap(slice).(*Result); ok {
 			return
 		}
 		slices = append(slices, slice)
@@ -52,14 +52,14 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]*Task, error) {
+func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (tasks []*Task, reused bool, err error) {
 	// Reuse tasks from a previous invocation.
-	if result, ok := slice.(*Result); ok {
-		return result.tasks, nil
+	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
+		return result.tasks, true, nil
 	}
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
-	tasks := make([]*Task, slice.NumShard())
+	tasks = make([]*Task, slice.NumShard())
 	slices := pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
 	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
@@ -102,9 +102,9 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, err := compile(namer, inv, dep.Slice)
+		deptasks, reused, err := compile(namer, inv, dep.Slice)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		// These needn't be shuffle deps, for example if we terminated
 		// pipelining early because we're reusing a result or because we're
@@ -118,6 +118,41 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 					TaskDep{[]*Task{deptasks[shard]}, 0, dep.Expand, ""})
 			}
 			continue
+		}
+
+		// In the case where we are reusing slice results and require a
+		// shuffle, we have to insert an explicit shuffle stage. This is
+		// done by creating a pass-thru task for each dependency task.
+		// These tasks then receive a shuffle dependency from the task set
+		// we are compiling. This in turn will induce shuffling and local
+		// combining at runtime.
+		if reused {
+			for _, task := range deptasks {
+				if task.Combiner != nil {
+					// TODO(marius): we may consider supporting this, but it should
+					// be very rare, since it requires the user to explicitly reuse
+					// an intermediate slice, which is impossible via the current
+					// API.
+					return nil, false, fmt.Errorf("cannot reuse task %s with combine key %s", task, task.CombineKey)
+				}
+			}
+			newDeps := make([]*Task, len(deptasks))
+			// We now insert a set of tasks whose only purpose is (re-)shuffling
+			// the output from the previously completed task.
+			for shard, task := range deptasks {
+				newDeps[shard] = &Task{
+					Type:       dep.Slice,
+					Invocation: inv,
+					Name: TaskName{
+						Op:       fmt.Sprintf("%s_shuffle_%d", opName, i),
+						Shard:    shard,
+						NumShard: len(deptasks),
+					},
+					Do:   func(readers []sliceio.Reader) sliceio.Reader { return readers[0] },
+					Deps: []TaskDep{{[]*Task{task}, 0, false, ""}},
+				}
+			}
+			deptasks = newDeps
 		}
 
 		var combineKey string
@@ -141,7 +176,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) ([]
 				TaskDep{deptasks, partition, dep.Expand, combineKey})
 		}
 	}
-	return tasks, nil
+	return tasks, false, nil
 }
 
 type taskNamer map[string]int
