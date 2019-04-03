@@ -792,7 +792,7 @@ func (p *prefixSlice) Prefix() int { return p.prefix }
 // to this.
 func Unwrap(slice Slice) Slice {
 	if slice, ok := slice.(*prefixSlice); ok {
-		return slice.Slice
+		return Unwrap(slice.Slice)
 	}
 	return slice
 }
