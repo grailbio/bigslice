@@ -8,6 +8,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/grailbio/base/log"
@@ -100,10 +101,10 @@ func TestSessionReuse(t *testing.T) {
 	input := bigslice.Func(func() bigslice.Slice {
 		return bigslice.Const(5, rangeSlice(0, 1000))
 	})
-	var nmap int
+	var nmap int64
 	mapper := bigslice.Func(func(slice bigslice.Slice) bigslice.Slice {
 		return bigslice.Map(slice, func(i int) (int, int, int) {
-			nmap++
+			atomic.AddInt64(&nmap, 1)
 			return i, i, i
 		})
 	})
@@ -119,7 +120,7 @@ func TestSessionReuse(t *testing.T) {
 	})
 	ctx := context.Background()
 	testSession(t, func(t *testing.T, sess *Session) {
-		nmap = 0
+		atomic.StoreInt64(&nmap, 0)
 		input := sess.Must(ctx, input)
 		mapped := sess.Must(ctx, mapper, input)
 		var wg sync.WaitGroup
@@ -132,7 +133,7 @@ func TestSessionReuse(t *testing.T) {
 		unmapped := sess.Must(ctx, unmap, mapped)
 		wg.Wait()
 		// The map results were reused:
-		if got, want := nmap, N; got != want {
+		if got, want := atomic.LoadInt64(&nmap), int64(N); got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
 		// And we computed the correct results:
