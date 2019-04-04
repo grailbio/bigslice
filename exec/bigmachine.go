@@ -734,7 +734,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					if err := partitions[p].Encode(partitionv[p]); err != nil {
 						return err
 					}
-					partitionv[p].ZeroAll()
 					lens[p] = 0
 				}
 			}
@@ -742,7 +741,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err == sliceio.EOF {
 				break
 			}
-			in.ZeroAll()
 		}
 		// Flush remaining data.
 		for p, n := range lens {
@@ -768,7 +766,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err == sliceio.EOF {
 				break
 			}
-			in.ZeroAll()
 		}
 	}
 

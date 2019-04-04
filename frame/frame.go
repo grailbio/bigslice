@@ -353,16 +353,10 @@ func (f Frame) Swap(i, j int) {
 	}
 }
 
-// Zero zeros the memory of column i
-func (f Frame) Zero(i int) {
-	c := f.data[i]
-	zero.Unsafe(c.typ.Type, uintptr(c.ptr)+uintptr(f.off)*c.typ.size, f.len)
-}
-
-// ZeroAll zeros the memory all columnns.
-func (f Frame) ZeroAll() {
-	for i := range f.data {
-		f.Zero(i)
+// Zero zeros the memory all columnns.
+func (f Frame) Zero() {
+	for _, col := range f.data {
+		zero.Unsafe(col.typ.Type, uintptr(col.ptr)+uintptr(f.off)*col.typ.size, f.len)
 	}
 }
 

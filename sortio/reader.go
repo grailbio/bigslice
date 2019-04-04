@@ -100,10 +100,8 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 				combined = r.combiner.Call([]reflect.Value{combined, val})[0]
 			}
 		}
-		// Emit the output before overwriting the frame. Note that key and val are
-		// references to slice elements.
-
-		// Copy key columns first, and then set the combined value.
+		// Emit the output before overwriting the frame. Copy key columns
+		// first, and then set the combined value.
 		frame.Copy(out.Slice(n, n+1), combine[0].Frame.Slice(combine[0].Index, combine[0].Index+1))
 		out.Index(vcol, n).Set(combined)
 

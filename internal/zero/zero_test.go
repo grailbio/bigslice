@@ -25,6 +25,7 @@ var zeroTypes = []reflect.Type{
 	reflect.TypeOf([10]int16{}),
 	reflect.TypeOf([]*int{}),
 	reflect.TypeOf(struct{ A, B *int }{}),
+	reflect.TypeOf([][]int{}),
 }
 
 func TestZeroSlice(t *testing.T) {
@@ -37,12 +38,44 @@ func TestZeroSlice(t *testing.T) {
 			fz.Fuzz(slice.Index(i).Addr().Interface())
 		}
 		// We have to pass a slice in
-		zero.Slice(slice)
+		zero.SliceValue(slice)
 		zeroValue := reflect.Zero(typ)
 		for i := 0; i < N; i++ {
 			if got, want := slice.Index(i), zeroValue; !reflect.DeepEqual(got.Interface(), want.Interface()) {
 				t.Errorf("got %v, want %v", got, want)
 			}
+		}
+	}
+}
+
+type testIface interface {
+	Test()
+}
+
+type testPtr int
+
+func (*testPtr) Test() {}
+
+type testVal int
+
+func (testVal) Test() {}
+
+func TestZeroInterFace(t *testing.T) {
+	const N = 100
+	slice := make([]testIface, N)
+	for i := range slice {
+		if i%2 == 0 {
+			p := new(testPtr)
+			*p = testPtr(i)
+			slice[i] = p
+		} else {
+			slice[i] = testVal(i)
+		}
+	}
+	zero.Slice(slice)
+	for i, val := range slice {
+		if val != nil {
+			t.Errorf("index %d, non-nil value %v", i, val)
 		}
 	}
 }
@@ -58,7 +91,7 @@ func BenchmarkZero(b *testing.B) {
 			zero.Slice(slice)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				zero.Slice(slice)
+				zero.SliceValue(slice)
 			}
 		})
 	}

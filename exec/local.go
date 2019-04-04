@@ -85,7 +85,6 @@ func (l *localExecutor) runTask(task *Task) {
 				if err == sliceio.EOF {
 					break
 				}
-				buf.ZeroAll()
 			}
 			reader, err := combiner.Reader()
 			if err != nil {
@@ -150,8 +149,6 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 	for {
 		if in.IsZero() {
 			in = frame.Make(task, defaultChunksize, defaultChunksize)
-		} else {
-			in.ZeroAll()
 		}
 		n, err := out.Read(ctx, in)
 		if err != nil && err != sliceio.EOF {

@@ -178,7 +178,7 @@ func TestValue(t *testing.T) {
 
 func TestZero(t *testing.T) {
 	f := fuzzFrame(100)
-	f.Slice(1, 50).ZeroAll()
+	f.Slice(1, 50).Zero()
 	g := Make(f, f.Len(), f.Len())
 	Copy(g, f)
 	assertEqual(t, f.Slice(1, 50), Make(f, 49, 49))
@@ -214,7 +214,7 @@ func TestZerox(t *testing.T) {
 		fz.Fuzz(slicep)
 		slice := reflect.Indirect(reflect.ValueOf(slicep)).Interface()
 		frame := Slices(slice)
-		frame.ZeroAll()
+		frame.Zero()
 		slicev := frame.Value(0)
 		zero := reflect.Zero(slicev.Type().Elem()).Interface()
 		for i := 0; i < slicev.Len(); i++ {
@@ -254,7 +254,11 @@ func TestSort(t *testing.T) {
 	n := f.Len()
 	g := Make(f, n*2, n*2)
 	Copy(g, f)
-	f.Zero(1) // make sure these are all empty strings so that the sort tests grouping
+	// make sure these are all empty strings so that the sort tests grouping
+	vals := f.Interface(1).([]string)
+	for i := range vals {
+		vals[i] = ""
+	}
 	Copy(g.Slice(n, n*2), f)
 	g = g.Prefixed(2)
 	sort.Sort(g)

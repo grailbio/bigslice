@@ -292,7 +292,6 @@ func (c *combiner) Combine(ctx context.Context, f frame.Frame) error {
 		if err := c.spill(spilled); err != nil {
 			return err
 		}
-		spilled.ZeroAll()
 	}
 	return nil
 }
@@ -341,7 +340,6 @@ func (c *combiner) WriteTo(ctx context.Context, enc *sliceio.Encoder) (int64, er
 		if err == sliceio.EOF {
 			break
 		}
-		in.ZeroAll()
 	}
 	return total, nil
 }

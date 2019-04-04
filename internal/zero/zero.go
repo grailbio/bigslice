@@ -13,9 +13,15 @@ import (
 
 var cache sync.Map // map[reflect.Type]func(ptr uintptr, n int)
 
-// Slice zeroes the elements 0 <= i < v.Len() of the provided slice
+// Slice zeroes the elements 0 <= i < v.Len() of the provided slice.
+// Slice panics if the value is not a slice. f
+func Slice(v interface{}) {
+	SliceValue(reflect.ValueOf(v))
+}
+
+// SliceValue zeroes the elements 0 <= i < v.Len() of the provided slice
 // value. Slice panics if the value is not a slice. f
-func Slice(v reflect.Value) {
+func SliceValue(v reflect.Value) {
 	if v.Kind() != reflect.Slice {
 		panic("zero.Slice: called on non-slice value")
 	}

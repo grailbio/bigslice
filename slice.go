@@ -258,6 +258,8 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 			r.state = reflect.Zero(r.op.stateType)
 		}
 	}
+	// out is passed to a user, zero it.
+	out.Zero()
 	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out.Values()...))
 	n = int(rvs[0].Int())
 	if n == 0 {
@@ -344,7 +346,6 @@ func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		m.in = frame.Make(m.op.Slice, n, n)
 	} else {
 		m.in = m.in.Ensure(n)
-		m.in.ZeroAll()
 	}
 	n, m.err = m.reader.Read(ctx, m.in.Slice(0, n))
 	// Now iterate over each record, transform it, and set the output
@@ -438,7 +439,6 @@ func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err er
 			f.in = frame.Make(f.op, max-m, max-m)
 		} else {
 			f.in = f.in.Ensure(max - m)
-			f.in.ZeroAll()
 		}
 		n, f.err = f.reader.Read(ctx, f.in)
 		for i := 0; i < n; i++ {
@@ -538,7 +538,6 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				f.in = frame.Make(f.op.Slice, out.Len(), out.Len())
 			} else {
 				f.in = f.in.Ensure(out.Len())
-				f.in.ZeroAll()
 			}
 			n, err := f.reader.Read(ctx, f.in)
 			if err != nil && err != sliceio.EOF {
@@ -663,7 +662,6 @@ func (f *foldReader) compute(ctx context.Context) (Accumulator, error) {
 		if err == sliceio.EOF {
 			return accum, nil
 		}
-		in.ZeroAll()
 	}
 }
 

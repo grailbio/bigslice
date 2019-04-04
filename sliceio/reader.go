@@ -41,6 +41,9 @@ type Reader interface {
 	// EOF when n > 0. In this case, n records were read, but no more
 	// are available.
 	//
+	// Read should never reuse any allocated memory in the frame;
+	// its callers should not mutate the data returned.
+	//
 	// Read should not be called concurrently.
 	Read(ctx context.Context, frame frame.Frame) (int, error)
 }
@@ -130,7 +133,6 @@ func ReadAll(ctx context.Context, r Reader, columns ...interface{}) error {
 			break
 		}
 		buf = buf.Slice(0, buf.Cap())
-		buf.ZeroAll()
 	}
 	return nil
 }

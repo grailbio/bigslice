@@ -97,9 +97,10 @@ func (e *Encoder) Encode(f frame.Frame) error {
 // DecodingReader provides a Reader on top of a gob stream
 // encoded with batches of rows stored in column-major order.
 type decodingReader struct {
-	dec *gobDecoder
-	buf frame.Frame
-	err error
+	dec     *gobDecoder
+	scratch frame.Frame
+	buf     frame.Frame
+	err     error
 }
 
 // NewDecodingReader returns a new Reader that decodes values from
@@ -129,11 +130,12 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 			return n, nil
 		}
 		// Otherwise we have to buffer the decoded frame.
-		if d.buf.IsZero() {
-			d.buf = frame.Make(f, n, n)
+		if d.scratch.IsZero() {
+			d.scratch = frame.Make(f, n, n)
 		} else {
-			d.buf = d.buf.Ensure(n)
+			d.scratch.Ensure(n)
 		}
+		d.buf = d.scratch
 		if d.err = d.decode(d.buf); d.err != nil {
 			return 0, d.err
 		}
@@ -147,6 +149,10 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 // The frame is preallocated and is guaranteed to have enough
 // space to decode all of the values.
 func (d *decodingReader) decode(f frame.Frame) error {
+	// Always zero memory before decoding with Gob, as it will reuse
+	// existing memory. This can be dangerous; especially when
+	// that involves user code.
+	f.Zero()
 	for col := 0; col < f.NumOut(); col++ {
 		var codec bool
 		if err := d.dec.Decode(&codec); err != nil {
@@ -178,6 +184,7 @@ func (d *decodingReader) decode(f frame.Frame) error {
 			return err
 		}
 		// This is guaranteed by gob, but it seems worthy of some defensive programming here.
+		// It's also an extra check against the correctness of the codec.
 		if (*(*reflect.SliceHeader)(ptr)).Data != sh.Data {
 			panic("gob reallocated a slice")
 		}
