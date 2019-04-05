@@ -176,7 +176,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	// TODO(marius): give a way to provide names for these groups
 	var group *status.Group
 	if s.status != nil {
-		group = s.status.Groupf("run %s", location)
+		group = s.status.Groupf("run %s [%d]", location, inv.Index)
 	}
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
