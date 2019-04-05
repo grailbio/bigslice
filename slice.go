@@ -286,6 +286,146 @@ func (r *readerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Rea
 	return &readerFuncSliceReader{op: r, shard: shard}
 }
 
+type writerFuncSlice struct {
+	Slice
+	stateType reflect.Type
+	write     reflect.Value
+}
+
+// WriterFunc returns a Slice that is functionally equivalent to the input
+// Slice, allowing for computation with side effects by the provided write
+// function. The write function must be of the form:
+//
+//	func(shard int, state stateType, err error, col1 []col1Type, col2 []col2Type, ..., colN []colNType) error
+//
+// where the input slice is of the form:
+//
+//	Slice<col1Type, col2Type, ..., colNType>
+//
+// The write function is invoked with every read of the input Slice. Each
+// column slice will be of the same length and will be populated with the data
+// from the read. For performance, the passed column slices share memory with
+// the internal frame of the read. Do not modify the data in them, and assume
+// that they will be modified once write returns.
+//
+// Any error from the read, including EOF, will be passed as err to the write
+// function. Note that err may be EOF when column lengths are >0, similar to
+// the semantics of sliceio.Reader.Read.
+//
+// If the write function performs I/O, it is recommended that the I/O be
+// buffered to allow downstream computations to progress.
+//
+// WriterFunc provides the function with a zero-value state upon the first
+// invocation of the function for a given shard. (If the state argument is a
+// pointer, it is allocated.) Subsequent invocations of the function receive
+// the same state value, thus permitting the writer to maintain local state
+// across the write of the whole shard.
+func WriterFunc(slice Slice, write interface{}) Slice {
+	s := new(writerFuncSlice)
+	s.Slice = slice
+
+	// Our error messages for wrongly-typed write functions include a
+	// description of the expected type, which we construct here.
+	colTypElems := make([]string, slice.NumOut())
+	for i := range colTypElems {
+		colTypElems[i] = fmt.Sprintf("col%d %s", i+1, reflect.SliceOf(slice.Out(i)).String())
+	}
+	colTyps := strings.Join(colTypElems, ", ")
+	expectTyp := fmt.Sprintf("func(shard int, state stateType, err error, %s) error", colTyps)
+
+	die := func(msg string) {
+		typecheck.Panicf(2, "writerfunc: invalid writer function type %T; %s", write, msg)
+	}
+
+	arg, ret, ok := typecheck.Func(write)
+	if !ok ||
+		arg.NumOut() != 3+slice.NumOut() ||
+		arg.Out(0).Kind() != reflect.Int ||
+		arg.Out(2) != typeOfError {
+		die(fmt.Sprintf("must be %s", expectTyp))
+	}
+	s.stateType = arg.Out(1)
+	for i := 0; i < slice.NumOut(); i++ {
+		if reflect.SliceOf(slice.Out(i)) != arg.Out(i+3) {
+			die(fmt.Sprintf("must be %s", expectTyp))
+		}
+	}
+	if ret.NumOut() != 1 || ret.Out(0) != typeOfError {
+		die("must return error")
+	}
+	s.write = reflect.ValueOf(write)
+	return s
+}
+
+func (*writerFuncSlice) Op() string               { return "writer" }
+func (*writerFuncSlice) NumDep() int              { return 1 }
+func (s *writerFuncSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
+func (*writerFuncSlice) Combiner() *reflect.Value { return nil }
+
+type writerFuncReader struct {
+	shard     int
+	write     reflect.Value
+	reader    sliceio.Reader
+	stateType reflect.Type
+	state     reflect.Value
+	err       error
+}
+
+func (r *writerFuncReader) callWrite(err error, frame frame.Frame) error {
+	args := []reflect.Value{reflect.ValueOf(r.shard), r.state}
+
+	// TODO(jcharumilind): Cache error and column arguments, as they will
+	// likely be the same from call to call.
+	var errArg reflect.Value
+	if err == nil {
+		errArg = reflect.Zero(typeOfError)
+	} else {
+		errArg = reflect.ValueOf(err)
+	}
+	args = append(args, errArg)
+
+	args = append(args, frame.Values()...)
+	rvs := r.write.Call(args)
+	if e := rvs[0].Interface(); e != nil {
+		return e.(error)
+	}
+	return nil
+}
+
+func (r *writerFuncReader) Read(ctx context.Context, out frame.Frame) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	if !r.state.IsValid() {
+		if r.stateType.Kind() == reflect.Ptr {
+			r.state = reflect.New(r.stateType.Elem())
+		} else {
+			r.state = reflect.Zero(r.stateType)
+		}
+	}
+
+	n, err := r.reader.Read(ctx, out)
+	werr := r.callWrite(err, out.Slice(0, n))
+	if werr != nil && (err == nil || err == sliceio.EOF) {
+		if errors.Recover(werr).Severity == errors.Unknown {
+			err = errors.E(errors.Fatal, werr)
+		} else {
+			err = werr
+		}
+	}
+	r.err = err
+	return n, err
+}
+
+func (s *writerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Reader {
+	return &writerFuncReader{
+		shard:     shard,
+		write:     s.write,
+		reader:    reader[0],
+		stateType: s.stateType,
+	}
+}
+
 type mapSlice struct {
 	Slice
 	fval reflect.Value

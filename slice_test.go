@@ -7,6 +7,7 @@ package bigslice_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -37,12 +38,12 @@ var (
 	typeOfFloat64 = reflect.TypeOf(float64(0))
 )
 
-func sortColumns(columns []interface{}) {
+func sortColumns(columns []reflect.Value) {
 	s := new(columnSlice)
-	s.keys = columns[0].([]string)
+	s.keys = columns[0].Interface().([]string)
 	s.swappers = make([]func(i, j int), len(columns))
 	for i := range columns {
-		s.swappers[i] = reflect.Swapper(columns[i])
+		s.swappers[i] = reflect.Swapper(columns[i].Interface())
 	}
 	sort.Stable(s)
 }
@@ -100,6 +101,97 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 	return results
 }
 
+func assertColumnsEqual(t *testing.T, sort bool, columns ...interface{}) {
+	t.Helper()
+	if len(columns)%2 != 0 {
+		t.Fatal("must pass even number of columns")
+	}
+	numColumns := len(columns) / 2
+	if numColumns < 1 {
+		t.Fatal("must have at least one column to compare")
+	}
+	gotCols := make([]reflect.Value, numColumns)
+	wantCols := make([]reflect.Value, numColumns)
+	for i := range columns {
+		j := i / 2
+		if i%2 == 0 {
+			gotCols[j] = reflect.ValueOf(columns[i])
+			if gotCols[j].Kind() != reflect.Slice {
+				t.Errorf("column %d of actual must be a slice", j)
+				return
+			}
+			if j > 0 && gotCols[j].Len() != gotCols[j-1].Len() {
+				t.Errorf("got %d, want %d columns in actual", gotCols[j].Len(), gotCols[j-1].Len())
+				return
+			}
+		} else {
+			// Problems with our expected columns are fatal, as that means that
+			// the test itself is incorrectly constructed.
+			wantCols[j] = reflect.ValueOf(columns[i])
+			if wantCols[j].Kind() != reflect.Slice {
+				t.Fatalf("column %d of expected must be a slice", j)
+			}
+			if j > 0 && wantCols[j].Len() != wantCols[j-1].Len() {
+				t.Fatalf("got %d, want %d columns in expected", wantCols[j].Len(), wantCols[j-1].Len())
+			}
+		}
+	}
+	if sort {
+		sortColumns(gotCols)
+		sortColumns(wantCols)
+	}
+
+	switch got, want := gotCols[0].Len(), wantCols[0].Len(); {
+	case got == want:
+	case got < want:
+		t.Errorf("short result: got %v, want %v", got, want)
+		return
+	case want < got:
+		row := make([]string, len(gotCols))
+		for i := range row {
+			row[i] = fmt.Sprint(gotCols[i].Index(want).Interface())
+		}
+		// Show one row of extra values to help debug.
+		t.Errorf("extra values: %v", strings.Join(row, ","))
+	}
+
+	// wantCols[0].Len() <= gotCols[0].Len() so we compare wantCols[0].Len()
+	// rows.
+	numRows := wantCols[0].Len()
+	got := make([]interface{}, numColumns)
+	want := make([]interface{}, numColumns)
+	for i := 0; i < numColumns; i++ {
+		got[i] = gotCols[i].Interface()
+		want[i] = wantCols[i].Interface()
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		// Print as columns
+		var b bytes.Buffer
+		var tw tabwriter.Writer
+		tw.Init(&b, 4, 4, 1, ' ', 0)
+		for i := 0; i < numRows; i++ {
+			var diff bool
+			row := make([]string, numColumns)
+			for j := range row {
+				got := gotCols[j].Index(i).Interface()
+				want := wantCols[j].Index(i).Interface()
+				if !reflect.DeepEqual(got, want) {
+					diff = true
+					row[j] = fmt.Sprintf("%v->%v", want, got)
+				} else {
+					row[j] = fmt.Sprint(got)
+				}
+			}
+			if diff {
+				fmt.Fprintf(&tw, "[%d] %s\n", i, strings.Join(row, "\t"))
+			}
+		}
+		tw.Flush()
+		t.Errorf("result mismatch:\n%s", b.String())
+	}
+}
+
 func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interface{}) {
 	if !testing.Short() {
 		if canTolerateFailures(slice) {
@@ -111,25 +203,13 @@ func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interf
 	}
 
 	t.Helper()
-	if len(expect) == 0 {
-		t.Fatal("need at least one column")
-	}
-	expectvs := make([]reflect.Value, len(expect))
-	for i := range expect {
-		expectvs[i] = reflect.ValueOf(expect[i])
-		if expectvs[i].Kind() != reflect.Slice {
-			t.Fatal("expect argument must be a slice")
-		}
-		if i > 1 && expectvs[i].Len() != expectvs[i-1].Len() {
-			t.Fatal("expect argument length mismatch")
-		}
-	}
 	for name, s := range run(context.Background(), t, slice) {
 		t.Run(name, func(t *testing.T) {
 			args := make([]interface{}, len(expect))
 			for i := range args {
 				// Make this one larger to make sure we exhaust the scanner.
-				slice := reflect.MakeSlice(expectvs[i].Type(), expectvs[i].Len()+1, expectvs[i].Len()+1)
+				v := reflect.ValueOf(expect[i])
+				slice := reflect.MakeSlice(v.Type(), v.Len()+1, v.Len()+1)
 				args[i] = slice.Interface()
 			}
 			n, ok := s.Scanv(context.Background(), args...)
@@ -140,58 +220,15 @@ func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interf
 				t.Errorf("%s: %v", name, err)
 				return
 			}
-			switch got, want := n, expectvs[0].Len(); {
-			case got == want:
-			case got < want:
-				t.Errorf("%s: short result: got %v, want %v: got %v", name, got, want, args)
-				return
-			case want+1 == got:
-				row := make([]string, len(args))
-				for i := range row {
-					row[i] = fmt.Sprint(reflect.ValueOf(args[i]).Index(got - 1).Interface())
-				}
-				t.Errorf("%s: extra values: %v", name, strings.Join(row, ","))
-				n = want
-			default:
-				t.Errorf("%s: bad read: got %v, want %v", name, got, want)
-				return
-			}
 			for i := range args {
 				args[i] = reflect.ValueOf(args[i]).Slice(0, n).Interface()
 			}
-			if sort {
-				if slice.Out(0).Kind() != reflect.String {
-					t.Errorf("%s: can only sort string keys", name)
-					return
-				}
-				sortColumns(args)
-				sortColumns(expect)
+			columns := make([]interface{}, len(expect)*2)
+			for i := range expect {
+				columns[i*2] = args[i]
+				columns[i*2+1] = expect[i]
 			}
-			if !reflect.DeepEqual(expect, args) {
-				// Print as columns
-				var b bytes.Buffer
-				var tw tabwriter.Writer
-				tw.Init(&b, 4, 4, 1, ' ', 0)
-				for i := 0; i < n; i++ {
-					var diff bool
-					row := make([]string, len(args))
-					for j := range row {
-						got := reflect.ValueOf(args[j]).Index(i).Interface()
-						want := reflect.ValueOf(expect[j]).Index(i).Interface()
-						if !reflect.DeepEqual(got, want) {
-							diff = true
-							row[j] = fmt.Sprintf("%v->%v", want, got)
-						} else {
-							row[j] = fmt.Sprint(got)
-						}
-					}
-					if diff {
-						fmt.Fprintf(&tw, "[%d] %s\n", i, strings.Join(row, "\t"))
-					}
-				}
-				tw.Flush()
-				t.Errorf("%s: result mismatch:\n%s", name, b.String())
-			}
+			assertColumnsEqual(t, sort, columns...)
 		})
 	}
 }
@@ -345,6 +382,219 @@ func TestReaderFuncNoForgetEOF(t *testing.T) {
 	if strings.Contains(logOut.String(), readerFuncForgetEOFMessage) {
 		t.Errorf("expected no empty vector log message, got: %q", logOut.String())
 	}
+}
+
+// TestWriterFunc tests the basic functionality of WriterFunc, verifying that
+// all data is passed to the write function, and all data is available in the
+// resulting slice.
+func TestWriterFunc(t *testing.T) {
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+	fz := fuzz.New()
+	fz.NilChance(0)
+	fz.NumElements(N, N)
+	var (
+		col1 []string
+		col2 []int
+	)
+	fz.Fuzz(&col1)
+	fz.Fuzz(&col2)
+
+	slice := bigslice.Const(Nshard, col1, col2)
+
+	type state struct {
+		col1 []string
+		col2 []int
+		errs []error
+	}
+	var (
+		writerMutex sync.Mutex
+		// The states of the writers, by shard.
+		writerStates []state
+	)
+	slice = bigslice.WriterFunc(slice,
+		func(shard int, state *state, err error, col1 []string, col2 []int) error {
+			state.col1 = append(state.col1, col1...)
+			state.col2 = append(state.col2, col2...)
+			state.errs = append(state.errs, err)
+			if err != nil {
+				writerMutex.Lock()
+				defer writerMutex.Unlock()
+				writerStates[shard] = *state
+			}
+			return nil
+		})
+
+	// We expect both the columns written by the writer func and the columns in
+	// the resulting slice to match the input. We make a copy to avoid
+	// disturbing the inputs, as we'll end up sorting these to compare them.
+	wantCol1 := append([]string{}, col1...)
+	wantCol2 := append([]int{}, col2...)
+
+	ctx := context.Background()
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	for name, opt := range executors {
+		t.Run(name, func(t *testing.T) {
+			// Each execution starts with a fresh state for the writer.
+			writerStates = make([]state, Nshard)
+			sess := exec.Start(opt)
+			res, err := sess.Run(ctx, fn)
+			if err != nil {
+				t.Errorf("executor %s error %v", name, err)
+				return
+			}
+
+			// Check the columns in the output slice.
+			scanner := res.Scan(ctx)
+			var (
+				s       string
+				i       int
+				resCol1 []string
+				resCol2 []int
+			)
+			for scanner.Scan(context.Background(), &s, &i) {
+				resCol1 = append(resCol1, s)
+				resCol2 = append(resCol2, i)
+			}
+			assertColumnsEqual(t, true, resCol1, wantCol1, resCol2, wantCol2)
+
+			// Check the columns written by the writer func.
+			var (
+				writerCol1 []string
+				writerCol2 []int
+			)
+			for _, state := range writerStates {
+				writerCol1 = append(writerCol1, state.col1...)
+				writerCol2 = append(writerCol2, state.col2...)
+			}
+			assertColumnsEqual(t, true, writerCol1, wantCol1, writerCol2, wantCol2)
+
+			// Check that errors were passed as expected to the writer func.
+			for shard, state := range writerStates {
+				if len(state.errs) < 1 {
+					t.Errorf("writer for shard %d did not get EOF", shard)
+					continue
+				}
+				for i := 0; i < len(state.errs)-1; i++ {
+					if state.errs[i] != nil {
+						// Only the last error received should be non-nil.
+						t.Errorf("got premature error")
+						break
+					}
+				}
+				if got, want := state.errs[len(state.errs)-1], sliceio.EOF; got != want {
+					t.Errorf("got %v, want %v", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestWriterFuncBadFunc tests the type-checking of the writer func passed to
+// WriterFunc.
+func TestWriterFuncBadFunc(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		message string
+		f       interface{}
+	}{
+		{
+			"String",
+			"writerfunc: invalid writer function type string; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			"I'm not a function at all",
+		},
+		{
+			"NoArguments",
+			"writerfunc: invalid writer function type func(); must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func() {},
+		},
+		{
+			"NonSliceColumn",
+			"writerfunc: invalid writer function type func(int, int, error, string, []int) error; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func(shard int, state int, err error, col1 string, col2 []int) error { panic("") },
+		},
+		{
+			"NotEnoughColumns",
+			"writerfunc: invalid writer function type func(int, int, error, []string) error; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func(shard int, state int, err error, col1 []string) error { panic("") },
+		},
+		{
+			"TooManyColumns",
+			"writerfunc: invalid writer function type func(int, int, error, []string, []int, []int) error; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func(shard int, state int, err error, col1 []string, col2 []int, col3 []int) error { panic("") },
+		},
+		{
+			"StringShard",
+			"writerfunc: invalid writer function type func(string, int, error, []string, []int) error; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func(shard string, state int, err error, col1 []string, col2 []int) error { panic("") },
+		},
+		{
+			"WrongColumnElementType",
+			"writerfunc: invalid writer function type func(int, int, error, []string, []string) error; must be func(shard int, state stateType, err error, col1 []string, col2 []int) error",
+			func(shard int, state int, err error, col1 []string, col2 []string) error { panic("") },
+		},
+		{
+			"NoReturn",
+			"writerfunc: invalid writer function type func(int, int, error, []string, []int); must return error",
+			func(shard int, state int, err error, col1 []string, col2 []int) { panic("") },
+		},
+		{
+			"ReturnInt",
+			"writerfunc: invalid writer function type func(int, int, error, []string, []int) int; must return error",
+			func(shard int, state int, err error, col1 []string, col2 []int) int { panic("") },
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			slice := bigslice.Const(1, []string{}, []int{})
+			expectTypeError(t, c.message, func() { bigslice.WriterFunc(slice, c.f) })
+		})
+	}
+}
+
+// TestWriterFuncError tests the behavior of WriterFunc under various error
+// conditions.
+func TestWriterFuncError(t *testing.T) {
+	assertWriterErr := func(t *testing.T, slice bigslice.Slice) {
+		fn := bigslice.Func(func() bigslice.Slice { return slice })
+		for name, opt := range executors {
+			t.Run(name, func(t *testing.T) {
+				sess := exec.Start(opt)
+				_, err := sess.Run(context.Background(), fn)
+				if err == nil {
+					t.Errorf("expected error")
+				} else {
+					if got, want := err.Error(), "writerError"; !strings.Contains(got, want) {
+						t.Errorf("got %v, want %v", got, want)
+					}
+				}
+			})
+		}
+	}
+
+	// The write function always returns an error, so we should see it.
+	t.Run("WriteAlwaysErr", func(t *testing.T) {
+		slice := bigslice.Const(2, []string{"a", "b", "c", "d"})
+		slice = bigslice.WriterFunc(slice, func(shard int, state int, err error, col1 []string) error {
+			return errors.New("writerError")
+		})
+		assertWriterErr(t, slice)
+	})
+
+	// The write function returns an error when it sees the EOF. We expect to
+	// see the returned error, even though the underlying read succeeded
+	// without error.
+	t.Run("WriteErrOnEOF", func(t *testing.T) {
+		slice := bigslice.Const(2, []string{"a", "b", "c", "d"})
+		slice = bigslice.WriterFunc(slice, func(shard int, state int, err error, col1 []string) error {
+			if err == sliceio.EOF {
+				return errors.New("writerError")
+			}
+			return nil
+		})
+		assertWriterErr(t, slice)
+	})
 }
 
 func TestMap(t *testing.T) {
