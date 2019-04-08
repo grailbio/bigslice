@@ -272,7 +272,7 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 		r.consecutiveEmptyCalls = 0
 	}
 	if e := rvs[1].Interface(); e != nil {
-		if err := e.(error); err == sliceio.EOF || errors.Recover(err).Severity != errors.Unknown {
+		if err := e.(error); err == sliceio.EOF || errors.IsTemporary(err) {
 			r.err = err
 		} else {
 			// We consider all application-generated errors as Fatal unless marked otherwise.
@@ -407,10 +407,10 @@ func (r *writerFuncReader) Read(ctx context.Context, out frame.Frame) (int, erro
 	n, err := r.reader.Read(ctx, out)
 	werr := r.callWrite(err, out.Slice(0, n))
 	if werr != nil && (err == nil || err == sliceio.EOF) {
-		if errors.Recover(werr).Severity == errors.Unknown {
-			err = errors.E(errors.Fatal, werr)
-		} else {
+		if errors.IsTemporary(werr) {
 			err = werr
+		} else {
+			err = errors.E(errors.Fatal, werr)
 		}
 	}
 	r.err = err
