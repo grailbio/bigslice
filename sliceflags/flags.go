@@ -345,6 +345,7 @@ func (bf *Flags) ExecOptions() ([]exec.Option, error) {
 	var sliceStatus status.Status
 	// Ensure bigmachine's group is displayed first.
 	_ = sliceStatus.Group(exec.BigmachineStatusGroup)
+	_ = sliceStatus.Groups()
 
 	options := []exec.Option{exec.Status(&sliceStatus)}
 	options = append(options, bf.System.Provider.ExecOption())
