@@ -511,7 +511,9 @@ type taskRunReply struct{} // nothing here yet
 // output deposited in a local buffer.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
 	recordsOut := w.stats.Int("write")
+	w.mu.Lock()
 	named := w.tasks[req.Invocation]
+	w.mu.Unlock()
 	if named == nil {
 		return errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))
 	}
