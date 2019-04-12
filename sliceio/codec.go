@@ -5,13 +5,17 @@
 package sliceio
 
 import (
+	"bufio"
 	"context"
 	"encoding/gob"
-	"errors"
+	"fmt"
+	"hash"
+	"hash/crc32"
 	"io"
 	"reflect"
 	"unsafe"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
 )
 
@@ -62,17 +66,23 @@ func newGobDecoder(r io.Reader) *gobDecoder {
 // Decoder.
 type Encoder struct {
 	enc *gobEncoder
+	crc hash.Hash32
 }
 
 // NewEncoder returns a a new Encoder that streams slices into the
 // provided writer.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{newGobEncoder(w)}
+	crc := crc32.NewIEEE()
+	return &Encoder{
+		enc: newGobEncoder(io.MultiWriter(w, crc)),
+		crc: crc,
+	}
 }
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
 func (e *Encoder) Encode(f frame.Frame) error {
+	e.crc.Reset()
 	if err := e.enc.Encode(f.Len()); err != nil {
 		return err
 	}
@@ -91,6 +101,7 @@ func (e *Encoder) Encode(f frame.Frame) error {
 			return err
 		}
 	}
+	e.enc.Encode(e.crc.Sum32())
 	return nil
 }
 
@@ -98,6 +109,7 @@ func (e *Encoder) Encode(f frame.Frame) error {
 // encoded with batches of rows stored in column-major order.
 type decodingReader struct {
 	dec     *gobDecoder
+	crc     hash.Hash32
 	scratch frame.Frame
 	buf     frame.Frame
 	err     error
@@ -107,7 +119,20 @@ type decodingReader struct {
 // the provided stream. Since values are streamed in vectors, decoding
 // reader must buffer values until they are read by the consumer.
 func NewDecodingReader(r io.Reader) Reader {
-	return &decodingReader{dec: newGobDecoder(r)}
+	// We need to compute checksums by inspecting the underlying
+	// bytestream, however, gob uses whether the reader implements
+	// io.ByteReader as a proxy for whether the passed reader is
+	// buffered. io.TeeReader does not implement io.ByteReader, and thus
+	// gob.Decoder will insert a buffered reader leaving us without
+	// means of synchronizing stream positions, required for
+	// checksumming. Instead we fake an implementation of io.ByteReader,
+	// and take over the responsibility of ensuring that IO is buffered.
+	crc := crc32.NewIEEE()
+	if _, ok := r.(io.ByteReader); !ok {
+		r = bufio.NewReader(r)
+	}
+	r = io.TeeReader(r, crc)
+	return &decodingReader{dec: newGobDecoder(readerByteReader{Reader: r}), crc: crc}
 }
 
 func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
@@ -115,6 +140,7 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 		return 0, d.err
 	}
 	for d.buf.Len() == 0 {
+		d.crc.Reset()
 		if d.err = d.dec.Decode(&n); d.err != nil {
 			if d.err == io.EOF {
 				d.err = EOF
@@ -189,5 +215,21 @@ func (d *decodingReader) decode(f frame.Frame) error {
 			panic("gob reallocated a slice")
 		}
 	}
+	sum := d.crc.Sum32()
+	var decoded uint32
+	if err := d.dec.Decode(&decoded); err != nil {
+		return err
+	}
+	if sum != decoded {
+		return errors.E(errors.Integrity, fmt.Errorf("computed checksum %x but expected checksum %x", sum, decoded))
+	}
 	return nil
+}
+
+// readerByteReader is used to provide an (invalid) implementation of
+// io.ByteReader to gob.Encoder. See comment in NewDecodingReader
+// for details.
+type readerByteReader struct {
+	io.Reader
+	io.ByteReader
 }

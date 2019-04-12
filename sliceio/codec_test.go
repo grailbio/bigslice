@@ -8,12 +8,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -134,50 +135,6 @@ func TestCodec(t *testing.T) {
 	*/
 }
 
-func TestDecodingReader(t *testing.T) {
-	const N = 1000
-	fz := fuzz.New()
-	fz.NilChance(0)
-	fz.NumElements(N, N)
-	var (
-		col1 []string
-		col2 []int
-		col3 [][]int
-	)
-	fz.Fuzz(&col1)
-	fz.Fuzz(&col2)
-	fz.Fuzz(&col3)
-	var buf Buffer
-	for i := 0; i < len(col1); {
-		// Pick random batch size.
-		n := int(rand.Int31n(int32(len(col1) - i + 1)))
-		c1, c2, c3 := col1[i:i+n], col2[i:i+n], col3[i:i+n]
-		if err := buf.WriteColumns(reflect.ValueOf(c1), reflect.ValueOf(c2), reflect.ValueOf(c3)); err != nil {
-			t.Fatal(err)
-		}
-		i += n
-	}
-
-	r := NewDecodingReader(&buf)
-	var (
-		col1x []string
-		col2x []int
-		col3x [][]int
-	)
-	if err := ReadAll(context.Background(), r, &col1x, &col2x, &col3x); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(col1, col1x) {
-		t.Error("col1 mismatch")
-	}
-	if !reflect.DeepEqual(col2, col2x) {
-		t.Error("col2 mismatch")
-	}
-	if !reflect.DeepEqual(col3, col3x) {
-		t.Error("col3 mismatch")
-	}
-}
-
 func TestDecodingReaderWithZeros(t *testing.T) {
 	// Gob, in its infinite cleverness, does not transmit zero values.
 	// However, it apparently also does not zero out zero values in
@@ -200,6 +157,67 @@ func TestDecodingReaderWithZeros(t *testing.T) {
 
 	if got, want := out, in; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestDecodingReaderCorrupted(t *testing.T) {
+	const N = 100
+	col := make([]int, 100)
+	for i := range col {
+		col[i] = i
+	}
+	var b bytes.Buffer
+	enc := NewEncoder(&b)
+	if err := enc.Encode(frame.Slices(col, col, col)); err != nil {
+		t.Fatal(err)
+	}
+	buf := func() []byte {
+		p := b.Bytes()
+		if len(p) == 0 {
+			t.Fatal(p)
+		}
+		return append([]byte{}, p...)
+	}
+	rnd := rand.New(rand.NewSource(1234))
+	var nintegrity int
+	for i := 0; i < N; i++ {
+		// First, check that it reads (valid); then corrupt a single bit
+		// and make sure we get an error.
+		p := buf()
+		r := NewDecodingReader(bytes.NewReader(p))
+		ctx := context.Background()
+		var c1, c2, c3 []int
+		if err := ReadAll(ctx, r, &c1, &c2, &c3); err != nil {
+			t.Error(err)
+			continue
+		}
+		i := rnd.Intn(len(p))
+		p[i] ^= byte(1 << uint(rnd.Intn(8)))
+		r = NewDecodingReader(bytes.NewReader(p))
+		err := ReadAll(ctx, r, &c1, &c2, &c3)
+		if err == nil {
+			t.Error("got nil err")
+			continue
+		}
+		// Depending on which bit gets flipped, we might end up with
+		// a different decoding error.
+		switch errors.Recover(err).Kind {
+		default:
+			t.Errorf("invalid error %v", err)
+		case errors.Integrity:
+			nintegrity++
+		case errors.Other:
+			switch {
+			default:
+				t.Errorf("invalid error %v", err)
+			case strings.HasPrefix(err.Error(), "gob:"):
+			case err.Error() == "extra data in buffer":
+			case err.Error() == "unexpected EOF":
+			}
+		}
+	}
+	if nintegrity == 0 {
+		t.Error("encountered no integrity errors")
 	}
 }
 
