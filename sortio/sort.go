@@ -13,11 +13,12 @@ import (
 	"sort"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-const numCanaryRows = 1 << 14
+var numCanaryRows = defaultsize.SortCanary
 
 // SortReader sorts a Reader by its first column. SortReader may
 // spill to disk, in which case it targets spill file sizes of

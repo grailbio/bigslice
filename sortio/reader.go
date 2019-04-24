@@ -10,12 +10,13 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
-const defaultChunksize = 1024
+var defaultChunksize = defaultsize.Chunk
 
 type reader struct {
 	typ      slicetype.Type

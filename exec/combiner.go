@@ -27,10 +27,13 @@ var (
 	combineDiskSpills    = expvar.NewInt("combinediskspills")
 )
 
-const (
+var (
 	combiningFrameInitSize    = defaultChunksize
 	combiningFrameScratchSize = defaultChunksize
-	combiningFrameLoadFactor  = 0.7
+)
+
+const (
+	combiningFrameLoadFactor = 0.7
 
 	// HashSeed is used when hashing keys in the hash table. This is to
 	// prevent a previous partitioning step from reducing hash entropy.

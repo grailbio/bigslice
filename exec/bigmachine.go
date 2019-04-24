@@ -711,7 +711,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		return err
 	case task.NumPartition > 1:
-		const psize = defaultChunksize / 100
+		var psize = defaultChunksize / 100
 		var (
 			partitionv = make([]frame.Frame, task.NumPartition)
 			lens       = make([]int, task.NumPartition)

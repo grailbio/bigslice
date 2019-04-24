@@ -14,10 +14,11 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-const defaultChunksize = 1024
+var defaultChunksize = defaultsize.Chunk
 
 // Executor defines an interface used to provide implementations of
 // task runners. An Executor is responsible for running single tasks,

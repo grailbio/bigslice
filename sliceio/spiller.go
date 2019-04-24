@@ -20,7 +20,7 @@ import (
 // SpillBatchSize determines the amount of batching used in each
 // spill file. A single read of a spill file produces this many rows.
 // SpillBatchSize then trades off memory footprint for encoding size.
-const SpillBatchSize = defaultChunksize
+var SpillBatchSize = defaultChunksize
 
 // A Spiller manages a set of spill files.
 type Spiller string

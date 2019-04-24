@@ -14,6 +14,7 @@ import (
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
@@ -26,7 +27,7 @@ var testCalldepth = 0
 var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
 
 // DefaultChunkSize is the default size used for IO vectors throughout bigslice.
-const defaultChunksize = 1024
+var defaultChunksize = defaultsize.Chunk
 
 var errTypeError = errors.New("type error")
 

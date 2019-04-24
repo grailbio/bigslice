@@ -13,12 +13,13 @@ import (
 
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
 // DefaultChunksize is the default size used for I/O vectors within the
 // sliceio package.
-const defaultChunksize = 1024
+var defaultChunksize = defaultsize.Chunk
 
 // EOF is the error returned by Reader.Read when no more data is
 // available. EOF is intended as a sentinel error: it signals a
