@@ -101,8 +101,7 @@ func (e *Encoder) Encode(f frame.Frame) error {
 			return err
 		}
 	}
-	e.enc.Encode(e.crc.Sum32())
-	return nil
+	return e.enc.Encode(e.crc.Sum32())
 }
 
 // DecodingReader provides a Reader on top of a gob stream
