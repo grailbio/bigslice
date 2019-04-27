@@ -220,11 +220,13 @@ func init() {
 }
 
 // SystemHelpShort is a short explanation of the allowed SystemFlags values.
-const SystemHelpShort = `a bigslice system is specified as follows: {local,internal,ec2:[key=val,],name}, use --<prefix>.system-help for more information.`
+func SystemHelpShort(prefix string) string {
+	const format = `a bigslice system is specified as follows: {local,internal,ec2:[key=val,],name}, use -%s for more information.`
+	return fmt.Sprintf(format, prefix+"system-help")
+}
 
 // SystemHelpLong is a completion explanation of the allowed SystemFlags values.
-const SystemHelpLong = `
-A bigslice system is specified as follows:
+const SystemHelpLong = `A bigslice system is specified as follows:
 
 <system-type>:<options> where options is [key=value,]+
 
@@ -233,16 +235,15 @@ The currently supported instance types and their options are as follows:
 internal: in-process execution, the default.
 local: same machine, separate process execution.
 ec2: AWS EC2 execution. The supported options are:
-    instance=<AWS instance type> - the AWS instance type, e.g. m4.xlarge
+	instance=<AWS instance type> - the AWS instance type, e.g. m4.xlarge
 	dataspace=<number> - size of the data volume in GiB, typically /mnt/data.
 	rootsize=<number> - size of the root volume in GiB.
-	on-demand - true to use on-demand rather than spot instances
+	ondemand - true to use on-demand rather than spot instances
 	profile - the aws instance profile to use instead of a default
 
 In addition, an application may register 'profiles' that are shorthand
 for the above, eg. "my-app" can be configured as a synonymn for
-ec2:m4.xlarge,dataspace=200. Use --<prefix>.system-help to learn about
-the configured providers and profiles.
+ec2:m4.xlarge,dataspace=200.
 `
 
 // SystemFlag represents a flag that can be used to specify a bigmachine
@@ -371,7 +372,7 @@ type Defaults struct {
 // the supplied flag set and defaults. The flag names will be prefixed with the
 // supplied prefix.
 func RegisterFlagsWithDefaults(fs *flag.FlagSet, bf *Flags, prefix string, defaults Defaults) {
-	fs.Var(&bf.System, prefix+"system", SystemHelpShort)
+	fs.Var(&bf.System, prefix+"system", SystemHelpShort(prefix))
 	bf.System.Set(defaults.System)
 	bf.System.Specified = false
 	fs.Var(&bf.HTTPAddress, prefix+"http", "address of http status server")

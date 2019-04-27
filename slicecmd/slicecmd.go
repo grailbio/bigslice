@@ -28,6 +28,7 @@ package slicecmd
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -78,16 +79,20 @@ func Init(bf sliceflags.Flags) (*exec.Session, error) {
 		providers, profiles := sliceflags.ProvidersAndProfiles()
 		sort.Strings(providers)
 		wr := bf.Output()
-		str := []string{}
-		fmt.Fprintf(wr, "%s\n\n", sliceflags.SystemHelpLong)
-		fmt.Fprintf(wr, "The available providers are: %v\n",
-			strings.Join(providers, ", "))
+		_, err := fmt.Fprintf(wr, "%s\nThe available providers are: %v\n",
+			sliceflags.SystemHelpLong, strings.Join(providers, ", "))
+		if err != nil {
+			panic(err)
+		}
+		var str []string
 		for k, v := range profiles {
 			str = append(str, fmt.Sprintf("%v is shorthand for: %v\n", k, v))
 		}
 		sort.Strings(str)
 		for _, s := range str {
-			wr.Write([]byte(s))
+			if _, err := io.WriteString(wr, s); err != nil {
+				panic(err)
+			}
 		}
 		os.Exit(0)
 	}
