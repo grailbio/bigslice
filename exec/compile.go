@@ -64,7 +64,8 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (ta
 	ops := make([]string, 0, len(slices)+1)
 	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
 	for i := len(slices) - 1; i >= 0; i-- {
-		ops = append(ops, slices[i].Op())
+		op, _, _ := slices[i].Op()
+		ops = append(ops, op)
 	}
 	opName := namer.New(strings.Join(ops, "_"))
 	for i := range tasks {
@@ -78,6 +79,8 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (ta
 	// Pipeline execution, folding multiple frame operations
 	// into a single task by composing their readers.
 	for i := len(slices) - 1; i >= 0; i-- {
+		sliceOp, sliceFile, sliceLine := slices[i].Op()
+		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
 		for shard := range tasks {
 			var (
 				shard  = shard
@@ -87,12 +90,12 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (ta
 			if prev == nil {
 				// First frame reads the input directly.
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
-					return reader(shard, readers)
+					return &sliceio.PprofReader{reader(shard, readers), pprofLabel}
 				}
 			} else {
 				// Subsequent frames read the previous frame's output.
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
-					return reader(shard, []sliceio.Reader{prev(readers)})
+					return &sliceio.PprofReader{reader(shard, []sliceio.Reader{prev(readers)}), pprofLabel}
 				}
 			}
 		}

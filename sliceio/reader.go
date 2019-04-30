@@ -10,6 +10,7 @@ import (
 	"context"
 	"io"
 	"reflect"
+	"runtime/pprof"
 
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
@@ -190,4 +191,18 @@ type EmptyReader struct{}
 
 func (EmptyReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	return 0, EOF
+}
+
+// PprofReader executes Read in a labeled Context.
+type PprofReader struct {
+	Reader
+	Label string
+}
+
+func (r *PprofReader) Read(ctx context.Context, frame frame.Frame) (n int, err error) {
+	labels := pprof.Labels("sliceOp", r.Label)
+	pprof.Do(ctx, labels, func(ctx context.Context) {
+		n, err = r.Reader.Read(ctx, frame)
+	})
+	return
 }

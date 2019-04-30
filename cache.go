@@ -18,14 +18,15 @@ import (
 )
 
 type fileSlice struct {
+	sliceOp
 	Slice
 	prefix string
 }
 
-func (f *fileSlice) Op() string               { return fmt.Sprintf("file(%s)", f.prefix) }
-func (f *fileSlice) Combiner() *reflect.Value { return nil }
-func (f *fileSlice) NumDep() int              { return 0 }
-func (f *fileSlice) Dep(i int) Dep            { panic("no deps") }
+func (f *fileSlice) Op() (string, string, int) { return f.sliceOp.Op() }
+func (f *fileSlice) Combiner() *reflect.Value  { return nil }
+func (f *fileSlice) NumDep() int               { return 0 }
+func (f *fileSlice) Dep(i int) Dep             { panic("no deps") }
 
 type fileReader struct {
 	sliceio.Reader
@@ -56,9 +57,12 @@ func (f *fileSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type writethroughSlice struct {
+	sliceOp
 	Slice
 	prefix string
 }
+
+func (w *writethroughSlice) Op() (string, string, int) { return w.sliceOp.Op() }
 
 type writethroughReader struct {
 	sliceio.Reader
@@ -129,12 +133,16 @@ func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
 		})
 	}
 	if err == nil {
-		return &fileSlice{Slice: slice, prefix: prefix}, nil
+		return &fileSlice{
+			sliceOp: makeSliceOp(fmt.Sprintf("file(%s)", prefix)),
+			Slice:   slice,
+			prefix:  prefix,
+		}, nil
 	}
 	if !errors.Is(errors.NotExist, err) {
 		return nil, err
 	}
-	return &writethroughSlice{slice, prefix}, nil
+	return &writethroughSlice{makeSliceOp("writethrough"), slice, prefix}, nil
 }
 
 func shardPath(prefix string, n, m int) string {
