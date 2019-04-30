@@ -163,7 +163,7 @@ func (ec2 *EC2) Set(v string) error {
 			return fmt.Errorf("not an int: %v", val)
 		}
 		ec2.Options[key] = uint(i)
-	case "instance", "profile":
+	case "instance", "profile", "securitygroup":
 		ec2.Options[key] = val
 	case "ondemand":
 		b, err := strconv.ParseBool(val)
@@ -208,6 +208,8 @@ func (ec2 *EC2) ExecOption() exec.Option {
 			instance.InstanceProfile = val.(string)
 		case "ondemand":
 			instance.OnDemand = val.(bool)
+		case "securitygroup":
+			instance.SecurityGroup = val.(string)
 		}
 	}
 	return exec.Bigmachine(instance)
@@ -240,6 +242,7 @@ ec2: AWS EC2 execution. The supported options are:
 	rootsize=<number> - size of the root volume in GiB.
 	ondemand - true to use on-demand rather than spot instances
 	profile - the aws instance profile to use instead of a default
+	securitygroup - the aws security group to use instead of a default
 
 In addition, an application may register 'profiles' that are shorthand
 for the above, eg. "my-app" can be configured as a synonymn for

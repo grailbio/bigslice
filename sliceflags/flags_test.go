@@ -49,10 +49,10 @@ func TestFlags(t *testing.T) {
 	if err := tf.System.Set("ec2:an=option"); err == nil {
 		t.Errorf("expected an error")
 	}
-	if err := tf.System.Set("ec2:dataspace=200,rootsize=10"); err != nil {
+	if err := tf.System.Set("ec2:dataspace=200,rootsize=10,securitygroup=sg-12345678"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if got, want := tf.System.String(), "EC2:dataspace=200,rootsize=10"; got != want {
+	if got, want := tf.System.String(), "EC2:dataspace=200,rootsize=10,securitygroup=sg-12345678"; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
