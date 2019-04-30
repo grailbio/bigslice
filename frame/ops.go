@@ -6,7 +6,9 @@ package frame
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 
 	"github.com/spaolacci/murmur3"
@@ -17,6 +19,7 @@ import (
 var (
 	mu        sync.Mutex
 	makeOps   = map[reflect.Type]reflect.Value{}
+	locations = map[reflect.Type]string{}
 	typeOfOps = reflect.TypeOf((*Ops)(nil)).Elem()
 )
 
@@ -68,9 +71,16 @@ func RegisterOps(make interface{}) {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, ok := makeOps[elem]; ok {
-		panic("frame.RegisterOps: ops already registered for type " + elem.String())
+		location, ok := locations[elem]
+		if !ok {
+			location = "<unknown>"
+		}
+		panic("frame.RegisterOps: ops already registered for type " + elem.String() + " at " + location)
 	}
 	makeOps[elem] = reflect.ValueOf(make)
+	if _, file, line, ok := runtime.Caller(1); ok {
+		locations[elem] = fmt.Sprintf("%s:%d", file, line)
+	}
 }
 
 func makeSliceOps(typ reflect.Type, slice reflect.Value) Ops {
