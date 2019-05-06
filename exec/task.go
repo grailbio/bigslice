@@ -153,6 +153,7 @@ type Task struct {
 	// Combiner specifies an (optional) combiner to use for this task's output.
 	// If a Combiner is specified, CombineKey names the combine buffer used:
 	// each combine buffer contains combiner outputs from multiple tasks.
+	// If CombineKey is not set, then per-task buffers are used instead.
 	Combiner   *reflect.Value
 	CombineKey string
 

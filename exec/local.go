@@ -64,9 +64,13 @@ func (l *localExecutor) runTask(task *Task) {
 		for j, deptask := range dep.Tasks {
 			reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
 		}
-		if dep.CombineKey != "" && len(dep.Tasks) > 0 {
+		if len(dep.Tasks) > 0 && dep.Tasks[0].Combiner != nil {
 			// Perform input combination in-line, one for each partition.
-			combiner, err := newCombiner(dep.Tasks[0], dep.CombineKey, *dep.Tasks[0].Combiner, defaultChunksize*100)
+			combineKey := task.Name
+			if task.CombineKey != "" {
+				combineKey = TaskName{Op: task.CombineKey}
+			}
+			combiner, err := newCombiner(dep.Tasks[0], combineKey.String(), *dep.Tasks[0].Combiner, defaultChunksize*100)
 			if err != nil {
 				task.Error(err)
 				return

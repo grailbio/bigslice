@@ -300,6 +300,7 @@ type machineManager struct {
 	group   *status.Group
 	maxp    int
 	maxLoad float64
+	worker  *worker
 	needc   chan int
 	offerc  chan *sliceMachine
 }
@@ -310,12 +311,13 @@ type machineManager struct {
 // machine procs that may be allocated to user work.
 //
 // The cluster is not managed until machineManager.Do is called by the user.
-func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64) *machineManager {
+func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64, worker *worker) *machineManager {
 	return &machineManager{
 		b:       b,
 		group:   group,
 		maxp:    maxp,
 		maxLoad: maxLoad,
+		worker:  worker,
 		needc:   make(chan int),
 		offerc:  make(chan *sliceMachine),
 	}
@@ -449,7 +451,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/machprocs, have, pending/machprocs, pending)
 			go func() {
-				machines, err := startMachines(ctx, m.b, m.group, 1)
+				machines, err := startMachines(ctx, m.b, m.group, 1, m.worker)
 				if err != nil {
 					starterrc <- err
 				} else {
@@ -463,8 +465,8 @@ func (m *machineManager) Do(ctx context.Context) {
 // StartMachines starts a number of machines on b, installing a worker
 // service on each of them. StartMachines returns when all of the machines
 // are in bigmachine.Running state.
-func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int) ([]*sliceMachine, error) {
-	machines, err := b.Start(ctx, n, bigmachine.Services{"Worker": &worker{}})
+func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int, worker *worker) ([]*sliceMachine, error) {
+	machines, err := b.Start(ctx, n, bigmachine.Services{"Worker": worker})
 	if err != nil {
 		return nil, err
 	}

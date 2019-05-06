@@ -94,6 +94,10 @@ type bigmachineExecutor struct {
 	invocations    map[uint64]bigslice.Invocation
 	invocationDeps map[uint64]map[uint64]bool
 
+	// Worker is the (configured) worker service to instantiate on
+	// allocated machines.
+	worker *worker
+
 	// Managers is the set of machine machine managers used
 	// by this executor. By default tasks use managers[0]; but
 	// tasks that are marked as exclusive use a manager indexed
@@ -119,6 +123,9 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.invocations = make(map[uint64]bigslice.Invocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
+	b.worker = &worker{
+		MachineCombiners: sess.machineCombiners,
+	}
 
 	return b.b.Shutdown
 }
@@ -143,7 +150,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 		b.managers = append(b.managers, nil)
 	}
 	if b.managers[i] == nil {
-		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad())
+		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad(), b.worker)
 		go b.managers[i].Do(context.Background())
 	}
 	return b.managers[i]
@@ -220,7 +227,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
 	return m.Commits.Do(key, func() error {
 		log.Printf("committing key %v on worker %v", key, m.Addr)
-		return m.RetryCall(ctx, "Worker.CommitCombiner", key, nil)
+		return m.RetryCall(ctx, "Worker.CommitCombiner", TaskName{Op: key}, nil)
 	})
 }
 
@@ -229,7 +236,7 @@ func (b *bigmachineExecutor) run(task *Task) {
 	task.Status.Print("waiting for a machine")
 
 	// Use the default/shared cluster unless the func is exclusive.
-	cluster := 0
+	var cluster int
 	if task.Invocation.Exclusive {
 		cluster = int(task.Invocation.Index)
 	}
@@ -397,9 +404,9 @@ const (
 // A worker is the bigmachine service that runs individual tasks and serves
 // the results of previous runs. Currently all output is buffered in memory.
 type worker struct {
-	// Exported just satisfies gob's persnickety nature: we need at least
-	// one exported field.
-	Exported struct{}
+	// MachineCombiners determines whether to use the MachineCombiners
+	// compilation option.
+	MachineCombiners bool
 
 	b     *bigmachine.B
 	store Store
@@ -413,8 +420,8 @@ type worker struct {
 
 	// CombinerStates and combiners are used to manage shared combine
 	// buffers.
-	combinerStates map[string]combinerState
-	combiners      map[string][]chan *combiner
+	combinerStates map[TaskName]combinerState
+	combiners      map[TaskName][]chan *combiner
 
 	commitLimiter *limiter.Limiter
 }
@@ -423,8 +430,8 @@ func (w *worker) Init(b *bigmachine.B) error {
 	w.cond = ctxsync.NewCond(&w.mu)
 	w.tasks = make(map[uint64]map[TaskName]*Task)
 	w.slices = make(map[uint64]bigslice.Slice)
-	w.combiners = make(map[string][]chan *combiner)
-	w.combinerStates = make(map[string]combinerState)
+	w.combiners = make(map[TaskName][]chan *combiner)
+	w.combinerStates = make(map[TaskName]combinerState)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
 	if err != nil {
@@ -472,7 +479,7 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 			}
 		}
 		slice := inv.Invoke()
-		tasks, _, err := compile(make(taskNamer), inv, slice)
+		tasks, _, err := compile(make(taskNamer), inv, slice, w.MachineCombiners)
 		if err != nil {
 			return err
 		}
@@ -784,16 +791,20 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
-func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) error {
+func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) (err error) {
+	combineKey := task.Name
+	if task.CombineKey != "" {
+		combineKey = TaskName{Op: task.CombineKey}
+	}
 	w.mu.Lock()
-	switch w.combinerStates[task.CombineKey] {
+	switch w.combinerStates[combineKey] {
 	case combinerWriting, combinerCommitted, combinerError:
 		w.mu.Unlock()
-		return fmt.Errorf("combine key %s already committed", task.CombineKey)
+		return fmt.Errorf("combine key %s already committed", combineKey)
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			comb, err := newCombiner(task, fmt.Sprintf("%s%d", task.CombineKey, i), *task.Combiner, defaultChunksize*100)
+			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), *task.Combiner, defaultChunksize*100)
 			if err != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
@@ -806,17 +817,20 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 			combiners[i] = make(chan *combiner, 1)
 			combiners[i] <- comb
 		}
-		w.combiners[task.CombineKey] = combiners
-		w.combinerStates[task.CombineKey] = combinerIdle
+		w.combiners[combineKey] = combiners
+		w.combinerStates[combineKey] = combinerIdle
 	}
-	w.combinerStates[task.CombineKey]++
-	combiners := w.combiners[task.CombineKey]
+	w.combinerStates[combineKey]++
+	combiners := w.combiners[combineKey]
 	w.mu.Unlock()
 
 	defer func() {
 		w.mu.Lock()
-		w.combinerStates[task.CombineKey]--
+		w.combinerStates[combineKey]--
 		w.mu.Unlock()
+		if task.CombineKey == "" {
+			err = w.CommitCombiner(ctx, combineKey, nil)
+		}
 	}()
 
 	recordsOut := w.stats.Int("write")
@@ -907,7 +921,7 @@ func (w *worker) Stat(ctx context.Context, tp taskPartition, info *sliceInfo) (e
 // CommitCombiner commits the current combiner buffer with the
 // provided key. After successful return, its results are available via
 // Read.
-func (w *worker) CommitCombiner(ctx context.Context, key string, _ *struct{}) error {
+func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for {
@@ -931,15 +945,17 @@ func (w *worker) CommitCombiner(ctx context.Context, key string, _ *struct{}) er
 	}
 }
 
-func (w *worker) writeCombiner(key string) {
+func (w *worker) writeCombiner(key TaskName) {
 	ctx := context.Background()
 	g, ctx := errgroup.WithContext(context.Background())
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for part := range w.combiners[key] {
 		part, combiner := part, <-w.combiners[key][part]
 		g.Go(func() error {
 			w.commitLimiter.Acquire(ctx, 1)
 			defer w.commitLimiter.Release(1)
-			wc, err := w.store.Create(ctx, TaskName{Op: key}, part)
+			wc, err := w.store.Create(ctx, key, part)
 			if err != nil {
 				return err
 			}
@@ -957,6 +973,7 @@ func (w *worker) writeCombiner(key string) {
 			return wc.Commit(ctx, n)
 		})
 	}
+	w.mu.Unlock()
 	err := g.Wait()
 	w.mu.Lock()
 	w.combiners[key] = nil
@@ -967,7 +984,6 @@ func (w *worker) writeCombiner(key string) {
 		w.combinerStates[key] = combinerError
 	}
 	w.cond.Broadcast()
-	w.mu.Unlock()
 }
 
 // Read reads a slice.

@@ -310,13 +310,14 @@ func (sys *SystemFlag) Get() interface{} {
 // Flags represents all of the flags that can be used to configure
 // a bigslice command.
 type Flags struct {
-	System        SystemFlag
-	SystemHelp    bool
-	HTTPAddress   cmdutil.NetworkAddressFlag
-	ConsoleStatus bool
-	Parallelism   int
-	LoadFactor    float64
-	fs            *flag.FlagSet
+	System           SystemFlag
+	SystemHelp       bool
+	HTTPAddress      cmdutil.NetworkAddressFlag
+	ConsoleStatus    bool
+	Parallelism      int
+	LoadFactor       float64
+	MachineCombiners bool
+	fs               *flag.FlagSet
 }
 
 // Output returns an appropriate io.Writer for printing out help/usage
@@ -335,11 +336,9 @@ func (bf *Flags) Output() io.Writer {
 // flag set. The flag names will be prefixed with the supplied prefix.
 func RegisterFlags(fs *flag.FlagSet, bf *Flags, prefix string) {
 	RegisterFlagsWithDefaults(fs, bf, prefix, Defaults{
-		System:        "internal",
-		HTTPAddress:   ":3333",
-		ConsoleStatus: false,
-		Parallelism:   0,
-		LoadFactor:    exec.DefaultMaxLoad,
+		System:      "internal",
+		HTTPAddress: ":3333",
+		LoadFactor:  exec.DefaultMaxLoad,
 	})
 }
 
@@ -359,16 +358,20 @@ func (bf *Flags) ExecOptions() ([]exec.Option, error) {
 		options = append(options, exec.Parallelism(bf.System.Provider.DefaultParallelism()))
 	}
 	options = append(options, exec.MaxLoad(bf.LoadFactor))
+	if bf.MachineCombiners {
+		options = append(options, exec.MachineCombiners)
+	}
 	return options, nil
 }
 
 // Defaults represents default values for the supported flags.
 type Defaults struct {
-	System        string
-	HTTPAddress   string
-	ConsoleStatus bool
-	Parallelism   int
-	LoadFactor    float64
+	System          string
+	HTTPAddress     string
+	ConsoleStatus   bool
+	Parallelism     int
+	LoadFactor      float64
+	MachineCombiner bool
 }
 
 // RegisterFlagsWithDefaults registers the bigslice command line flags with
@@ -384,6 +387,7 @@ func RegisterFlagsWithDefaults(fs *flag.FlagSet, bf *Flags, prefix string, defau
 	fs.BoolVar(&bf.ConsoleStatus, prefix+"console-status", defaults.ConsoleStatus, "print status to stdout")
 	fs.IntVar(&bf.Parallelism, prefix+"parallelism", defaults.Parallelism, "maximum degree of parallelism to use in terms of CPU cores, 0 requests an appropriate default for the system")
 	fs.Float64Var(&bf.LoadFactor, prefix+"load-factor", defaults.LoadFactor, "maximum machine load specified as a percentage")
+	fs.BoolVar(&bf.MachineCombiners, prefix+"machine-combiners", defaults.MachineCombiner, "use machine combiners for reduce operations; note that machine combiners are not currently fault tolerant")
 	fs.BoolVar(&bf.SystemHelp, prefix+"system-help", false, "provide help on system providers and profiles")
 	bf.fs = fs
 }

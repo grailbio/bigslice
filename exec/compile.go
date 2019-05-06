@@ -52,7 +52,7 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (tasks []*Task, reused bool, err error) {
+func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
 	// Reuse tasks from a previous invocation.
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		return result.tasks, true, nil
@@ -105,7 +105,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (ta
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, reused, err := compile(namer, inv, dep.Slice)
+		deptasks, reused, err := compile(namer, inv, dep.Slice, machineCombiners)
 		if err != nil {
 			return nil, false, err
 		}
@@ -159,7 +159,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice) (ta
 		}
 
 		var combineKey string
-		if lastSlice.Combiner() != nil {
+		if lastSlice.Combiner() != nil && machineCombiners {
 			combineKey = opName
 		}
 		// Assign a partitioner and partition width our dependencies, so that

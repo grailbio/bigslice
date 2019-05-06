@@ -152,7 +152,7 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	b = bigmachine.Start(system)
 	var ctx context.Context
 	ctx, cancel = context.WithCancel(context.Background())
-	m = newMachineManager(b, nil, maxp, maxLoad)
+	m = newMachineManager(b, nil, maxp, maxLoad, &worker{MachineCombiners: false})
 	go m.Do(ctx)
 	return
 }

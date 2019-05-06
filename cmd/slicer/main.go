@@ -29,6 +29,9 @@ Available test are:
 		Large-scale testing of cogroup functionality.
 	itermem
 		Testing memory leaks during iterative bigslice invocations.
+	reduce
+		Large-scale testing of reduce functionality.
+
 `)
 		flag.PrintDefaults()
 		os.Exit(2)
@@ -49,6 +52,8 @@ Available test are:
 			err = cogroup(sess, args)
 		case "memiter":
 			err = memiter(sess, args)
+		case "reduce":
+			err = reduce(sess, args)
 		}
 		if *wait {
 			if err != nil {

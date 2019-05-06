@@ -20,11 +20,8 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
-	log.Printf("cogroupTest(%d, %d)", nshard, nkey)
-	// Each shard produces a (shuffled) set of values for each key.
-
-	slice = bigslice.ReaderFunc(nshard, func(shard int, order *[]int, keys []string, values [][]int) (n int, err error) {
+func randomReader(nshard, nkey int) (slice bigslice.Slice) {
+	return bigslice.ReaderFunc(nshard, func(shard int, order *[]int, keys []string, values [][]int) (n int, err error) {
 		if *order == nil {
 			r := rand.New(rand.NewSource(rand.Int63()))
 			*order = r.Perm(nkey)
@@ -42,6 +39,13 @@ var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
 		}
 		return i, nil
 	})
+}
+
+var cogroupTest = bigslice.Func(func(nshard, nkey int) (slice bigslice.Slice) {
+	log.Printf("cogroupTest(%d, %d)", nshard, nkey)
+	// Each shard produces a (shuffled) set of values for each key.
+
+	slice = randomReader(nshard, nkey)
 	slice = bigslice.Cogroup(slice)
 	return
 })

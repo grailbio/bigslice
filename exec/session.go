@@ -63,6 +63,8 @@ type Session struct {
 	executor Executor
 	status   *status.Status
 
+	machineCombiners bool
+
 	tracer *tracer
 
 	mu sync.Mutex
@@ -117,6 +119,18 @@ func Status(status *status.Status) Option {
 	}
 }
 
+// MachineCombiners is a session option that turns on machine-local
+// combine buffers. If turned on, each combiner task that belongs to
+// the same shard-set and runs on the same machine combines values
+// into a single, machine-local combine buffer. This can be a big
+// performance optimization for tasks that have low key cardinality,
+// or a key-set with very hot keys. However, due to the way it is
+// implemented, error recovery is currently not implemented for such
+// tasks.
+var MachineCombiners Option = func(s *Session) {
+	s.machineCombiners = true
+}
+
 // Start creates and starts a new bigslice session, configuring it
 // according to the provided options. Only one session may be created
 // in a single binary invocation. The returned session remains valid for
@@ -169,7 +183,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	}
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice)
+	tasks, _, err := compile(make(taskNamer), inv, slice, s.machineCombiners)
 	if err != nil {
 		return nil, err
 	}
