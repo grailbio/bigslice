@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
@@ -494,7 +495,7 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 			}
 			// TODO(marius): pass a context that's tied to the evaluation
 			// lifetime, or lifetime of the machine.
-			go sm.Go(context.Background())
+			go sm.Go(backgroundcontext.Get())
 			slicemachines[i] = sm
 			return nil
 		})

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
@@ -151,7 +152,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 	}
 	if b.managers[i] == nil {
 		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad(), b.worker)
-		go b.managers[i].Do(context.Background())
+		go b.managers[i].Do(backgroundcontext.Get())
 	}
 	return b.managers[i]
 }
@@ -232,7 +233,7 @@ func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key st
 }
 
 func (b *bigmachineExecutor) run(task *Task) {
-	ctx := context.Background()
+	ctx := backgroundcontext.Get()
 	task.Status.Print("waiting for a machine")
 
 	// Use the default/shared cluster unless the func is exclusive.
@@ -946,8 +947,7 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 }
 
 func (w *worker) writeCombiner(key TaskName) {
-	ctx := context.Background()
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(backgroundcontext.Get())
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for part := range w.combiners[key] {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/log"
@@ -41,7 +42,7 @@ func (f *fileReader) Read(ctx context.Context, frame frame.Frame) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		f.Reader = sliceio.NewDecodingReader(f.file.Reader(context.Background()))
+		f.Reader = sliceio.NewDecodingReader(f.file.Reader(backgroundcontext.Get()))
 	}
 	n, err := f.Reader.Read(ctx, frame)
 	if err != nil {
@@ -81,7 +82,7 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 		// Ideally we'd use the underlying context for each op here,
 		// but the way encoder is set up, we can't (understandably)
 		// pass a new writer for each encode.
-		r.enc = sliceio.NewEncoder(r.file.Writer(context.Background()))
+		r.enc = sliceio.NewEncoder(r.file.Writer(backgroundcontext.Get()))
 	}
 	n, err := r.Reader.Read(ctx, frame)
 	if err == nil || err == sliceio.EOF {
@@ -94,7 +95,7 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 			}
 		}
 	} else {
-		r.file.Discard(context.Background())
+		r.file.Discard(backgroundcontext.Get())
 	}
 	return n, err
 }

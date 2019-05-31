@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -138,7 +139,7 @@ var MachineCombiners Option = func(s *Session) {
 // is configured to use the bigmachine executor.
 func Start(options ...Option) *Session {
 	s := &Session{
-		Context: context.Background(),
+		Context: backgroundcontext.Get(),
 		roots:   make(map[*Task]struct{}),
 	}
 	for _, opt := range options {

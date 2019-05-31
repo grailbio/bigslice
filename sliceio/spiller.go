@@ -5,7 +5,6 @@
 package sliceio
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/bigslice/frame"
 )
@@ -80,7 +80,7 @@ func (dir Spiller) Spill(frame frame.Frame) (int, error) {
 func (dir Spiller) Readers() ([]Reader, error) {
 	var paths []string
 	// These are always on local paths, so background context is ok.
-	list := file.List(context.Background(), string(dir), true)
+	list := file.List(backgroundcontext.Get(), string(dir), true)
 	for list.Scan() {
 		if list.IsDir() {
 			continue

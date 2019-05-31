@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/bigslice/frame"
@@ -54,7 +55,7 @@ func (l *localExecutor) Runnable(task *Task) {
 }
 
 func (l *localExecutor) runTask(task *Task) {
-	ctx := context.Background()
+	ctx := backgroundcontext.Get()
 	l.limiter.Acquire(ctx, 1)
 	defer l.limiter.Release(1)
 	in := make([]sliceio.Reader, 0, len(task.Deps))
