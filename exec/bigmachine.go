@@ -6,7 +6,6 @@ package exec
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/limitbuf"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/retry"
@@ -1118,11 +1118,7 @@ func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error
 }
 
 func truncatef(v interface{}) string {
-	var b bytes.Buffer
-	fmt.Fprint(&b, v)
-	if b.Len() > 512 {
-		b.Truncate(512)
-		b.WriteString("(truncated)")
-	}
+	b := limitbuf.NewLogger(512)
+	fmt.Fprint(b, v)
 	return b.String()
 }
