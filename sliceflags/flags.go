@@ -182,10 +182,10 @@ func (ec2 *EC2) DefaultParallelism() int {
 	return runtime.GOMAXPROCS(0)
 }
 
-// ExecOption implements Provider.ExecOption.
-func (ec2 *EC2) ExecOption() exec.Option {
+// NewSystem creates a new EC2 system configured by the given flags.
+func (ec2 *EC2) NewSystem() *ec2system.System {
 	if ec2.Options == nil {
-		return exec.Bigmachine(&ec2system.System{})
+		return &ec2system.System{}
 	}
 	instance := &ec2system.System{
 		Username: "unknown",
@@ -212,7 +212,12 @@ func (ec2 *EC2) ExecOption() exec.Option {
 			instance.SecurityGroup = val.(string)
 		}
 	}
-	return exec.Bigmachine(instance)
+	return instance
+}
+
+// ExecOption implements Provider.ExecOption.
+func (ec2 *EC2) ExecOption() exec.Option {
+	return exec.Bigmachine(ec2.NewSystem())
 }
 
 func init() {
