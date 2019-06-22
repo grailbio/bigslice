@@ -157,6 +157,10 @@ type Task struct {
 	Combiner   *reflect.Value
 	CombineKey string
 
+	// Pragma comprises the pragmas of all slice operations that
+	// are pipelined into this task.
+	bigslice.Pragma
+
 	// The following are used to coordinate runtime execution.
 
 	sync.Mutex

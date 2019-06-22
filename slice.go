@@ -98,6 +98,36 @@ type Slice interface {
 	Reader(shard int, deps []sliceio.Reader) sliceio.Reader
 }
 
+// Pragma comprises runtime directives used during bigslice
+// execution.
+type Pragma interface {
+	// Exclusive indicates that a slice task should be given
+	// exclusive access to the underlying machine.
+	Exclusive() bool
+}
+
+// Pragmas composes multiple underlying Pragmas.
+type Pragmas []Pragma
+
+// Exclusive implements Pragma.
+func (p Pragmas) Exclusive() bool {
+	for _, q := range p {
+		if q.Exclusive() {
+			return true
+		}
+	}
+	return false
+}
+
+type exclusive struct{}
+
+func (exclusive) Exclusive() bool { return true }
+
+// Exclusive is a Pragma that indicates the slice task
+// should be given exclusive access to the machine
+// that runs it.
+var Exclusive Pragma = exclusive{}
+
 type constSlice struct {
 	sliceOp
 	slicetype.Type
@@ -179,6 +209,7 @@ func (s *constSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type readerFuncSlice struct {
+	Pragma
 	sliceOp
 	slicetype.Type
 	nshard    int
@@ -206,7 +237,7 @@ type readerFuncSlice struct {
 // argument is a pointer, it is allocated.) Subsequent invocations of
 // the function receive the same state value, thus permitting the
 // reader to maintain local state across the read of a whole shard.
-func ReaderFunc(nshard int, read interface{}) Slice {
+func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	s := new(readerFuncSlice)
 	s.sliceOp = makeSliceOp("reader")
 	s.nshard = nshard
@@ -223,6 +254,7 @@ func ReaderFunc(nshard int, read interface{}) Slice {
 	if s.Type, ok = typecheck.Devectorize(arg); !ok {
 		typecheck.Panicf(1, "readerfunc: function %T is not vectorized", read)
 	}
+	s.Pragma = Pragmas(prags)
 	return s
 }
 
@@ -430,6 +462,7 @@ func (s *writerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Rea
 }
 
 type mapSlice struct {
+	Pragma
 	sliceOp
 	Slice
 	fval reflect.Value
@@ -445,7 +478,7 @@ type mapSlice struct {
 // Schematically:
 //
 //	Map(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) (r1, r2, ..., rn)) Slice<r1, r2, ..., rn>
-func Map(slice Slice, fn interface{}) Slice {
+func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	m := new(mapSlice)
 	m.sliceOp = makeSliceOp("map")
 	m.Slice = slice
@@ -461,6 +494,7 @@ func Map(slice Slice, fn interface{}) Slice {
 		typecheck.Panicf(1, "map: need at least one output column")
 	}
 	m.out = ret
+	m.Pragma = Pragmas(prags)
 	return m
 }
 
@@ -520,6 +554,7 @@ func (m *mapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type filterSlice struct {
+	Pragma
 	sliceOp
 	Slice
 	pred reflect.Value
@@ -535,11 +570,12 @@ type filterSlice struct {
 // Schematically:
 //
 //	Filter(Slice<t1, t2, ..., tn>, func(t1, t2, ..., tn) bool) Slice<t1, t2, ..., tn>
-func Filter(slice Slice, pred interface{}) Slice {
+func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	f := new(filterSlice)
 	f.sliceOp = makeSliceOp("filter")
 	f.Slice = slice
 	f.pred = reflect.ValueOf(pred)
+	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(pred)
 	if !ok {
 		typecheck.Panicf(1, "filter: invalid predicate function %T", pred)
@@ -606,6 +642,7 @@ func (f *filterSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type flatmapSlice struct {
+	Pragma
 	sliceOp
 	Slice
 	fval reflect.Value
@@ -621,11 +658,12 @@ type flatmapSlice struct {
 // Schematically:
 //
 //	Flatmap(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) ([]r1, []r2, ..., []rn)) Slice<r1, r2, ..., rn>
-func Flatmap(slice Slice, fn interface{}) Slice {
+func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	f := new(flatmapSlice)
 	f.sliceOp = makeSliceOp("flatmap")
 	f.Slice = slice
 	f.fval = reflect.ValueOf(fn)
+	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(fn)
 	if !ok {
 		typecheck.Panicf(1, "flatmap: invalid flatmap function %T", fn)

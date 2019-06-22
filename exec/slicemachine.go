@@ -313,6 +313,11 @@ type machineManager struct {
 //
 // The cluster is not managed until machineManager.Do is called by the user.
 func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64, worker *worker) *machineManager {
+	// Adjust maxLoad so that we are guaranteed at least one proc per machine;
+	// otherwise we can get stuck in nasty deadlocks.
+	if machprocs := float64(b.System().Maxprocs()) * maxLoad; machprocs < 1 {
+		maxLoad = 1 / float64(b.System().Maxprocs())
+	}
 	return &machineManager{
 		b:       b,
 		group:   group,
@@ -350,7 +355,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		need, pending int
 		// Scale each machine's maxprocs by the max load factor so that
 		// maxp is interpreted as the maximum number of usable procs.
-		machprocs      = max(1, int(float64(m.b.System().Maxprocs())*m.maxLoad))
+		machprocs      = int(float64(m.b.System().Maxprocs()) * m.maxLoad)
 		starterrc      = make(chan error)
 		startc         = make(chan []*sliceMachine)
 		stoppedc       = make(chan *sliceMachine)

@@ -31,5 +31,8 @@
 		   as the target architecture. When running locally, this is not a
 		   concern, but programs that require distribution must be run from
 		   a linux/amd64 binary.
+
+	Some Bigslice operations may be annotated with runtime pragmas:
+	directives for the Bigslice runtime. See Pragma for details.
 */
 package bigslice

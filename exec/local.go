@@ -14,6 +14,7 @@ import (
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/limiter"
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -56,8 +57,19 @@ func (l *localExecutor) Runnable(task *Task) {
 
 func (l *localExecutor) runTask(task *Task) {
 	ctx := backgroundcontext.Get()
-	l.limiter.Acquire(ctx, 1)
-	defer l.limiter.Release(1)
+	n := 1
+	if task.Pragma.Exclusive() {
+		n = l.sess.p
+	}
+	if err := l.limiter.Acquire(ctx, n); err != nil {
+		// The only errors we should encounter here are context errors,
+		// in which case there is no more work to do.
+		if err != context.Canceled && err != context.DeadlineExceeded {
+			log.Panicf("exec.Local: unexpected error: %v", err)
+		}
+		return
+	}
+	defer l.limiter.Release(n)
 	in := make([]sliceio.Reader, 0, len(task.Deps))
 	for _, dep := range task.Deps {
 		reader := new(multiReader)

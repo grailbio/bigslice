@@ -16,7 +16,7 @@ import (
 )
 
 func TestBigmachineExecutor(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	gate := make(chan struct{}, 1)
@@ -65,7 +65,7 @@ func TestBigmachineExecutor(t *testing.T) {
 }
 
 func TestBigmachineExecutorExclusive(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 	var wg sync.WaitGroup
 	fn := bigslice.Func(func(i int) bigslice.Slice {
@@ -78,7 +78,7 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 	var maxIndex int
 	wg.Add(2 * N) //one for local invocation; one for remote
 	for i := 0; i < N; i++ {
-		inv := fn.Invocation("", i)
+		inv := fn.Invocation("<test>", i)
 		if ix := int(inv.Index); ix > maxIndex {
 			maxIndex = ix
 		}
@@ -90,11 +90,8 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 		x.Runnable(tasks[0])
 	}
 	wg.Wait()
-	if got, want := len(x.managers), maxIndex+1; got != want {
-		t.Fatalf("got %v, want %v", got, want)
-	}
 	var n int
-	for i := 1; i < maxIndex+1; i++ {
+	for i := 1; i < 2*maxIndex+1; i++ {
 		if x.managers[i] != nil {
 			n++
 		}
@@ -104,8 +101,61 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 	}
 }
 
+func TestBigmachineExecutorTaskExclusive(t *testing.T) {
+	ctx := context.Background()
+	x, stop := bigmachineTestExecutor(2)
+	defer stop()
+	var called, replied sync.WaitGroup
+	fn := bigslice.Func(func() bigslice.Slice {
+		var once sync.Once
+		slice := bigslice.Const(2, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 10})
+		slice = bigslice.Map(slice, func(i int) int {
+			once.Do(func() {
+				called.Done()
+				replied.Wait()
+			})
+			return i
+		}, bigslice.Exclusive)
+		return slice
+	})
+	inv := fn.Invocation("<test>")
+	slice := inv.Invoke()
+	tasks, _, err := compile(make(taskNamer), inv, slice, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(tasks), 2; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for _, task := range tasks {
+		if !task.Pragma.Exclusive() {
+			t.Fatalf("task %v not bigslice.Exclusive", task)
+		}
+	}
+	called.Add(2)
+	replied.Add(1)
+	x.Runnable(tasks[0])
+	x.Runnable(tasks[1])
+	called.Wait()
+	if got, want := tasks[0].State(), TaskRunning; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got, want := tasks[1].State(), TaskRunning; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	replied.Done()
+	state, err := tasks[0].WaitState(ctx, TaskOk)
+	if err != nil || state != TaskOk {
+		t.Fatal(state, err)
+	}
+	state, err = tasks[1].WaitState(ctx, TaskOk)
+	if err != nil || state != TaskOk {
+		t.Fatal(state, err)
+	}
+}
+
 func TestBigmachineExecutorPanicCompile(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	var count int
@@ -120,7 +170,7 @@ func TestBigmachineExecutorPanicCompile(t *testing.T) {
 }
 
 func TestBigmachineExecutorPanicRun(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	tasks, _, _ := compileFunc(func() bigslice.Slice {
@@ -145,7 +195,7 @@ func (r *errorSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 func TestBigmachineExecutorErrorRun(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	tasks, _, _ := compileFunc(func() bigslice.Slice {
@@ -155,7 +205,7 @@ func TestBigmachineExecutorErrorRun(t *testing.T) {
 }
 
 func TestBigmachineExecutorFatalErrorRun(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	err := errors.E(errors.Fatal, "a fatal error")
@@ -169,7 +219,7 @@ func TestBigmachineExecutorFatalErrorRun(t *testing.T) {
 }
 
 func TestBigmachineCompiler(t *testing.T) {
-	x, stop := bigmachineTestExecutor()
+	x, stop := bigmachineTestExecutor(1)
 	defer stop()
 
 	tasks, slice, inv := compileFunc(func() bigslice.Slice {
@@ -198,12 +248,12 @@ func run(t *testing.T, x Executor, tasks []*Task, expect TaskState) {
 	}
 }
 
-func bigmachineTestExecutor() (exec *bigmachineExecutor, stop func()) {
+func bigmachineTestExecutor(p int) (exec *bigmachineExecutor, stop func()) {
 	x := newBigmachineExecutor(testsystem.New())
 	ctx, cancel := context.WithCancel(context.Background())
 	shutdown := x.Start(&Session{
 		Context: ctx,
-		p:       1,
+		p:       p,
 		maxLoad: 1,
 	})
 	return x, func() {

@@ -99,10 +99,16 @@ type bigmachineExecutor struct {
 	// allocated machines.
 	worker *worker
 
-	// Managers is the set of machine machine managers used
-	// by this executor. By default tasks use managers[0]; but
-	// tasks that are marked as exclusive use a manager indexed
-	// by their invocation.
+	// Managers is the set of machine machine managers used by this
+	// executor. Even managers use the session's maxload, and will
+	// share task load on a single machine. Odd managers are used
+	// for exclusive tasks.
+	//
+	// Thus manager selection proceeds as follows: the default manager
+	// is managers[0]. Func-exclusive tasks use managers[invocation*2].
+	//
+	// If the task is marked as exclusive, then one is added to their
+	// manager index.
 	managers []*machineManager
 }
 
@@ -151,7 +157,13 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 		b.managers = append(b.managers, nil)
 	}
 	if b.managers[i] == nil {
-		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), b.sess.MaxLoad(), b.worker)
+		maxLoad := b.sess.MaxLoad()
+		if i%2 == 1 {
+			// In this case, the maxLoad will be adjusted to the smallest
+			// feasible value; i.e., one task may run on each machine.
+			maxLoad = 0
+		}
+		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), maxLoad, b.worker)
 		go b.managers[i].Do(backgroundcontext.Get())
 	}
 	return b.managers[i]
@@ -239,7 +251,10 @@ func (b *bigmachineExecutor) run(task *Task) {
 	// Use the default/shared cluster unless the func is exclusive.
 	var cluster int
 	if task.Invocation.Exclusive {
-		cluster = int(task.Invocation.Index)
+		cluster = int(task.Invocation.Index) * 2
+	}
+	if task.Pragma.Exclusive() {
+		cluster++
 	}
 	mgr := b.manager(cluster)
 

@@ -63,9 +63,13 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	slices := pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
 	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
+	var pragmas bigslice.Pragmas
 	for i := len(slices) - 1; i >= 0; i-- {
 		op, _, _ := slices[i].Op()
 		ops = append(ops, op)
+		if pragma, ok := slices[i].(bigslice.Pragma); ok {
+			pragmas = append(pragmas, pragma)
+		}
 	}
 	opName := namer.New(strings.Join(ops, "_"))
 	for i := range tasks {
@@ -74,6 +78,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 			Name:         TaskName{Op: opName, Shard: i, NumShard: len(tasks)},
 			Invocation:   inv,
 			NumPartition: 1,
+			Pragma:       pragmas,
 		}
 	}
 	// Pipeline execution, folding multiple frame operations
