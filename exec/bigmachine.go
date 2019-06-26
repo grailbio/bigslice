@@ -311,8 +311,8 @@ compile:
 	req := taskRunRequest{
 		Name:       task.Name,
 		Invocation: task.Invocation.Index,
-		Locations:  make(map[TaskName]string),
 	}
+	machineIndices := make(map[string]int)
 	g, _ := errgroup.WithContext(ctx)
 	for _, dep := range task.Deps {
 		for _, deptask := range dep.Tasks {
@@ -324,7 +324,13 @@ compile:
 				m.Done(nil)
 				return
 			}
-			req.Locations[deptask.Name] = m.Addr
+			i, ok := machineIndices[m.Addr]
+			if !ok {
+				i = len(machineIndices)
+				machineIndices[m.Addr] = i
+				req.Machines = append(req.Machines, m.Addr)
+			}
+			req.Locations = append(req.Locations, i)
 			key := dep.CombineKey
 			if key == "" {
 				continue
@@ -523,8 +529,18 @@ type taskRunRequest struct {
 	// Name is the name of the task compiled from Invocation.
 	Name TaskName
 
-	// Locations contains the locations of the output of each dependency.
-	Locations map[TaskName]string
+	// Machines stores the set of machines indexed in Locations.
+	Machines []string
+
+	// Locations indexes machine locations for task outputs. Locations
+	// stores the machine index of each task dependency. We rely on the
+	// fact that the task graph is identical to all viewers: locations
+	// are stored in the order of task dependencies.
+	Locations []int
+}
+
+func (r *taskRunRequest) location(taskIndex int) string {
+	return r.Machines[r.Locations[taskIndex]]
 }
 
 type taskRunReply struct{} // nothing here yet
@@ -586,7 +602,10 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		totalRecordsIn = w.stats.Int("inrecords")
 		recordsIn = w.stats.Int("read")
 	}
-	in := make([]sliceio.Reader, 0, len(task.Deps))
+	var (
+		in        = make([]sliceio.Reader, 0, len(task.Deps))
+		taskIndex int
+	)
 	for _, dep := range task.Deps {
 		// If the dependency has a combine key, they are combined on the
 		// machine, and we de-dup the dependencies.
@@ -595,11 +614,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		// are committed on the machines.
 		if dep.CombineKey != "" {
 			locations := make(map[string]bool)
-			for _, deptask := range dep.Tasks {
-				addr := req.Locations[deptask.Name]
-				if addr == "" {
-					return fmt.Errorf("no location for input task %s", deptask.Name)
-				}
+			for range dep.Tasks {
+				addr := req.location(taskIndex)
+				taskIndex++
 				// We only read the first combine key for each location.
 				//
 				// TODO(marius): compute some non-overlapping intersection of
@@ -629,20 +646,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		} else {
 			reader := new(multiReader)
 			reader.q = make([]sliceio.Reader, len(dep.Tasks))
-			// We shuffle the tasks here so that we don't encounter "thundering herd"
-			// issues were partitions are read sequentially from the same (ordered)
-			// list of machines.
-			//
-			// TODO(marius): possibly we should perform proper load balancing here
-			shuffled := rand.Perm(len(dep.Tasks))
-
 		Tasks:
 			for j := range dep.Tasks {
-				k := j
-				if DoShuffleReaders {
-					k = shuffled[j]
-				}
-				deptask := dep.Tasks[k]
+				deptask := dep.Tasks[j]
 				// If we have it locally, or if we're using a shared backend store
 				// (e.g., S3), then read it directly.
 				info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
@@ -652,14 +658,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 						defer rc.Close()
 						reader.q[j] = sliceio.NewDecodingReader(rc)
 						totalRecordsIn.Add(info.Records)
+						taskIndex++
 						continue Tasks
 					}
 				}
 				// Find the location of the task.
-				addr := req.Locations[deptask.Name]
-				if addr == "" {
-					return fmt.Errorf("no location for input task %s", deptask.Name)
-				}
+				addr := req.location(taskIndex)
+				taskIndex++
 				machine, err := w.b.Dial(ctx, addr)
 				if err != nil {
 					return err
@@ -675,6 +680,15 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				reader.q[j] = &statsReader{r, recordsIn}
 				totalRecordsIn.Add(info.Records)
 				defer r.Close()
+			}
+			// We shuffle the tasks here so that we don't encounter
+			// "thundering herd" issues were partitions are read sequentially
+			// from the same (ordered) list of machines.
+			//
+			// TODO(marius): possibly we should perform proper load balancing
+			// here
+			if DoShuffleReaders {
+				rand.Shuffle(len(reader.q), func(i, j int) { reader.q[i], reader.q[j] = reader.q[j], reader.q[i] })
 			}
 			if dep.Expand {
 				in = append(in, reader.q...)
