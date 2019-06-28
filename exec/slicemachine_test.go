@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +69,27 @@ func TestSlicemachineLoad(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSlicemachineExclusive(t *testing.T) {
+	system, _, mgr, cancel := startTestSystem(
+		32,
+		64,
+		0,
+	)
+	mgr.Need(1)
+	if got, want := system.Wait(1), 1; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	mgr.Need(10)
+	if got, want := system.Wait(2), 2; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	cancel()
+	if got, want := system.N(), 2; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
 }
 
 func TestSlicemachineProbation(t *testing.T) {
@@ -150,9 +172,17 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	system.KeepaliveTimeout = 5 * time.Second
 	system.KeepaliveRpcTimeout = time.Second
 	b = bigmachine.Start(system)
-	var ctx context.Context
-	ctx, cancel = context.WithCancel(context.Background())
+	ctx, ctxcancel := context.WithCancel(context.Background())
 	m = newMachineManager(b, nil, maxp, maxLoad, &worker{MachineCombiners: false})
-	go m.Do(ctx)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		m.Do(ctx)
+		wg.Done()
+	}()
+	cancel = func() {
+		ctxcancel()
+		wg.Wait()
+	}
 	return
 }

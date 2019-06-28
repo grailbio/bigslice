@@ -25,6 +25,10 @@ const (
 	// ProbationTimeout is the amount of time that a machine will
 	// remain in probation without being explicitly marked healthy.
 	probationTimeout = 30 * time.Second
+
+	// maxStartMachines is the maximum number of machines that
+	// may be started in one batch.
+	maxStartMachines = 10
 )
 
 // MachineHealth is the overall assessment of machine health by
@@ -53,13 +57,13 @@ type sliceMachine struct {
 	Status *status.Task
 
 	// curprocs is the current number of procs on the machine that have
-	// tasks assigned. curprocs is managed by the manageMachines.
+	// tasks assigned. curprocs is managed by the machineManager.
 	curprocs int
 
-	// health is managed by the manageMachines.
+	// health is managed by the machineManager.
 	health machineHealth
 
-	// lastFailure is managed by the manageMachines.
+	// lastFailure is managed by the machineManager.
 	lastFailure time.Time
 
 	// index is the machine's index in the executor's priority queue.
@@ -294,6 +298,12 @@ type machineDone struct {
 	Err error
 }
 
+// startError is used to signal machine start errors.
+type startError struct {
+	Nproc int   // the number of procs that failed to start
+	Err   error // the underlying error
+}
+
 // MachineManager manages a cluster of sliceMachines, load balancing requests
 // among them. MachineManagers are constructed newMachineManager.
 type machineManager struct {
@@ -313,10 +323,23 @@ type machineManager struct {
 //
 // The cluster is not managed until machineManager.Do is called by the user.
 func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64, worker *worker) *machineManager {
-	// Adjust maxLoad so that we are guaranteed at least one proc per machine;
-	// otherwise we can get stuck in nasty deadlocks.
-	if machprocs := float64(b.System().Maxprocs()) * maxLoad; machprocs < 1 {
-		maxLoad = 1 / float64(b.System().Maxprocs())
+	// Adjust maxLoad so that we are guaranteed at least one proc per
+	// machine; otherwise we can get stuck in nasty deadlocks. We also
+	// adjust maxp in this case to account for the fact, when maxLoad=0,
+	// we should allocate the entirety of the machine towards a task
+	// with internal parallelism, and the maxp should count towards
+	// that.
+	//
+	// TODO(marius): maxp is still applied on a per-manager basis. It
+	// should be shared across all managers, though this complicates
+	// matters because, without de-allocating machines from one cluster
+	// to another, or at least draining them and transferring them, we
+	// could run into deadlocks. We should probably re-think cluster
+	// management to better accommodate for this.
+	maxprocs := b.System().Maxprocs()
+	if machprocs := float64(maxprocs) * maxLoad; machprocs < 1 {
+		maxLoad = 1 / float64(maxprocs)
+		maxp = (maxp + maxprocs - 1) / maxprocs
 	}
 	return &machineManager{
 		b:       b,
@@ -355,8 +378,8 @@ func (m *machineManager) Do(ctx context.Context) {
 		need, pending int
 		// Scale each machine's maxprocs by the max load factor so that
 		// maxp is interpreted as the maximum number of usable procs.
-		machprocs      = int(float64(m.b.System().Maxprocs()) * m.maxLoad)
-		starterrc      = make(chan error)
+		machprocs      = max(1, int(float64(m.b.System().Maxprocs())*m.maxLoad))
+		starterrc      = make(chan startError)
 		startc         = make(chan []*sliceMachine)
 		stoppedc       = make(chan *sliceMachine)
 		donec          = make(chan machineDone)
@@ -420,11 +443,11 @@ func (m *machineManager) Do(ctx context.Context) {
 			}
 		case n := <-m.needc:
 			need += n
-		case err := <-starterrc:
-			log.Error.Printf("error starting machines: %v", err)
-			pending -= machprocs
+		case startErr := <-starterrc:
+			log.Error.Printf("error starting machines: %v", startErr.Err)
+			pending -= startErr.Nproc
 		case started := <-startc:
-			pending -= machprocs
+			pending -= machprocs * len(started)
 			for _, mach := range started {
 				heap.Push(&machines, mach)
 				mach.donec = donec
@@ -453,13 +476,17 @@ func (m *machineManager) Do(ctx context.Context) {
 		// resources any more; his would involve moving results to other
 		// machines or to another storage medium.
 		if have := (len(machines) + len(probation)) * machprocs; have+pending < need && have+pending < m.maxp {
-			pending += machprocs
+			var (
+				needProcs    = min(need, m.maxp) - have - pending
+				needMachines = min((needProcs+machprocs-1)/machprocs, maxStartMachines)
+			)
+			pending += needMachines * machprocs
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/machprocs, have, pending/machprocs, pending)
 			go func() {
-				machines, err := startMachines(ctx, m.b, m.group, 1, m.worker)
+				machines, err := startMachines(ctx, m.b, m.group, needMachines, m.worker)
 				if err != nil {
-					starterrc <- err
+					starterrc <- startError{needMachines * machprocs, err}
 				} else {
 					startc <- machines
 				}
@@ -520,6 +547,13 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 
 func max(x, y int) int {
 	if x > y {
+		return x
+	}
+	return y
+}
+
+func min(x, y int) int {
+	if x < y {
 		return x
 	}
 	return y
