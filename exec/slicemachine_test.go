@@ -173,7 +173,7 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	system.KeepaliveRpcTimeout = time.Second
 	b = bigmachine.Start(system)
 	ctx, ctxcancel := context.WithCancel(context.Background())
-	m = newMachineManager(b, nil, maxp, maxLoad, &worker{MachineCombiners: false})
+	m = newMachineManager(b, nil, nil, maxp, maxLoad, &worker{MachineCombiners: false})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

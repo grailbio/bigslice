@@ -151,7 +151,7 @@ func (ec2 *EC2) Set(v string) error {
 	if ec2.Options == nil {
 		ec2.Options = make(map[string]interface{}, 5)
 	}
-	parts := strings.Split(v, "=")
+	parts := strings.SplitN(v, "=", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("not in key=val format %q", v)
 	}
@@ -171,6 +171,14 @@ func (ec2 *EC2) Set(v string) error {
 			return fmt.Errorf("not a bool: %v", val)
 		}
 		ec2.Options[key] = b
+	case "env":
+		v := ec2.Options["env"]
+		if v == nil {
+			v = bigmachine.Environ{val}
+		} else {
+			v = append(v.(bigmachine.Environ), val)
+		}
+		ec2.Options["env"] = v
 	default:
 		return fmt.Errorf("unsupported option: %v", key)
 	}
@@ -182,10 +190,11 @@ func (ec2 *EC2) DefaultParallelism() int {
 	return runtime.GOMAXPROCS(0)
 }
 
-// NewSystem creates a new EC2 system configured by the given flags.
-func (ec2 *EC2) NewSystem() *ec2system.System {
+// NewSystem creates a new EC2 system and parameters, as
+// configured by the given flags.
+func (ec2 *EC2) NewSystem() (*ec2system.System, []bigmachine.Param) {
 	if ec2.Options == nil {
-		return &ec2system.System{}
+		return &ec2system.System{}, nil
 	}
 	instance := &ec2system.System{
 		Username: "unknown",
@@ -196,6 +205,7 @@ func (ec2 *EC2) NewSystem() *ec2system.System {
 	} else {
 		log.Printf("newec2: get current user: %v", err)
 	}
+	var params []bigmachine.Param
 	for key, val := range ec2.Options {
 		switch key {
 		case "instance":
@@ -210,14 +220,17 @@ func (ec2 *EC2) NewSystem() *ec2system.System {
 			instance.OnDemand = val.(bool)
 		case "securitygroup":
 			instance.SecurityGroup = val.(string)
+		case "env":
+			params = append(params, val.(bigmachine.Environ))
 		}
 	}
-	return instance
+	return instance, params
 }
 
 // ExecOption implements Provider.ExecOption.
 func (ec2 *EC2) ExecOption() exec.Option {
-	return exec.Bigmachine(ec2.NewSystem())
+	system, params := ec2.NewSystem()
+	return exec.Bigmachine(system, params...)
 }
 
 func init() {

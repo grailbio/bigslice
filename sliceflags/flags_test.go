@@ -3,6 +3,7 @@ package sliceflags_test
 import (
 	"testing"
 
+	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice/sliceflags"
 )
 
@@ -53,6 +54,35 @@ func TestFlags(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 	if got, want := tf.System.String(), "EC2:dataspace=200,rootsize=10,securitygroup=sg-12345678"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestEnviron(t *testing.T) {
+	must := func(err error) {
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	ec2 := &sliceflags.EC2{}
+	must(ec2.Set("env=foo=bar"))
+	must(ec2.Set("env=blah=blah"))
+	_, params := ec2.NewSystem()
+	if got, want := len(params), 1; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	env, ok := params[0].(bigmachine.Environ)
+	if !ok {
+		t.Fatalf("got %T, want bigslice.Environ", params[0])
+	}
+	if got, want := len(env), 2; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got, want := env[0], "foo=bar"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := env[1], "blah=blah"; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }

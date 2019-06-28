@@ -76,6 +76,7 @@ func init() {
 // bigmachine machines.
 type bigmachineExecutor struct {
 	system bigmachine.System
+	params []bigmachine.Param
 
 	sess *Session
 	b    *bigmachine.B
@@ -112,8 +113,8 @@ type bigmachineExecutor struct {
 	managers []*machineManager
 }
 
-func newBigmachineExecutor(system bigmachine.System) *bigmachineExecutor {
-	return &bigmachineExecutor{system: system}
+func newBigmachineExecutor(system bigmachine.System, params ...bigmachine.Param) *bigmachineExecutor {
+	return &bigmachineExecutor{system: system, params: params}
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
@@ -163,7 +164,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 			// feasible value; i.e., one task may run on each machine.
 			maxLoad = 0
 		}
-		b.managers[i] = newMachineManager(b.b, b.status, b.sess.Parallelism(), maxLoad, b.worker)
+		b.managers[i] = newMachineManager(b.b, b.params, b.status, b.sess.Parallelism(), maxLoad, b.worker)
 		go b.managers[i].Do(backgroundcontext.Get())
 	}
 	return b.managers[i]

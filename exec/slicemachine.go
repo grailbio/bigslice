@@ -308,6 +308,7 @@ type startError struct {
 // among them. MachineManagers are constructed newMachineManager.
 type machineManager struct {
 	b       *bigmachine.B
+	params  []bigmachine.Param
 	group   *status.Group
 	maxp    int
 	maxLoad float64
@@ -322,7 +323,7 @@ type machineManager struct {
 // machine procs that may be allocated to user work.
 //
 // The cluster is not managed until machineManager.Do is called by the user.
-func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad float64, worker *worker) *machineManager {
+func newMachineManager(b *bigmachine.B, params []bigmachine.Param, group *status.Group, maxp int, maxLoad float64, worker *worker) *machineManager {
 	// Adjust maxLoad so that we are guaranteed at least one proc per
 	// machine; otherwise we can get stuck in nasty deadlocks. We also
 	// adjust maxp in this case to account for the fact, when maxLoad=0,
@@ -343,6 +344,7 @@ func newMachineManager(b *bigmachine.B, group *status.Group, maxp int, maxLoad f
 	}
 	return &machineManager{
 		b:       b,
+		params:  params,
 		group:   group,
 		maxp:    maxp,
 		maxLoad: maxLoad,
@@ -484,7 +486,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/machprocs, have, pending/machprocs, pending)
 			go func() {
-				machines, err := startMachines(ctx, m.b, m.group, needMachines, m.worker)
+				machines, err := startMachines(ctx, m.b, m.group, needMachines, m.worker, m.params...)
 				if err != nil {
 					starterrc <- startError{needMachines * machprocs, err}
 				} else {
@@ -498,8 +500,9 @@ func (m *machineManager) Do(ctx context.Context) {
 // StartMachines starts a number of machines on b, installing a worker
 // service on each of them. StartMachines returns when all of the machines
 // are in bigmachine.Running state.
-func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int, worker *worker) ([]*sliceMachine, error) {
-	machines, err := b.Start(ctx, n, bigmachine.Services{"Worker": worker})
+func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int, worker *worker, params ...bigmachine.Param) ([]*sliceMachine, error) {
+	params = append([]bigmachine.Param{bigmachine.Services{"Worker": worker}}, params...)
+	machines, err := b.Start(ctx, n, params...)
 	if err != nil {
 		return nil, err
 	}

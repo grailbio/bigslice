@@ -83,10 +83,11 @@ var Local Option = func(s *Session) {
 }
 
 // Bigmachine configures a session using the bigmachine executor
-// configured with the provided system.
-func Bigmachine(system bigmachine.System) Option {
+// configured with the provided system. If any params are provided,
+// they are applied to each bigmachine allocated by Bigslice.
+func Bigmachine(system bigmachine.System, params ...bigmachine.Param) Option {
 	return func(s *Session) {
-		s.executor = newBigmachineExecutor(system)
+		s.executor = newBigmachineExecutor(system, params...)
 	}
 }
 
