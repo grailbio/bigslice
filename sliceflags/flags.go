@@ -261,6 +261,7 @@ ec2: AWS EC2 execution. The supported options are:
 	ondemand - true to use on-demand rather than spot instances
 	profile - the aws instance profile to use instead of a default
 	securitygroup - the aws security group to use instead of a default
+	env=key=value - environment variable to define in the bigmachine process (may be repeated)
 
 In addition, an application may register 'profiles' that are shorthand
 for the above, eg. "my-app" can be configured as a synonymn for
