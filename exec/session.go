@@ -18,6 +18,7 @@ import (
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/typecheck"
 )
 
 // DefaultMaxLoad is the default machine max load.
@@ -182,6 +183,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	location := "<unknown>"
 	if _, file, line, ok := runtime.Caller(calldepth + 1); ok {
 		location = fmt.Sprintf("%s:%d", file, line)
+		defer typecheck.Location(file, line)
 	}
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()

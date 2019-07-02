@@ -55,3 +55,25 @@ func Panicf(calldepth int, format string, args ...interface{}) {
 func (err *Error) Error() string {
 	return fmt.Sprintf("%s:%d: %v", err.File, err.Line, err.Err)
 }
+
+// Location rewrites typecheck errors to use the provided location
+// instead of the one computed by Panic. This allows a caller to
+// attribute typechecking errors where appropriate. Location should
+// only be used as a defer function, as it recovers (and rewrites)
+// panics.
+//
+//	file, line := ...
+//	defer Location(file, line)
+func Location(file string, line int) {
+	e := recover()
+	if e == nil {
+		return
+	}
+	err, ok := e.(*Error)
+	if !ok {
+		panic(e)
+	}
+	err.File = file
+	err.Line = line
+	panic(err)
+}
