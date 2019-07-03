@@ -8,14 +8,11 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"io"
 	"net/http"
 	"runtime"
 	"sync"
-	"sync/atomic"
 
 	"github.com/grailbio/base/backgroundcontext"
-	"github.com/grailbio/base/dump"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -120,9 +117,6 @@ func MaxLoad(maxLoad float64) Option {
 // run statuses are reported.
 func Status(status *status.Status) Option {
 	return func(s *Session) {
-		dump.Register("bigslice-status", func(ctx context.Context, w io.Writer) error {
-			return status.Marshal(w)
-		})
 		s.status = status
 	}
 }
@@ -138,14 +132,6 @@ func Status(status *status.Status) Option {
 var MachineCombiners Option = func(s *Session) {
 	s.machineCombiners = true
 }
-
-// nextSessionIndex is the index of the next session that will be started by
-// Start. In general, there should be only one session per process, but we
-// violate this in some tests.
-var nextSessionIndex int32
-
-// TODO(jcharumilind): Make it generally safe/sensible to have multiple
-// sessions in the same process.
 
 // Start creates and starts a new bigslice session, configuring it
 // according to the provided options. Only one session may be created
@@ -171,15 +157,6 @@ func Start(options ...Option) *Session {
 	}
 	s.shutdown = s.executor.Start(s)
 	s.tracer = newTracer()
-
-	sessionIndex := atomic.AddInt32(&nextSessionIndex, 1) - 1
-	traceSfx := fmt.Sprintf("-%02d", sessionIndex)
-	if sessionIndex == 0 {
-		traceSfx = ""
-	}
-	dump.Register("bigslice-trace"+traceSfx, func(ctx context.Context, w io.Writer) error {
-		return s.tracer.Marshal(w)
-	})
 	return s
 }
 
@@ -255,7 +232,7 @@ func (s *Session) Status() *status.Status {
 }
 
 func (s *Session) HandleDebug(handler *http.ServeMux) {
-	s.executor.HandleDebug(handler)
+	s.executor.HandleDebug(http.DefaultServeMux)
 	handler.Handle("/debug", http.HandlerFunc(s.handleDebug))
 	handler.Handle("/debug/tasks/graph", http.HandlerFunc(s.handleTasksGraph))
 	handler.Handle("/debug/tasks", http.HandlerFunc(s.handleTasks))
