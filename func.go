@@ -149,6 +149,20 @@ func Func(fn interface{}) *FuncValue {
 	return v
 }
 
+// FuncLocations returns a slice of strings that describe the locations of
+// Func creation, in the same order as the Funcs registry. We use this to
+// verify that worker processes have the same Funcs. Note that this is not a
+// precisely correct verification, as it's possible to define multiple Funcs on
+// the same line. However, it's good enough for the scenarios we have
+// encountered or anticipate.
+func FuncLocations() []string {
+	locs := make([]string, len(funcs))
+	for i, f := range funcs {
+		locs[i] = fmt.Sprintf("%s:%d", f.file, f.line)
+	}
+	return locs
+}
+
 // Invocation represents an invocation of a Bigslice func of the same
 // binary. Invocations can be transmitted across process boundaries
 // and thus may be invoked by remote executors.
@@ -190,4 +204,89 @@ func newInvocation(location string, fn uint64, exclusive bool, args ...interface
 // instance, returning the resulting slice.
 func (i Invocation) Invoke() Slice {
 	return funcs[i.Func].Apply(i.Args...)
+}
+
+// FuncLocationsDiff returns a slice of strings that describes the differences
+// between lhs and rhs locations slices as returned by FuncLocations. The slice
+// is a unified diff between the slices, so if you print each element on a
+// line, you'll get interpretable output. For example:
+//
+//  for _, edit := FuncLocationsDiff([]string{"a", "b", "c"}, []string{"a", "c"}) {
+//      fmt.Println(edit)
+//  }
+//
+// will produce:
+//
+//  a
+//  - b
+//  c
+//
+// If the slices are identical, it returns nil.
+func FuncLocationsDiff(lhs, rhs []string) []string {
+	// This is a vanilla Levenshtein distance implementation.
+	const (
+		editNone int = iota
+		editAdd
+		editDel
+	)
+	type cell struct {
+		edit int
+		cost int
+	}
+	cells := make([][]cell, len(lhs)+1)
+	for i := range cells {
+		cells[i] = make([]cell, len(rhs)+1)
+	}
+	for i := 1; i < len(lhs)+1; i++ {
+		cells[i][0].edit = editDel
+		cells[i][0].cost = i
+	}
+	for j := 1; j < len(rhs)+1; j++ {
+		cells[0][j].edit = editAdd
+		cells[0][j].cost = j
+	}
+	for i := 1; i < len(lhs)+1; i++ {
+		for j := 1; j < len(rhs)+1; j++ {
+			switch {
+			case lhs[i-1] == rhs[j-1]:
+				cells[i][j].cost = cells[i-1][j-1].cost
+			// No replacement, as we want to represent it as
+			// deletion-then-addition in our unified diff output anyway.
+			case cells[i-1][j].cost < cells[i][j-1].cost:
+				cells[i][j].edit = editDel
+				cells[i][j].cost = cells[i-1][j].cost + 1
+			default:
+				cells[i][j].edit = editAdd
+				cells[i][j].cost = cells[i][j-1].cost + 1
+			}
+		}
+	}
+	var (
+		d      []string
+		differ bool
+	)
+	for i, j := len(lhs), len(rhs); i > 0 || j > 0; {
+		switch cells[i][j].edit {
+		case editNone:
+			d = append(d, lhs[i-1])
+			i -= 1
+			j -= 1
+		case editAdd:
+			d = append(d, "+ "+rhs[j-1])
+			j -= 1
+			differ = true
+		case editDel:
+			d = append(d, "- "+lhs[i-1])
+			i -= 1
+			differ = true
+		}
+	}
+	if !differ {
+		return nil
+	}
+	for i := len(d)/2 - 1; i >= 0; i-- {
+		opp := len(d) - 1 - i
+		d[i], d[opp] = d[opp], d[i]
+	}
+	return d
 }

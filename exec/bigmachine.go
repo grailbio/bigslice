@@ -476,6 +476,14 @@ func (w *worker) Init(b *bigmachine.B) error {
 	return nil
 }
 
+// FuncLocations produces a slice of strings that describe the locations of
+// Func creation. It is used to verify that this process is working from an
+// identical Func registry. See bigslice.FuncLocations for more information.
+func (w *worker) FuncLocations(ctx context.Context, _ struct{}, locs *[]string) error {
+	*locs = bigslice.FuncLocations()
+	return nil
+}
+
 // Compile compiles an invocation on the worker and stores the
 // resulting tasks. Compile is idempotent: it will compile each
 // invocation at most once.

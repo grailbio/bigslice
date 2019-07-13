@@ -17,6 +17,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/base/sync/once"
 	"github.com/grailbio/bigmachine"
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
 )
@@ -519,6 +520,20 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 				status.Printf("failed to start: %v", err)
 				status.Done()
 				return nil
+			}
+			var workerFuncLocs []string
+			if err := m.RetryCall(ctx, "Worker.FuncLocations", struct{}{}, &workerFuncLocs); err != nil {
+				status.Printf("failed to verify funcs")
+				status.Done()
+				m.Cancel()
+				return nil
+			}
+			diff := bigslice.FuncLocationsDiff(bigslice.FuncLocations(), workerFuncLocs)
+			if len(diff) > 0 {
+				for _, edit := range diff {
+					log.Printf("[funcsdiff] %s", edit)
+				}
+				log.Panicf("machine %s has different funcs; check for local or non-deterministic Func creation", m.Addr)
 			}
 			status.Title(m.Addr)
 			status.Print("running")
