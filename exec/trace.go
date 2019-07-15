@@ -152,7 +152,8 @@ func (t *tracer) Marshal(w io.Writer) error {
 // appendCoalesce appends a set of events on the provided list,
 // first coalescing events so that "B" and "E" events are matched
 // into a single "X" event. This produces more visually compact (and
-// useful) trace visualizations.
+// useful) trace visualizations. appendCoalesce also prunes orphan
+// events.
 func appendCoalesce(list []traceEvent, events []traceEvent, firstEvent time.Time) []traceEvent {
 	var begIndex = -1
 	for _, event := range events {
@@ -174,9 +175,14 @@ func appendCoalesce(list []traceEvent, events []traceEvent, firstEvent time.Time
 			// on the same machine; then these are captured as two unique
 			// events.
 			begIndex = -1
-		} else {
+		} else if event.Ph != "E" {
 			list = append(list, event)
-		}
+		} // drop unmatched "E"s
+	}
+	if begIndex >= 0 {
+		// We have an unmatched "B". Drop it.
+		copy(list[begIndex:], list[begIndex+1:])
+		list = list[:len(list)-1]
 	}
 	return list
 }
