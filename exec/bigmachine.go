@@ -317,8 +317,8 @@ compile:
 	g, _ := errgroup.WithContext(ctx)
 	for _, dep := range task.Deps {
 		for _, deptask := range dep.Tasks {
-			m := b.location(deptask)
-			if m == nil {
+			depm := b.location(deptask)
+			if depm == nil {
 				// TODO(marius): make this a separate state, or a separate
 				// error type?
 				task.Errorf("task %s has no location", deptask.Name)
@@ -328,8 +328,8 @@ compile:
 			i, ok := machineIndices[m.Addr]
 			if !ok {
 				i = len(machineIndices)
-				machineIndices[m.Addr] = i
-				req.Machines = append(req.Machines, m.Addr)
+				machineIndices[depm.Addr] = i
+				req.Machines = append(req.Machines, depm.Addr)
 			}
 			req.Locations = append(req.Locations, i)
 			key := dep.CombineKey
@@ -337,7 +337,7 @@ compile:
 				continue
 			}
 			// Make sure that the result is committed.
-			g.Go(func() error { return b.commit(ctx, m, key) })
+			g.Go(func() error { return b.commit(ctx, depm, key) })
 		}
 	}
 
@@ -571,7 +571,13 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	}
 
 	task.Lock()
-	if task.state != TaskInit {
+	switch task.state {
+	case TaskLost:
+		log.Printf("Worker.Run: %s: reviving LOST task", task.Name)
+	case TaskErr:
+		log.Printf("Worker.Run: %s: reviving FAILED task", task.Name)
+	case TaskInit:
+	default:
 		for task.state <= TaskRunning {
 			log.Printf("runtask: %s already running. Waiting for it to finish.", task.Name)
 			err = task.Wait(ctx)

@@ -8,6 +8,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigmachine/testsystem"
@@ -185,6 +186,103 @@ func TestBigmachineExecutorPanicRun(t *testing.T) {
 	}
 }
 
+func TestBigmachineExecutorLost(t *testing.T) {
+	if testing.Short() {
+		t.Skip("lost executor test disabled for -short")
+	}
+	system := testsystem.New()
+	system.Machineprocs = 1
+	system.KeepalivePeriod = time.Second
+	system.KeepaliveTimeout = 2 * time.Second
+	system.KeepaliveRpcTimeout = time.Second
+
+	ctx, cancel := context.WithCancel(context.Background())
+	x := newBigmachineExecutor(system)
+	shutdown := x.Start(&Session{
+		Context: ctx,
+		p:       100,
+		maxLoad: 1,
+	})
+	defer shutdown()
+	defer cancel()
+
+	// Make sure to produce enough data that requires multiple calls to
+	// get. Currently the batch size is 1024. We mark it as exclusive
+	// to ensure that the task is executed on different machine from
+	// the subsequent reduce (after shuffle).
+	readerTasks, readerSlice, _ := compileFuncExclusive(func() bigslice.Slice {
+		return bigslice.ReaderFunc(1, func(shard int, n *int, col []int) (int, error) {
+			const N = 10000
+			if *n >= N {
+				return 0, sliceio.EOF
+			}
+			for i := range col {
+				col[i] = *n + i
+			}
+			*n += len(col)
+			return len(col), nil
+		}, bigslice.Exclusive)
+	})
+	readerTask := readerTasks[0]
+	// We need to use a result, not a regular slice, so that the tasks
+	// are reused across Func invocations.
+	readerResult := &Result{
+		Slice: readerSlice,
+		tasks: readerTasks,
+	}
+	x.Runnable(readerTask)
+	system.Wait(1)
+	readerTask.Lock()
+	for readerTask.state != TaskOk {
+		if err := readerTask.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readerTask.Unlock()
+
+	if !system.Kill(system.Index(0)) {
+		t.Fatal("could not kill machine")
+	}
+	mapTasks, _, _ := compileFunc(func() bigslice.Slice {
+		return bigslice.Map(readerResult, func(v int) int { return v })
+	})
+	mapTask := mapTasks[0]
+	x.Runnable(mapTask)
+	if state, err := mapTask.WaitState(ctx, TaskLost); err != nil {
+		t.Fatal(err)
+	} else if state != TaskLost {
+		t.Fatal(state)
+	}
+
+	// Resubmit the task: Now it should recompute successfully
+	// (while allocating a new machine for it). We may have to submit
+	// it multiple times before the worker is marked down. (We're racing
+	// with the failure detector.)
+	readerTask.Lock()
+	readerTask.state = TaskInit
+	for readerTask.state != TaskOk {
+		readerTask.state = TaskInit
+		readerTask.Unlock()
+		x.Runnable(readerTask)
+		readerTask.Lock()
+		if err := readerTask.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readerTask.Unlock()
+
+	// Now do the same for the map task. We never killed the system
+	// it gets allocated on so no retries. This can take a few seconds as
+	// we wait for machine probation to expire.
+	mapTask.Set(TaskInit)
+	x.Runnable(mapTask)
+	if state, err := mapTask.WaitState(ctx, TaskOk); err != nil {
+		t.Fatal(err)
+	} else if state != TaskOk {
+		t.Fatal(state)
+	}
+}
+
 type errorSlice struct {
 	bigslice.Slice
 	err error
@@ -264,6 +362,17 @@ func bigmachineTestExecutor(p int) (exec *bigmachineExecutor, stop func()) {
 
 func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
 	fn := bigslice.Func(f)
+	inv := fn.Invocation("")
+	slice := inv.Invoke()
+	tasks, _, err := compile(make(taskNamer), inv, slice, false)
+	if err != nil {
+		panic(err)
+	}
+	return tasks, slice, inv
+}
+
+func compileFuncExclusive(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
+	fn := bigslice.Func(f).Exclusive()
 	inv := fn.Invocation("")
 	slice := inv.Invoke()
 	tasks, _, err := compile(make(taskNamer), inv, slice, false)
