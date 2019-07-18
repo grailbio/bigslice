@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
+	"golang.org/x/sync/errgroup"
 )
 
 type testExecutor struct{ *testing.T }
@@ -22,12 +24,8 @@ func (testExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (t testExecutor) Runnable(task *Task) {
+func (t testExecutor) Run(task *Task) {
 	task.Lock()
-	switch task.state {
-	case TaskWaiting, TaskRunning:
-		t.Fatalf("invalid task state %s", task.state)
-	}
 	task.state = TaskRunning
 	task.Broadcast()
 	task.Unlock()
@@ -175,19 +173,72 @@ func TestResubmitLostTask(t *testing.T) {
 	}
 }
 
+func TestResubmitLostInteriorTask(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tasks, _, inv := compileFunc(func() (slice bigslice.Slice) {
+		slice = bigslice.Const(2, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+		slice = bigslice.Cogroup(slice)
+		return
+	})
+
+	// Why not.
+	var g errgroup.Group
+	for i := 0; i < 10; i++ {
+		g.Go(func() error { return Eval(ctx, testExecutor{t}, inv, tasks, nil) })
+	}
+
+	var (
+		const0   = tasks[0].Deps[0].Tasks[0]
+		const1   = tasks[0].Deps[0].Tasks[1]
+		cogroup0 = tasks[0]
+		cogroup1 = tasks[1]
+	)
+	wait := func(task *Task, state TaskState) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		task.Lock()
+		defer task.Unlock()
+		for task.state != state {
+			if err := task.Wait(ctx); err != nil {
+				t.Fatalf("task %v (state %v) did not reach desired state %v", task.Name, task.state, state)
+			}
+		}
+	}
+	wait(const0, TaskRunning)
+	const0.Set(TaskOk)
+	wait(const1, TaskRunning)
+	const1.Set(TaskOk)
+
+	wait(cogroup0, TaskRunning)
+	wait(cogroup1, TaskRunning)
+	const0.Set(TaskLost)
+	cogroup0.Set(TaskLost)
+	cogroup1.Set(TaskLost)
+
+	// Now, the evaluator must first recompute const0.
+	wait(const0, TaskRunning)
+	// ... and then each of the cogroup tasks
+	const0.Set(TaskOk)
+	wait(cogroup0, TaskRunning)
+	wait(cogroup1, TaskRunning)
+	cogroup0.Set(TaskOk)
+	cogroup1.Set(TaskOk)
+
+	if err := g.Wait(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type benchExecutor struct{ *testing.B }
 
 func (benchExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (b benchExecutor) Runnable(task *Task) {
+func (b benchExecutor) Run(task *Task) {
 	task.Lock()
-	switch task.state {
-	case TaskWaiting, TaskRunning:
-		b.Fatalf("invalid task state %s", task.state)
-	}
-	// Go directly to done to let the scheduler do its work.
 	task.state = TaskOk
 	task.Broadcast()
 	task.Unlock()

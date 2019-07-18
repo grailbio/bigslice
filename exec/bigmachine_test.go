@@ -31,14 +31,9 @@ func TestBigmachineExecutor(t *testing.T) {
 	}
 	task := tasks[0]
 
-	// Runnable is idempotent.
-	x.Runnable(task)
-	x.Runnable(task)
+	go x.Run(task)
 	ctx := context.Background()
 	task.Lock()
-	if got, want := task.state, TaskWaiting; got != want {
-		t.Fatalf("got %v, want %v", got, want)
-	}
 	gate <- struct{}{}
 	for task.state <= TaskRunning {
 		if err := task.Wait(ctx); err != nil {
@@ -52,7 +47,7 @@ func TestBigmachineExecutor(t *testing.T) {
 
 	// If we run it again, it should first enter waiting/running state, and
 	// then Ok again. There should not be a new invocation (p=1).
-	x.Runnable(task)
+	go x.Run(task)
 	task.Lock()
 	for task.state <= TaskRunning {
 		if err := task.Wait(ctx); err != nil {
@@ -88,7 +83,7 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		x.Runnable(tasks[0])
+		go x.Run(tasks[0])
 	}
 	wg.Wait()
 	var n int
@@ -135,8 +130,8 @@ func TestBigmachineExecutorTaskExclusive(t *testing.T) {
 	}
 	called.Add(2)
 	replied.Add(1)
-	x.Runnable(tasks[0])
-	x.Runnable(tasks[1])
+	go x.Run(tasks[0])
+	go x.Run(tasks[1])
 	called.Wait()
 	if got, want := tasks[0].State(), TaskRunning; got != want {
 		t.Fatalf("got %v, want %v", got, want)
@@ -230,7 +225,7 @@ func TestBigmachineExecutorLost(t *testing.T) {
 		Slice: readerSlice,
 		tasks: readerTasks,
 	}
-	x.Runnable(readerTask)
+	go x.Run(readerTask)
 	system.Wait(1)
 	readerTask.Lock()
 	for readerTask.state != TaskOk {
@@ -247,7 +242,7 @@ func TestBigmachineExecutorLost(t *testing.T) {
 		return bigslice.Map(readerResult, func(v int) int { return v })
 	})
 	mapTask := mapTasks[0]
-	x.Runnable(mapTask)
+	go x.Run(mapTask)
 	if state, err := mapTask.WaitState(ctx, TaskLost); err != nil {
 		t.Fatal(err)
 	} else if state != TaskLost {
@@ -263,7 +258,7 @@ func TestBigmachineExecutorLost(t *testing.T) {
 	for readerTask.state != TaskOk {
 		readerTask.state = TaskInit
 		readerTask.Unlock()
-		x.Runnable(readerTask)
+		go x.Run(readerTask)
 		readerTask.Lock()
 		if err := readerTask.Wait(ctx); err != nil {
 			t.Fatal(err)
@@ -275,7 +270,7 @@ func TestBigmachineExecutorLost(t *testing.T) {
 	// it gets allocated on so no retries. This can take a few seconds as
 	// we wait for machine probation to expire.
 	mapTask.Set(TaskInit)
-	x.Runnable(mapTask)
+	go x.Run(mapTask)
 	if state, err := mapTask.WaitState(ctx, TaskOk); err != nil {
 		t.Fatal(err)
 	} else if state != TaskOk {
@@ -331,10 +326,10 @@ func TestBigmachineCompiler(t *testing.T) {
 	run(t, x, tasks, TaskOk)
 }
 
-func run(t *testing.T, x Executor, tasks []*Task, expect TaskState) {
+func run(t *testing.T, x *bigmachineExecutor, tasks []*Task, expect TaskState) {
 	t.Helper()
 	for _, task := range tasks {
-		x.Runnable(task)
+		go x.Run(task)
 	}
 	for _, task := range tasks {
 		task.WaitState(context.Background(), expect)

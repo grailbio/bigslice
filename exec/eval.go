@@ -8,7 +8,6 @@ package exec
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/grailbio/base/log"
@@ -31,11 +30,10 @@ type Executor interface {
 	// Start as an entry point for worker processes.
 	Start(*Session) (shutdown func())
 
-	// Runnable marks the task as runnable. After a call to Runnable,
-	// the Task should have state >= TaskWaiting. The executor owns
-	// the task after calling Runnable, and only the executor should
-	// modify the task's state.
-	Runnable(*Task)
+	// Run runs a task. The executor sets the state of the task as it
+	// progresses. The task should enter in state TaskWaiting; by the
+	// time Run returns the task state is >= TaskOk.
+	Run(*Task)
 
 	// Reader returns a locally accessible reader for the requested task.
 	Reader(context.Context, *Task, int) sliceio.Reader
@@ -60,95 +58,50 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// First initialize scheduler state. We build three maps and a todo list:
-	var (
-		// Tasks is the full set of tasks that will be run by this evaluation.
-		// They do not include tasks that are handed to us from a previous
-		// evaluation, for example as a dependency introduced during
-		// an iterative Bigslice session.
-		tasks = make(map[*Task]bool)
-		// Pending stores the number of pending dependencies for a
-		// particular task. When the count reaches 0, the task is then
-		// runnable.
-		pending = make(map[*Task]int)
-		// Deps stores the set of dependees for a given task: it is the
-		// reverse set of edges for a given task in the graph. This is used
-		// to maintain the completion counts stored in complete.
-		deps = make(map[*Task][]*Task)
-		// Todo is the current list of tasks that are ready. They should be
-		// marked runnable by the scheduler.
-		todo []*Task
-	)
+	state := newState()
 	for _, task := range roots {
-		initialize(task, tasks, pending, &todo, deps)
+		state.Enqueue(task)
 	}
 	var (
 		donec   = make(chan *Task, 8)
 		errc    = make(chan error)
 		running int
 	)
-	for len(todo) > 0 || running > 0 {
-		group.Printf("tasks: runnable: %d/%d", running, len(tasks))
-	drain:
-		for len(todo) == 0 && running > 0 {
+	for !state.Done() {
+		group.Printf("tasks: runnable: %d", running)
+		for !state.Done() && !state.Todo() {
 			select {
 			case err := <-errc:
 				if err == nil {
-					panic("not nil err")
+					panic("nil err")
 				}
 				return err
 			case task := <-donec:
 				running--
-				task.Lock()
-				if task.state == TaskLost {
-					// Resubmit lost tasks when we can.
-					if task.CombineKey != "" {
-						return fmt.Errorf("unrecoverable combine task %v lost", task)
-					}
-					task.state = TaskInit
-					todo = append(todo, task)
-					task.Unlock()
-					continue drain
-				}
-				if task.state != TaskOk {
-					panic("exec.Eval: invalid task state " + task.state.String())
-				}
-				task.Unlock()
-				for _, deptask := range deps[task] {
-					pending[deptask]--
-					if pending[deptask] == 0 {
-						todo = append(todo, deptask)
-					}
-				}
+				state.Return(task)
 			}
 		}
 
 		// Mark each ready task as runnable and keep track of them.
 		// The executor manages parallelism.
-		for _, task := range todo {
-			log.Debug.Printf("runnable: %s", task)
-			// TODO(marius): this will result in multiple task entries when there is
-			// concurrent evaluation, perhaps status should be managed by Task.
-			task.Status = group.Startf("%s(%x)", task.Name, inv.Index)
-			executor.Runnable(task)
+		for _, task := range state.Runnable() {
+			task.Lock()
+			if task.state == TaskLost {
+				log.Printf("evaluator: re-submitting lost task %v", task)
+				task.state = TaskInit
+			}
+			if task.state == TaskInit {
+				task.state = TaskWaiting
+				task.Status = group.Startf("%s(%x)", task.Name, inv.Index)
+				go executor.Run(task)
+			}
 			running++
 			go func(task *Task) {
-				state, err := task.WaitState(ctx, TaskOk)
-				if err != nil {
-					errc <- err
-					return
+				var err error
+				for task.state < TaskOk && err == nil {
+					err = task.Wait(ctx)
 				}
-				log.Debug.Printf("done task %v", task)
-				task.Status.Done()
-				switch state {
-				default:
-					err = fmt.Errorf("unexpected task state %v", task)
-				case TaskOk:
-				case TaskErr:
-					err = task.err
-				case TaskLost:
-					log.Error.Printf("lost task %s", task.Name)
-				}
+				task.Unlock()
 				if err != nil {
 					errc <- err
 				} else {
@@ -156,36 +109,187 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				}
 			}(task)
 		}
-		todo = todo[:0]
 	}
-	return nil
+	return state.Err()
 }
 
-// Initialize initializes the evaluator run list state required for scheduling.
-// See the comment in Eval for a detailed explanation of the function of
-// these lists.
-func initialize(task *Task, tasks map[*Task]bool, pending map[*Task]int, todo *[]*Task, reverse map[*Task][]*Task) bool {
-	// This can be true when we're handed tasks from a previous run,
-	// e.g., during an iterative session.
-	if task.state != TaskInit {
-		return false
+// State maintains state for the task graph being run by the
+// evaluator. It maintains per-node waitlists so that it can
+// efficiently traverse only the required portion of the task graph
+// for each task update. When a task's waitlist has been cleared,
+// state re-traverses the graph from that task. This reconciles task
+// changes that have occurred between updates. This may cause a task
+// to be re-queued, e.g., if a dependent task changed status from TaskOk
+// to TaskLost. State does not watch for task changes for tasks that
+// are ready, thus it won't aggressively recompute a lost task that
+// is going to be needed by another task with a nonzero waitlist.
+// This is only discovered once that waitlist is drained. The scheme
+// could be more aggressive in this case, but these cases should be
+// rare enough to not warrant the added complexity.
+//
+// In order to ensure that the state operates on consistent view of
+// the task graph, waitlist decisions are memoized per toplevel call;
+// it does not require locking subgraphs.
+type state struct {
+	// deps and counts maintains the task waitlist.
+	deps   map[*Task]map[*Task]struct{}
+	counts map[*Task]int
+
+	// todo is the set of tasks that are scheduled to be run. They are
+	// retrieved via the Runnable method.
+	todo map[*Task]bool
+
+	// pending is the set of tasks that have been scheduled but have not
+	// yet been returned via Done.
+	pending map[*Task]bool
+
+	// wait stores memoized task waiting decisions (based on a single
+	// atomic reading of task state), per round. This is what enables
+	// state to maintain a consistent view of the task graph state.
+	wait map[*Task]bool
+
+	err error
+}
+
+// newState returns a newly allocated, empty state.
+func newState() *state {
+	return &state{
+		deps:    make(map[*Task]map[*Task]struct{}),
+		counts:  make(map[*Task]int),
+		todo:    make(map[*Task]bool),
+		pending: make(map[*Task]bool),
+		wait:    make(map[*Task]bool),
 	}
-	if tasks[task] {
-		return true
+}
+
+// Enqueue enqueues all ready tasks in the provided task graph,
+// traversing only as much of it as necessary to schedule all
+// currently runnable tasks in the graph. Enqueue maintains
+// the waiting state for tasks so the correct (and minimal) task
+// graphs can be efficiently enqueued on task completion.
+func (s *state) Enqueue(task *Task) (wait bool) {
+	if w, ok := s.wait[task]; ok {
+		return w
 	}
-	tasks[task] = true
-	ready := true
-	for _, dep := range task.Deps {
-		for _, deptask := range dep.Tasks {
-			reverse[deptask] = append(reverse[deptask], task)
-			pending[task]++
-			if initialize(deptask, tasks, pending, todo, reverse) {
-				ready = false
+	switch task.State() {
+	case TaskOk, TaskErr:
+		wait = false
+	case TaskWaiting, TaskRunning:
+		s.schedule(task)
+		wait = true
+	case TaskInit, TaskLost:
+		for _, dep := range task.Deps {
+			for _, deptask := range dep.Tasks {
+				if s.Enqueue(deptask) {
+					s.add(deptask, task)
+				}
 			}
 		}
+		if s.ready(task) {
+			s.schedule(task)
+		}
+		wait = true
 	}
-	if ready {
-		*todo = append(*todo, task)
+	s.wait[task] = wait
+	return
+}
+
+// Return returns a pending task to state, recomputing the state view
+// and scheduling follow-on tasks.
+func (s *state) Return(task *Task) {
+	if !s.pending[task] {
+		panic("exec.Eval: done task " + task.Name.String() + ": not pending")
 	}
-	return true
+	// Clear the wait map between each call since the state of tasks may
+	// have changed between calls.
+	s.wait = make(map[*Task]bool)
+	delete(s.pending, task)
+	switch task.State() {
+	default:
+		// We might be racing with another evaluator. Reschedule until
+		// we get into an actionable state.
+		s.schedule(task)
+	case TaskErr:
+		s.err = task.err
+	case TaskOk:
+		for _, task := range s.done(task) {
+			s.Enqueue(task)
+		}
+	case TaskLost:
+		// Re-enqueue immediately.
+		s.Enqueue(task)
+	}
+	return
+}
+
+// Runnable returns the current set of runnable tasks and
+// resets the todo list. It is called by Eval to schedule a batch
+// of tasks.
+func (s *state) Runnable() (tasks []*Task) {
+	if len(s.todo) == 0 {
+		return
+	}
+	tasks = make([]*Task, 0, len(s.todo))
+	for task := range s.todo {
+		tasks = append(tasks, task)
+		delete(s.todo, task)
+		s.pending[task] = true
+	}
+	return
+}
+
+// Todo returns whether state has tasks to be scheduled.
+func (s *state) Todo() bool {
+	return len(s.todo) > 0
+}
+
+// Done returns whether evaluation is done. Evaluation is done when
+// there remain no pending tasks, or tasks to be scheduled. Evaluation
+// is also done if an error has occurred.
+func (s *state) Done() bool {
+	return s.err != nil || len(s.todo) == 0 && len(s.pending) == 0
+}
+
+// Err returns an error, if any, that occurred during evaluation.
+func (s *state) Err() error {
+	return s.err
+}
+
+// Schedule schedules the provided task. It is a no-op if
+// the task has already been scheduled or is pending.
+func (s *state) schedule(task *Task) {
+	if s.pending[task] {
+		return
+	}
+	s.todo[task] = true
+}
+
+// Add adds a dependency from the provided src to dst tasks.
+func (s *state) add(src, dst *Task) {
+	if s.deps[src] == nil {
+		s.deps[src] = make(map[*Task]struct{})
+	}
+	if _, waiting := s.deps[src][dst]; !waiting {
+		s.deps[src][dst] = struct{}{}
+		s.counts[dst]++
+	}
+}
+
+// Ready returns true if the provided task has no incoming
+// dependencies.
+func (s *state) ready(task *Task) bool {
+	return s.counts[task] == 0
+}
+
+// Done marks the provided task as done, and returns the set
+// of tasks that have consequently become ready for evaluation.
+func (s *state) done(src *Task) (ready []*Task) {
+	for dst := range s.deps[src] {
+		s.counts[dst]--
+		if s.counts[dst] == 0 {
+			ready = append(ready, dst)
+		}
+	}
+	s.deps[src] = nil
+	return
 }

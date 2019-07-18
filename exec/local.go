@@ -43,19 +43,7 @@ func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	return
 }
 
-func (l *localExecutor) Runnable(task *Task) {
-	task.Lock()
-	defer task.Unlock()
-	switch task.state {
-	case TaskWaiting, TaskRunning:
-		return
-	}
-	task.state = TaskWaiting
-	task.Broadcast()
-	go l.runTask(task)
-}
-
-func (l *localExecutor) runTask(task *Task) {
+func (l *localExecutor) Run(task *Task) {
 	ctx := backgroundcontext.Get()
 	n := 1
 	if task.Pragma.Exclusive() {

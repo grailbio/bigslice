@@ -20,7 +20,7 @@ import (
 // encountered. Scan returns true while it's safe to continue
 // scanning. When scanning is complete, the user should inspect the
 // scanner's error to see if scanning stopped because of an EOF or
-// because another error occured.
+// because another error occurred.
 //
 // Callers should not mix calls to Scan and Scanv.
 type Scanner struct {
@@ -111,7 +111,7 @@ func (s *Scanner) Scanv(ctx context.Context, out ...interface{}) (int, bool) {
 	return n, true
 }
 
-// Err returns any error that occured while scanning.
+// Err returns any error that occurred while scanning.
 func (s *Scanner) Err() error {
 	if s.err == EOF {
 		return nil

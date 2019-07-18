@@ -138,19 +138,6 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	return b.b.Shutdown
 }
 
-func (b *bigmachineExecutor) Runnable(task *Task) {
-	task.Lock()
-	switch task.state {
-	case TaskWaiting, TaskRunning:
-		task.Unlock()
-		return
-	}
-	task.state = TaskWaiting
-	task.Broadcast()
-	task.Unlock()
-	go b.run(task)
-}
-
 func (b *bigmachineExecutor) manager(i int) *machineManager {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -245,7 +232,7 @@ func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key st
 	})
 }
 
-func (b *bigmachineExecutor) run(task *Task) {
+func (b *bigmachineExecutor) Run(task *Task) {
 	ctx := backgroundcontext.Get()
 	task.Status.Print("waiting for a machine")
 
@@ -321,7 +308,7 @@ compile:
 			if depm == nil {
 				// TODO(marius): make this a separate state, or a separate
 				// error type?
-				task.Errorf("task %s has no location", deptask.Name)
+				task.Errorf("task %v has no location", deptask)
 				m.Done(nil)
 				return
 			}

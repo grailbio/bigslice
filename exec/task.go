@@ -34,6 +34,7 @@ const (
 	// TaskInit is the initial state of a task. Tasks in state TaskInit
 	// have usually not yet been seen by an executor.
 	TaskInit TaskState = iota
+
 	// TaskWaiting indicates that a task has been scheduled for
 	// execution (it is runnable) but has not yet been allocated
 	// resources by the executor.
