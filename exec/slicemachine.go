@@ -13,6 +13,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/data"
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/base/sync/once"
@@ -421,7 +422,10 @@ func (m *machineManager) Do(ctx context.Context) {
 			mach := done.sliceMachine
 			mach.curprocs--
 			switch {
-			case done.Err != nil && mach.health == machineOk:
+			case done.Err != nil && !errors.Is(errors.Unavailable, done.Err) && mach.health == machineOk:
+				// We don't consider errors.Unavailable for probation because these likely
+				// originate from a transitive machine failure. The evaluator will reschedule
+				// these tasks for us.
 				log.Error.Printf("putting machine %s on probation after error: %v", mach, done.Err)
 				mach.health = machineProbation
 				heap.Remove(&machines, mach.index)

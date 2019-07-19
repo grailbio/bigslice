@@ -279,10 +279,12 @@ compile:
 			// is racy: the behavior remains correct but may imply additional
 			// data transfer. C'est la vie.
 			m.Compiles.Forget(task.Invocation.Index)
-		case errors.Is(errors.Net, err), errors.IsTemporary(err):
+		case errors.Is(errors.Net, err), errors.Is(errors.Unavailable, err), errors.IsTemporary(err):
 			// Compilations don't involve invoking user code, nor does it
 			// involve dependencies other than potentially uploading data from
-			// the driver node, so we interpret errors more strictly.
+			// the driver node, so we can relax our usual assumptions and mark
+			// the task as lost. This will cause it to be rescheduled and compilation
+			// will be retried.
 			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
 			task.Set(TaskLost)
 			m.Done(err)
