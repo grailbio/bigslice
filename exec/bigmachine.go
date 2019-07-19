@@ -325,7 +325,7 @@ compile:
 				m.Done(nil)
 				return
 			}
-			i, ok := machineIndices[m.Addr]
+			i, ok := machineIndices[depm.Addr]
 			if !ok {
 				i = len(machineIndices)
 				machineIndices[depm.Addr] = i
