@@ -5,11 +5,12 @@ package bigslice_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/slicetest"
@@ -21,6 +22,7 @@ func TestCache(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
+	var computeAllowed bool
 	const (
 		N      = 10000
 		Nshard = 10
@@ -31,7 +33,12 @@ func TestCache(t *testing.T) {
 	}
 	makeSlice := func() bigslice.Slice {
 		slice := bigslice.Const(Nshard, input)
-		slice = bigslice.Map(slice, func(i int) int { return i * 2 })
+		slice = bigslice.Map(slice, func(i int) int {
+			if !computeAllowed {
+				panic("compute not allowed")
+			}
+			return i * 2
+		})
 		var err error
 		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		if err != nil {
@@ -44,16 +51,15 @@ func TestCache(t *testing.T) {
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
+	computeAllowed = true
 	scan1 := run(ctx, t, slice)["Local"]
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
 	// Recompute the slice to pick up the cached results.
+	computeAllowed = false
 	slice = makeSlice()
-	if isWriteThrough(slice) {
-		t.Error("did not expect writethrough slice")
-	}
 
 	scan2 := run(ctx, t, slice)["Local"]
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
@@ -87,10 +93,166 @@ func TestCache(t *testing.T) {
 	}
 }
 
+func TestCacheIncremental(t *testing.T) {
+	dir, cleanup := testutil.TempDir(t, "", "")
+	defer cleanup()
+	ctx := context.Background()
+
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+
+	rowsRan := make([]bool, N)
+
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	makeSlice := func() bigslice.Slice {
+		slice := bigslice.Const(Nshard, input)
+		slice = bigslice.Map(slice, func(i int) int {
+			rowsRan[i] = true
+			return i * 2
+		})
+		var err error
+		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slice
+	}
+
+	// Run and populate the cache.
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+
+	// Run and ensure there's no new computation.
+	for i := range rowsRan {
+		rowsRan[i] = false
+	}
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+	for _, ran := range rowsRan {
+		if ran {
+			t.Error("want cache use")
+		}
+	}
+
+	// Delete some cache entries and ensure there's recomputation.
+	for i, f := range ls1(t, dir) {
+		if i%2 == 0 {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, f)); err != nil {
+			t.Error(err)
+		}
+	}
+	for i := range rowsRan {
+		rowsRan[i] = false
+	}
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+	var nRans int
+	for _, ran := range rowsRan {
+		if ran {
+			nRans++
+		}
+	}
+	if nRans < Nshard {
+		t.Error("want all recompution")
+	}
+}
+
+func TestCachePartialIncremental(t *testing.T) {
+	dir, cleanup := testutil.TempDir(t, "", "")
+	defer cleanup()
+	ctx := context.Background()
+
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+
+	rowsRan := make([]bool, N)
+
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	makeSlice := func() bigslice.Slice {
+		slice := bigslice.Const(Nshard, input)
+		slice = bigslice.Map(slice, func(i int) int {
+			rowsRan[i] = true
+			return i * 2
+		})
+		var err error
+		slice, err = bigslice.CachePartial(ctx, slice, filepath.Join(dir, "cached"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slice
+	}
+
+	// Run and populate the cache.
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+
+	// Run and ensure there's no new computation.
+	for i := range rowsRan {
+		rowsRan[i] = false
+	}
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+	for _, ran := range rowsRan {
+		if ran {
+			t.Error("want cache use")
+		}
+	}
+
+	// Delete some cache entries and ensure there's partial recomputation.
+	for i, f := range ls1(t, dir) {
+		if i%2 == 0 {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, f)); err != nil {
+			t.Error(err)
+		}
+	}
+	for i := range rowsRan {
+		rowsRan[i] = false
+	}
+	_ = run(ctx, t, makeSlice())["Local"]
+	if got, want := len(ls1(t, dir)), Nshard; got != want {
+		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
+	}
+	var nRowsRan int
+	for _, ran := range rowsRan {
+		if ran {
+			nRowsRan++
+		}
+	}
+	if nRowsRan == 0 || nRowsRan >= N {
+		t.Errorf("want partial recomputation, got %d of %d rows", nRowsRan, N)
+	}
+}
+
 func TestCacheErr(t *testing.T) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
 	ctx := context.Background()
+
+	computeRan := false
 
 	makeSlice := func() bigslice.Slice {
 		slice := bigslice.ReaderFunc(1, func(shard int, state *bool, ints []int) (n int, err error) {
@@ -101,6 +263,7 @@ func TestCacheErr(t *testing.T) {
 				ints[i] = i
 			}
 			*state = true
+			computeRan = true
 			return len(ints), nil
 		})
 		var err error
@@ -110,14 +273,18 @@ func TestCacheErr(t *testing.T) {
 		}
 		return slice
 	}
-	if slice := makeSlice(); !isWriteThrough(slice) {
-		t.Errorf("expected writethrough slice, got %T", slice)
-	}
 	if err := slicetest.RunErr(makeSlice()); err == nil {
 		t.Error("expected error")
 	}
-	if slice := makeSlice(); !isWriteThrough(slice) {
-		t.Errorf("expected writethrough slice, got %T", slice)
+	if !computeRan {
+		t.Error()
+	}
+	// Ensure computation is rerun after error.
+	if err := slicetest.RunErr(makeSlice()); err == nil {
+		t.Error("expected error")
+	}
+	if !computeRan {
+		t.Error()
 	}
 }
 
@@ -135,10 +302,6 @@ func ls1(t *testing.T, dir string) []string {
 	for i := range paths {
 		paths[i] = infos[i].Name()
 	}
+	sort.Strings(paths)
 	return paths
-}
-
-func isWriteThrough(slice bigslice.Slice) bool {
-	_, ok := slice.(interface{ IsWriteThrough() })
-	return ok
 }

@@ -10,12 +10,13 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/internal/slicecache"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
 // Pipeline returns the sequence of slices that may be pipelined
 // starting from slice. Slices that do not have shuffle dependencies
-// may be pipelined together.
+// may be pipelined together: slices[0] depends on slices[1], and so on.
 func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 	for {
 		// Stop at *Results, so we can re-use previous tasks.
@@ -81,31 +82,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 			Pragma:       pragmas,
 		}
 	}
-	// Pipeline execution, folding multiple frame operations
-	// into a single task by composing their readers.
-	for i := len(slices) - 1; i >= 0; i-- {
-		sliceOp, sliceFile, sliceLine := slices[i].Op()
-		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
-		for shard := range tasks {
-			var (
-				shard  = shard
-				reader = slices[i].Reader
-				prev   = tasks[shard].Do
-			)
-			if prev == nil {
-				// First frame reads the input directly.
-				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
-					return &sliceio.PprofReader{reader(shard, readers), pprofLabel}
-				}
-			} else {
-				// Subsequent frames read the previous frame's output.
-				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
-					return &sliceio.PprofReader{reader(shard, []sliceio.Reader{prev(readers)}), pprofLabel}
-				}
-			}
-		}
-	}
-	// Now capture the dependencies for this task set;
+	// Capture the dependencies for this task set;
 	// they are encoded in the last slice.
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
@@ -178,10 +155,50 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 			task.CombineKey = combineKey
 		}
 
-		// Each shard reads different partitions from all of the previous tasks's shards.
+		// Each shard reads different partitions from all of the previous slice's shards.
 		for partition := range tasks {
 			tasks[partition].Deps = append(tasks[partition].Deps,
 				TaskDep{deptasks, partition, dep.Expand, combineKey})
+		}
+	}
+	// Pipeline execution, folding multiple frame operations
+	// into a single task by composing their readers.
+	// Use cache when configured.
+	for i := len(slices) - 1; i >= 0; i-- {
+		sliceOp, sliceFile, sliceLine := slices[i].Op()
+		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
+
+		var shardCache *slicecache.ShardCache
+		if c, ok := slices[i].(slicecache.Cacheable); ok {
+			shardCache = c.Cache()
+		}
+
+		for shard := range tasks {
+			var (
+				shard  = shard
+				reader = slices[i].Reader
+				prev   = tasks[shard].Do
+			)
+			if prev == nil {
+				// First, read the input directly.
+				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+					r := reader(shard, readers)
+					r = shardCache.Reader(shard, r)
+					return &sliceio.PprofReader{r, pprofLabel}
+				}
+			} else {
+				// Subsequently, read the previous pipelined slice's output.
+				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+					r := reader(shard, []sliceio.Reader{prev(readers)})
+					r = shardCache.Reader(shard, r)
+					return &sliceio.PprofReader{r, pprofLabel}
+				}
+			}
+			// Forget task dependencies for cached shards because we'll
+			// read from the cache file.
+			if shardCache.IsCached(shard) {
+				tasks[shard].Deps = nil
+			}
 		}
 	}
 	return tasks, false, nil

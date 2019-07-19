@@ -6,109 +6,18 @@ package bigslice
 
 import (
 	"context"
-	"fmt"
-	"reflect"
 
-	"github.com/grailbio/base/backgroundcontext"
-	"github.com/grailbio/base/errors"
-	"github.com/grailbio/base/file"
-	"github.com/grailbio/base/log"
-	"github.com/grailbio/base/traverse"
-	"github.com/grailbio/bigslice/frame"
-	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/internal/slicecache"
 )
 
-type fileSlice struct {
-	sliceOp
+type cacheSlice struct {
 	Slice
-	prefix string
+	cache *slicecache.ShardCache
 }
 
-func (f *fileSlice) Op() (string, string, int) { return f.sliceOp.Op() }
-func (f *fileSlice) Combiner() *reflect.Value  { return nil }
-func (f *fileSlice) NumDep() int               { return 0 }
-func (f *fileSlice) Dep(i int) Dep             { panic("no deps") }
+var _ slicecache.Cacheable = (*cacheSlice)(nil)
 
-type fileReader struct {
-	sliceio.Reader
-	file file.File
-	path string
-}
-
-func (f *fileReader) Read(ctx context.Context, frame frame.Frame) (int, error) {
-	if f.file == nil {
-		var err error
-		f.file, err = file.Open(ctx, f.path)
-		if err != nil {
-			return 0, err
-		}
-		f.Reader = sliceio.NewDecodingReader(f.file.Reader(backgroundcontext.Get()))
-	}
-	n, err := f.Reader.Read(ctx, frame)
-	if err != nil {
-		if err := f.file.Close(ctx); err != nil {
-			log.Error.Printf("%s: close: %v", f.file.Name(), err)
-		}
-	}
-	return n, err
-}
-
-func (f *fileSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
-	return &fileReader{path: shardPath(f.prefix, shard, f.NumShard())}
-}
-
-type writethroughSlice struct {
-	sliceOp
-	Slice
-	prefix string
-}
-
-func (w *writethroughSlice) Op() (string, string, int) { return w.sliceOp.Op() }
-
-type writethroughReader struct {
-	sliceio.Reader
-	path string
-	file file.File
-	enc  *sliceio.Encoder
-}
-
-func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, error) {
-	if r.file == nil {
-		var err error
-		r.file, err = file.Create(ctx, r.path)
-		if err != nil {
-			return 0, err
-		}
-		// Ideally we'd use the underlying context for each op here,
-		// but the way encoder is set up, we can't (understandably)
-		// pass a new writer for each encode.
-		r.enc = sliceio.NewEncoder(r.file.Writer(backgroundcontext.Get()))
-	}
-	n, err := r.Reader.Read(ctx, frame)
-	if err == nil || err == sliceio.EOF {
-		if err := r.enc.Encode(frame.Slice(0, n)); err != nil {
-			return n, err
-		}
-		if err == sliceio.EOF {
-			if err := r.file.Close(ctx); err != nil {
-				return n, err
-			}
-		}
-	} else {
-		r.file.Discard(backgroundcontext.Get())
-	}
-	return n, err
-}
-
-// IsWriteThrough is used for testing.
-func (w *writethroughSlice) IsWriteThrough() {}
-
-func (w *writethroughSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
-	return &writethroughReader{
-		Reader: w.Slice.Reader(shard, deps),
-		path:   shardPath(w.prefix, shard, w.NumShard()),
-	}
-}
+func (c *cacheSlice) Cache() *slicecache.ShardCache { return c.cache }
 
 // Cache caches the output of a slice to the given file prefix.
 // Cached data are stored as "prefix-nnnn-of-mmmm" for shards nnnn of
@@ -124,28 +33,30 @@ func (w *writethroughSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Rea
 // Cache uses GRAIL's file library, so prefix may refer to URLs to a
 // distributed object store such as S3.
 func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
-	m := slice.NumShard()
-	_, err := file.Stat(ctx, shardPath(prefix, 0, m))
-	if err == nil {
-		// Make sure the remaining shards are also there.
-		err = traverse.Each(m-1, func(i int) error {
-			_, err := file.Stat(ctx, shardPath(prefix, i+1, m))
-			return err
-		})
-	}
-	if err == nil {
-		return &fileSlice{
-			sliceOp: makeSliceOp(fmt.Sprintf("file(%s)", prefix)),
-			Slice:   slice,
-			prefix:  prefix,
-		}, nil
-	}
-	if !errors.Is(errors.NotExist, err) {
+	shardCache, err := slicecache.NewShardCache(ctx, prefix, slice.NumShard())
+	if err != nil {
 		return nil, err
 	}
-	return &writethroughSlice{makeSliceOp("writethrough"), slice, prefix}, nil
+	shardCache.RequireAllCached()
+	return &cacheSlice{slice, shardCache}, nil
 }
 
-func shardPath(prefix string, n, m int) string {
-	return fmt.Sprintf("%s-%04d-of-%04d", prefix, n, m)
+// CachePartial caches the output of the slice to the given file
+// prefix (it uses the same file naming scheme as Cache). However, unlike
+// Cache, if CachePartial finds incomplete cached results (from an
+// earlier failed or interrupted run), it will use them and recompute only
+// the missing data.
+//
+// WARNING: The user is responsible for ensuring slice's contents are
+// deterministic between bigslice runs. If keys are non-deterministic, for
+// example due to pseudorandom seeding based on time, or reading the state
+// of a modifiable file in S3, CachePartial produces corrupt results.
+//
+// As with Cache, the user must guarantee cache consistency.
+func CachePartial(ctx context.Context, slice Slice, prefix string) (Slice, error) {
+	shardCache, err := slicecache.NewShardCache(ctx, prefix, slice.NumShard())
+	if err != nil {
+		return nil, err
+	}
+	return &cacheSlice{slice, shardCache}, nil
 }
