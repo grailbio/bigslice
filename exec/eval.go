@@ -87,7 +87,7 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 		for _, task := range state.Runnable() {
 			task.Lock()
 			if task.state == TaskLost {
-				log.Printf("evaluator: re-submitting lost task %v", task)
+				log.Printf("evaluator: resubmitting lost task %v", task)
 				task.state = TaskInit
 			}
 			if task.state == TaskInit {

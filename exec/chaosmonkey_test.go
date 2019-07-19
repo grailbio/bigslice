@@ -7,6 +7,7 @@ package exec_test
 import (
 	"context"
 	"flag"
+	"log"
 	"math/rand"
 	"testing"
 	"time"
@@ -53,6 +54,12 @@ func TestChaosMonkey(t *testing.T) {
 	if !*chaos {
 		t.Skip("chaos monkey tests disabled; pass -chaos to enable")
 	}
+	// This test takes way too long to recover with the default probation timeouts.
+	save := exec.ProbationTimeout
+	exec.ProbationTimeout = time.Second
+	defer func() {
+		exec.ProbationTimeout = save
+	}()
 	system := testsystem.New()
 	system.Machineprocs = 2
 	system.KeepalivePeriod = time.Second
@@ -75,10 +82,11 @@ func TestChaosMonkey(t *testing.T) {
 			case <-ctx.Done():
 				return nil
 			case <-time.After(wait):
-				wait += time.Duration(100+rand.Intn(900)) * time.Millisecond
+				wait += time.Duration(500+rand.Intn(2000)) * time.Millisecond
+				log.Printf("activating next chaos monkey in %s", wait)
 			}
 			if system.Kill(nil) {
-				t.Log("the simian army claimed yet another victim!")
+				log.Print("the simian army claimed yet another victim!")
 			}
 			if time.Since(start) > time.Minute {
 				return errors.New("test took more than a minute to recover")

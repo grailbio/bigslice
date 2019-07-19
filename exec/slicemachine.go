@@ -22,15 +22,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	// ProbationTimeout is the amount of time that a machine will
-	// remain in probation without being explicitly marked healthy.
-	probationTimeout = 30 * time.Second
+// ProbationTimeout is the amount of time that a machine will
+// remain in probation without being explicitly marked healthy.
+var ProbationTimeout = 30 * time.Second
 
-	// maxStartMachines is the maximum number of machines that
-	// may be started in one batch.
-	maxStartMachines = 10
-)
+// maxStartMachines is the maximum number of machines that
+// may be started in one batch.
+const maxStartMachines = 10
 
 // MachineHealth is the overall assessment of machine health by
 // the bigmachine executor.
@@ -112,10 +110,10 @@ func (s *sliceMachine) Done(err error) {
 func (s *sliceMachine) Assign(task *Task) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.health == machineLost {
+	if s.lost {
 		task.Set(TaskLost)
 	} else {
-		s.tasks = append(s.tasks)
+		s.tasks = append(s.tasks, task)
 	}
 }
 
@@ -191,12 +189,12 @@ loop:
 	}
 	// The machine is dead: mark it as such and also mark all of its pending
 	// and completed tasks as lost.
-	log.Error.Printf("lost machine %s: marking its tasks as LOST", s.Machine.Addr)
 	s.mu.Lock()
 	s.lost = true
 	tasks := s.tasks
 	s.tasks = nil
 	s.mu.Unlock()
+	log.Error.Printf("lost machine %s: marking its %d tasks as LOST", s.Machine.Addr, len(tasks))
 	for _, task := range tasks {
 		task.Set(TaskLost)
 	}
@@ -403,7 +401,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		if len(probation) == 0 {
 			probationTimer = nil
 		} else if probationTimer == nil {
-			probationTimer = time.NewTimer(time.Until(probation[0].lastFailure.Add(probationTimeout)))
+			probationTimer = time.NewTimer(time.Until(probation[0].lastFailure.Add(ProbationTimeout)))
 		}
 		var timec <-chan time.Time
 		if probationTimer != nil {
