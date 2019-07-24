@@ -225,7 +225,7 @@ func (i Invocation) Invoke() Slice {
 func FuncLocationsDiff(lhs, rhs []string) []string {
 	// This is a vanilla Levenshtein distance implementation.
 	const (
-		editNone int = iota
+		editNone = iota
 		editAdd
 		editDel
 	)
