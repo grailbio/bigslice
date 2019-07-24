@@ -93,7 +93,10 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 			if task.state == TaskInit {
 				task.state = TaskWaiting
 				task.Status = group.Startf("%s(%x)", task.Name, inv.Index)
-				go executor.Run(task)
+				go func(task *Task) {
+					executor.Run(task)
+					task.Status.Done()
+				}(task)
 			}
 			running++
 			go func(task *Task) {
