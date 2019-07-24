@@ -158,7 +158,7 @@ func (d *decodingReader) Read(ctx context.Context, f frame.Frame) (n int, err er
 		if d.scratch.IsZero() {
 			d.scratch = frame.Make(f, n, n)
 		} else {
-			d.scratch.Ensure(n)
+			d.scratch = d.scratch.Ensure(n)
 		}
 		d.buf = d.scratch
 		if d.err = d.decode(d.buf); d.err != nil {

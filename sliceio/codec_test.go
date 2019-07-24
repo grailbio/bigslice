@@ -144,8 +144,12 @@ func TestDecodingReaderWithZeros(t *testing.T) {
 	var b bytes.Buffer
 	in := []fields{{1, 2, 3}, {1, 0, 3}}
 	enc := NewEncoder(&b)
-	enc.Encode(frame.Slices(in[0:1]))
-	enc.Encode(frame.Slices(in[1:2]))
+	if err := enc.Encode(frame.Slices(in[0:1])); err != nil {
+		t.Fatal(err)
+	}
+	if err := enc.Encode(frame.Slices(in[1:2])); err != nil {
+		t.Fatal(err)
+	}
 
 	r := NewDecodingReader(&b)
 	ctx := context.Background()
@@ -226,8 +230,12 @@ func TestDecodingSlices(t *testing.T) {
 	var b bytes.Buffer
 	in := [][]string{{"a", "b"}, {"c", "d"}}
 	enc := NewEncoder(&b)
-	enc.Encode(frame.Slices(in[0:1]))
-	enc.Encode(frame.Slices(in[1:2]))
+	if err := enc.Encode(frame.Slices(in[0:1])); err != nil {
+		t.Fatal(err)
+	}
+	if err := enc.Encode(frame.Slices(in[1:2])); err != nil {
+		t.Fatal(err)
+	}
 
 	r := NewDecodingReader(&b)
 	ctx := context.Background()
@@ -255,6 +263,49 @@ func TestEmptyDecodingReader(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if got, want := err, EOF; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestScratchBufferGrowth verifies that decodingReader can buffer encoded
+// frames of increasing length. Note that this is a very
+// implementation-dependent test that verifies that scratch buffer resizing
+// works correctly.
+func TestScratchBufferGrowth(t *testing.T) {
+	var (
+		b   bytes.Buffer
+		in0 = []int{0, 1}
+		in1 = []int{2, 3, 4}
+		enc = NewEncoder(&b)
+	)
+	// Encode a 2-length frame followed by a 3-length frame. This will cause
+	// the decoder to resize its scratch buffer.
+	if err := enc.Encode(frame.Slices(in0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := enc.Encode(frame.Slices(in1)); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewDecodingReader(&b)
+	// Read one row at a time to force the decodingReader to internally buffer
+	// the decoded frames.
+	f := frame.Make(slicetype.New(typeOfInt), 1, 1)
+	var out []int
+	for {
+		n, err := r.Read(context.Background(), f)
+		if err == EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		out = append(out, f.Slice(0, n).Value(0).Interface().([]int)...)
+	}
+	if got, want := len(out), 5; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := out, append(in0, in1...); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
