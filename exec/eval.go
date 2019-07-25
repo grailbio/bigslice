@@ -222,7 +222,6 @@ func (s *state) Return(task *Task) {
 		// Re-enqueue immediately.
 		s.Enqueue(task)
 	}
-	return
 }
 
 // Runnable returns the current set of runnable tasks and
