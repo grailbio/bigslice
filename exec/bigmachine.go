@@ -355,7 +355,16 @@ compile:
 	case ctx.Err() != nil:
 		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
 		task.Error(err)
-	case errors.Match(fatalErr, err):
+	case errors.Match(fatalErr, err) && !errors.Is(errors.Unavailable, err):
+		// We assume errors.Unavailable indicates that a worker machine, either
+		// directly or transitively, is unavailable, so we consider the task
+		// lost and able to rescheduled.
+
+		// TODO(jcharumilind): Make this precise. As it is, this may be a false
+		// positive, as user code can produce Unavailable errors that should be
+		// fatal. In practice, this does not seem to happen. All cases I've
+		// seen have been machine unavailability from which bigslice should try
+		// to recover.
 		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)
