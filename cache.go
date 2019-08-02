@@ -6,16 +6,25 @@ package bigslice
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/grailbio/bigslice/internal/slicecache"
+	"github.com/grailbio/bigslice/sliceio"
 )
 
 type cacheSlice struct {
+	sliceOp
 	Slice
 	cache *slicecache.ShardCache
 }
 
 var _ slicecache.Cacheable = (*cacheSlice)(nil)
+
+func (c *cacheSlice) Op() (string, string, int)                              { return c.sliceOp.Op() }
+func (c *cacheSlice) NumDep() int                                            { return 1 }
+func (c *cacheSlice) Dep(i int) Dep                                          { return Dep{c.Slice, false, false} }
+func (*cacheSlice) Combiner() *reflect.Value                                 { return nil }
+func (c *cacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 
 func (c *cacheSlice) Cache() *slicecache.ShardCache { return c.cache }
 
@@ -38,7 +47,7 @@ func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
 		return nil, err
 	}
 	shardCache.RequireAllCached()
-	return &cacheSlice{slice, shardCache}, nil
+	return &cacheSlice{makeSliceOp("cache"), slice, shardCache}, nil
 }
 
 // CachePartial caches the output of the slice to the given file
@@ -58,5 +67,5 @@ func CachePartial(ctx context.Context, slice Slice, prefix string) (Slice, error
 	if err != nil {
 		return nil, err
 	}
-	return &cacheSlice{slice, shardCache}, nil
+	return &cacheSlice{makeSliceOp("cachepartial"), slice, shardCache}, nil
 }

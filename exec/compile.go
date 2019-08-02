@@ -169,7 +169,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
 
 		var shardCache *slicecache.ShardCache
-		if c, ok := slices[i].(slicecache.Cacheable); ok {
+		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
 
