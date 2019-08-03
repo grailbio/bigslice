@@ -298,10 +298,13 @@ type machineDone struct {
 	Err error
 }
 
-// startError is used to signal machine start errors.
-type startError struct {
-	Nproc int   // the number of procs that failed to start
-	Err   error // the underlying error
+// startResult is used to signal the result of attempts to start machines.
+type startResult struct {
+	// machines is a slice of the machines that were successfully started.
+	machines []*sliceMachine
+	// nFailures is the number of machines that we attempted but failed to
+	// start.
+	nFailures int
 }
 
 // MachineManager manages a cluster of sliceMachines, load balancing requests
@@ -381,13 +384,16 @@ func (m *machineManager) Do(ctx context.Context) {
 		// Scale each machine's maxprocs by the max load factor so that
 		// maxp is interpreted as the maximum number of usable procs.
 		machprocs      = max(1, int(float64(m.b.System().Maxprocs())*m.maxLoad))
-		starterrc      = make(chan startError)
-		startc         = make(chan []*sliceMachine)
+		startc         = make(chan startResult)
 		stoppedc       = make(chan *sliceMachine)
 		donec          = make(chan machineDone)
 		machines       machineQ
 		probation      machineFailureQ
 		probationTimer *time.Timer
+		// We track consecutive failures to start machines as a heuristic to
+		// decide that there might be a systematic problem preventing machines
+		// from starting.
+		consecutiveStartFailures int
 	)
 	// Scale maxp up by the load slack so that we don't over or underallocate.
 	for {
@@ -448,18 +454,23 @@ func (m *machineManager) Do(ctx context.Context) {
 			}
 		case n := <-m.needc:
 			need += n
-		case startErr := <-starterrc:
-			log.Error.Printf("error starting machines: %v", startErr.Err)
-			pending -= startErr.Nproc
-		case started := <-startc:
-			pending -= machprocs * len(started)
-			for _, mach := range started {
+		case result := <-startc:
+			pending -= machprocs * (len(result.machines) + result.nFailures)
+			for _, mach := range result.machines {
 				heap.Push(&machines, mach)
 				mach.donec = donec
 				go func(mach *sliceMachine) {
 					<-mach.Wait(bigmachine.Stopped)
 					stoppedc <- mach
 				}(mach)
+			}
+			if len(result.machines) > 0 {
+				consecutiveStartFailures = 0
+			} else {
+				consecutiveStartFailures += result.nFailures
+				if consecutiveStartFailures > 8 {
+					log.Printf("warning; failed to start last %d machines; check for systematic problem preventing machine bootup", consecutiveStartFailures)
+				}
 			}
 		case mach := <-stoppedc:
 			// Remove the machine from management. We let the sliceMachine
@@ -489,46 +500,49 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/machprocs, have, pending/machprocs, pending)
 			go func() {
-				machines, err := startMachines(ctx, m.b, m.group, needMachines, m.worker, m.params...)
-				if err != nil {
-					starterrc <- startError{needMachines * machprocs, err}
-				} else {
-					startc <- machines
+				machines := startMachines(ctx, m.b, m.group, needMachines, m.worker, m.params...)
+				startc <- startResult{
+					machines:  machines,
+					nFailures: needMachines - len(machines),
 				}
 			}()
 		}
 	}
 }
 
-// StartMachines starts a number of machines on b, installing a worker
-// service on each of them. StartMachines returns when all of the machines
-// are in bigmachine.Running state.
-func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int, worker *worker, params ...bigmachine.Param) ([]*sliceMachine, error) {
+// StartMachines starts a number of machines on b, installing a worker service
+// on each of them. StartMachines returns a slice of successfully started
+// machines when all of them are in bigmachine.Running state. If a machine
+// fails to start, it is not included.
+func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n int, worker *worker, params ...bigmachine.Param) []*sliceMachine {
 	params = append([]bigmachine.Param{bigmachine.Services{"Worker": worker}}, params...)
 	machines, err := b.Start(ctx, n, params...)
 	if err != nil {
-		return nil, err
+		log.Error.Printf("error starting machines: %v", err)
+		return nil
 	}
-	g, ctx := errgroup.WithContext(ctx)
+	var wg sync.WaitGroup
 	slicemachines := make([]*sliceMachine, len(machines))
 	for i := range machines {
 		m, i := machines[i], i
 		status := group.Start()
 		status.Print("waiting for machine to boot")
-		g.Go(func() error {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			<-m.Wait(bigmachine.Running)
 			if err := m.Err(); err != nil {
 				log.Printf("machine %s failed to start: %v", m.Addr, err)
 				status.Printf("failed to start: %v", err)
 				status.Done()
-				return nil
+				return
 			}
 			var workerFuncLocs []string
 			if err := m.RetryCall(ctx, "Worker.FuncLocations", struct{}{}, &workerFuncLocs); err != nil {
 				status.Printf("failed to verify funcs")
 				status.Done()
 				m.Cancel()
-				return nil
+				return
 			}
 			diff := bigslice.FuncLocationsDiff(bigslice.FuncLocations(), workerFuncLocs)
 			if len(diff) > 0 {
@@ -549,12 +563,9 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 			// lifetime, or lifetime of the machine.
 			go sm.Go(backgroundcontext.Get())
 			slicemachines[i] = sm
-			return nil
-		})
+		}()
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
+	wg.Wait()
 	n = 0
 	for _, m := range slicemachines {
 		if m != nil {
@@ -562,7 +573,7 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 			n++
 		}
 	}
-	return slicemachines[:n], nil
+	return slicemachines[:n]
 }
 
 func max(x, y int) int {
