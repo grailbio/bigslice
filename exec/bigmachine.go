@@ -761,7 +761,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 		return err
 	case task.NumPartition > 1:
-		var psize = defaultChunksize / 100
+		var psize = *defaultChunksize / 100
 		var (
 			partitionv = make([]frame.Frame, task.NumPartition)
 			lens       = make([]int, task.NumPartition)
@@ -769,7 +769,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		for i := range partitionv {
 			partitionv[i] = frame.Make(task, psize, psize)
 		}
-		in := frame.Make(task, defaultChunksize, defaultChunksize)
+		in := frame.Make(task, *defaultChunksize, *defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
@@ -804,7 +804,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 		}
 	default:
-		in := frame.Make(task, defaultChunksize, defaultChunksize)
+		in := frame.Make(task, *defaultChunksize, *defaultChunksize)
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
@@ -847,7 +847,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), *task.Combiner, defaultChunksize*100)
+			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), *task.Combiner, *defaultChunksize*100)
 			if err != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
@@ -888,7 +888,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 	// preconfigured threshold.)
 	var (
 		partitionCombiner = make([]*combiningFrame, task.NumPartition)
-		out               = frame.Make(task, defaultChunksize, defaultChunksize)
+		out               = frame.Make(task, *defaultChunksize, *defaultChunksize)
 	)
 	for i := range partitionCombiner {
 		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner, 8, 1)

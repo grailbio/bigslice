@@ -18,7 +18,7 @@ import (
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-var numCanaryRows = defaultsize.SortCanary
+var numCanaryRows = &defaultsize.SortCanary
 
 // SortReader sorts a Reader by its first column. SortReader may
 // spill to disk, in which case it targets spill file sizes of
@@ -33,7 +33,7 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 		return nil, err
 	}
 	defer spill.Cleanup()
-	f := frame.Make(typ, numCanaryRows, numCanaryRows)
+	f := frame.Make(typ, *numCanaryRows, *numCanaryRows)
 	for {
 		n, err := sliceio.ReadFull(ctx, r, f)
 		if err != nil && err != sliceio.EOF {

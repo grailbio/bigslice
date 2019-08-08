@@ -71,12 +71,12 @@ func (l *localExecutor) Run(task *Task) {
 			if task.CombineKey != "" {
 				combineKey = TaskName{Op: task.CombineKey}
 			}
-			combiner, err := newCombiner(dep.Tasks[0], combineKey.String(), *dep.Tasks[0].Combiner, defaultChunksize*100)
+			combiner, err := newCombiner(dep.Tasks[0], combineKey.String(), *dep.Tasks[0].Combiner, *defaultChunksize*100)
 			if err != nil {
 				task.Error(err)
 				return
 			}
-			buf := frame.Make(dep.Tasks[0], defaultChunksize, defaultChunksize)
+			buf := frame.Make(dep.Tasks[0], *defaultChunksize, *defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
 				if err != nil && err != sliceio.EOF {
@@ -153,7 +153,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 	}()
 	for {
 		if in.IsZero() {
-			in = frame.Make(task, defaultChunksize, defaultChunksize)
+			in = frame.Make(task, *defaultChunksize, *defaultChunksize)
 		}
 		n, err := out.Read(ctx, in)
 		if err != nil && err != sliceio.EOF {
@@ -170,7 +170,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 				// create a new one.
 				m := len(buf[p])
 				if m == 0 || buf[p][m-1].Cap() == buf[p][m-1].Len() {
-					frame := frame.Make(task, 0, defaultChunksize)
+					frame := frame.Make(task, 0, *defaultChunksize)
 					buf[p] = append(buf[p], frame)
 					m++
 				}

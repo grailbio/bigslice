@@ -17,7 +17,7 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-var defaultChunksize = defaultsize.Chunk
+var defaultChunksize = &defaultsize.Chunk
 
 // Executor defines an interface used to provide implementations of
 // task runners. An Executor is responsible for running single tasks,

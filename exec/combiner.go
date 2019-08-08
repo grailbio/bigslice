@@ -248,7 +248,7 @@ func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize
 	if err != nil {
 		return nil, err
 	}
-	c.comb = makeCombiningFrame(c, comb, combiningFrameInitSize, combiningFrameScratchSize)
+	c.comb = makeCombiningFrame(c, comb, *combiningFrameInitSize, *combiningFrameScratchSize)
 	if !frame.CanCompare(typ.Out(0)) {
 		typecheck.Panicf(1, "bigslice.newCombiner: cannot sort type %s", typ.Out(0))
 	}
@@ -330,7 +330,7 @@ func (c *combiner) WriteTo(ctx context.Context, enc *sliceio.Encoder) (int64, er
 		return 0, err
 	}
 	var total int64
-	in := frame.Make(c, defaultChunksize, defaultChunksize)
+	in := frame.Make(c, *defaultChunksize, *defaultChunksize)
 	for {
 		n, err := reader.Read(ctx, in)
 		if err != nil && err != sliceio.EOF {
