@@ -136,9 +136,15 @@ func (l *Local) DefaultParallelism() int {
 	return runtime.GOMAXPROCS(0)
 }
 
-// EC2 represents an AWS EC2 bigmachine instance.
+// EC2Configurable contains flag-configurable bigmachine objects.
+type EC2Configurable struct {
+	System  ec2system.System
+	Environ bigmachine.Environ
+}
+
+// EC2 configures an AWS EC2 bigmachine instance.
 type EC2 struct {
-	Options map[string]interface{}
+	Options []func(*EC2Configurable)
 }
 
 // Name implements Provider.Name.
@@ -148,40 +154,49 @@ func (ec2 *EC2) Name() string {
 
 // Set implements Provider.Set.
 func (ec2 *EC2) Set(v string) error {
-	if ec2.Options == nil {
-		ec2.Options = make(map[string]interface{}, 5)
-	}
 	parts := strings.SplitN(v, "=", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("not in key=val format %q", v)
 	}
 	key, val := parts[0], parts[1]
+	var option func(c *EC2Configurable)
 	switch key {
 	case "dataspace", "rootsize":
 		i, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
 			return fmt.Errorf("not an int: %v", val)
 		}
-		ec2.Options[key] = uint(i)
-	case "instance", "profile", "securitygroup":
-		ec2.Options[key] = val
+		option = func(c *EC2Configurable) {
+			c.System.Dataspace = uint(i)
+		}
+	case "instance":
+		option = func(c *EC2Configurable) {
+			c.System.InstanceType = val
+		}
+	case "profile":
+		option = func(c *EC2Configurable) {
+			c.System.InstanceProfile = val
+		}
+	case "securitygroup":
+		option = func(c *EC2Configurable) {
+			c.System.SecurityGroup = val
+		}
 	case "ondemand":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
 			return fmt.Errorf("not a bool: %v", val)
 		}
-		ec2.Options[key] = b
-	case "env":
-		v := ec2.Options["env"]
-		if v == nil {
-			v = bigmachine.Environ{val}
-		} else {
-			v = append(v.(bigmachine.Environ), val)
+		option = func(c *EC2Configurable) {
+			c.System.OnDemand = b
 		}
-		ec2.Options["env"] = v
+	case "env":
+		option = func(c *EC2Configurable) {
+			c.Environ = append(c.Environ, val)
+		}
 	default:
 		return fmt.Errorf("unsupported option: %v", key)
 	}
+	ec2.Options = append(ec2.Options, option)
 	return nil
 }
 
@@ -196,35 +211,21 @@ func (ec2 *EC2) NewSystem() (*ec2system.System, []bigmachine.Param) {
 	if ec2.Options == nil {
 		return &ec2system.System{}, nil
 	}
-	instance := &ec2system.System{
-		Username: "unknown",
+	c := EC2Configurable{
+		System: ec2system.System{
+			Username: "unknown",
+		},
 	}
 	u, err := user.Current()
 	if err == nil {
-		instance.Username = u.Username
+		c.System.Username = u.Username
 	} else {
 		log.Printf("newec2: get current user: %v", err)
 	}
-	var params []bigmachine.Param
-	for key, val := range ec2.Options {
-		switch key {
-		case "instance":
-			instance.InstanceType = val.(string)
-		case "dataspace":
-			instance.Dataspace = val.(uint)
-		case "rootsize":
-			instance.Diskspace = val.(uint)
-		case "profile":
-			instance.InstanceProfile = val.(string)
-		case "ondemand":
-			instance.OnDemand = val.(bool)
-		case "securitygroup":
-			instance.SecurityGroup = val.(string)
-		case "env":
-			params = append(params, val.(bigmachine.Environ))
-		}
+	for _, option := range ec2.Options {
+		option(&c)
 	}
-	return instance, params
+	return &c.System, []bigmachine.Param{c.Environ}
 }
 
 // ExecOption implements Provider.ExecOption.
