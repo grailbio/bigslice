@@ -75,6 +75,13 @@ type Session struct {
 	roots map[*Task]struct{}
 }
 
+func newSession() *Session {
+	return &Session{
+		Context: backgroundcontext.Get(),
+		roots:   make(map[*Task]struct{}),
+	}
+}
+
 // An Option represents a session configuration parameter value.
 type Option func(s *Session)
 
@@ -140,10 +147,7 @@ var MachineCombiners Option = func(s *Session) {
 // the lifetime of the binary. If no executor is configured, the session
 // is configured to use the bigmachine executor.
 func Start(options ...Option) *Session {
-	s := &Session{
-		Context: backgroundcontext.Get(),
-		roots:   make(map[*Task]struct{}),
-	}
+	s := newSession()
 	for _, opt := range options {
 		opt(s)
 	}
@@ -156,8 +160,7 @@ func Start(options ...Option) *Session {
 	if s.executor == nil {
 		s.executor = newBigmachineExecutor(bigmachine.Local)
 	}
-	s.shutdown = s.executor.Start(s)
-	s.tracer = newTracer()
+	s.start()
 	return s
 }
 
@@ -177,6 +180,11 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 		log.Panicf("exec.Run: %v", err)
 	}
 	return res
+}
+
+func (s *Session) start() {
+	s.shutdown = s.executor.Start(s)
+	s.tracer = newTracer()
 }
 
 // statusMu is used to prevent interleaving of slice and task status groups.
