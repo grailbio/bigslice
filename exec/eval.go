@@ -90,13 +90,13 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				log.Printf("evaluator: resubmitting lost task %v", task)
 				task.state = TaskInit
 			}
+			status := group.Startf("%s(%x)", task.Name, inv.Index)
 			if task.state == TaskInit {
 				task.state = TaskWaiting
-				task.Status = group.Startf("%s(%x)", task.Name, inv.Index)
-				go func(task *Task) {
-					executor.Run(task)
-					task.Status.Done()
-				}(task)
+				task.Status = status
+				go executor.Run(task)
+			} else {
+				status.Print("running in another invocation")
 			}
 			running++
 			go func(task *Task) {
@@ -105,6 +105,7 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 					err = task.Wait(ctx)
 				}
 				task.Unlock()
+				status.Done()
 				if err != nil {
 					errc <- err
 				} else {
