@@ -17,7 +17,7 @@ import (
 )
 
 type cogroupSlice struct {
-	sliceOp
+	name     Name
 	slices   []Slice
 	out      []reflect.Type
 	numShard int
@@ -84,13 +84,14 @@ func Cogroup(slices ...Slice) Slice {
 	}
 
 	return &cogroupSlice{
-		sliceOp:  makeSliceOp("cogroup"),
+		name:     makeName("cogroup"),
 		numShard: numShard,
 		slices:   slices,
 		out:      out,
 	}
 }
 
+func (c *cogroupSlice) Name() Name             { return c.name }
 func (c *cogroupSlice) NumShard() int          { return c.numShard }
 func (c *cogroupSlice) ShardType() ShardType   { return HashShard }
 func (c *cogroupSlice) NumOut() int            { return len(c.out) }

@@ -54,20 +54,20 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if arg.NumOut() != 2 || arg.Out(0) != outputType || arg.Out(1) != outputType || ret.NumOut() != 1 || ret.Out(0) != outputType {
 		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, outputType, outputType, outputType)
 	}
-	return &reduceSlice{makeSliceOp("reduce"), slice, reflect.ValueOf(reduce)}
+	return &reduceSlice{slice, makeName("reduce"), reflect.ValueOf(reduce)}
 }
 
 // ReduceSlice implements "post shuffle" combining merge sort.
 type reduceSlice struct {
-	sliceOp
 	Slice
+	name     Name
 	combiner reflect.Value
 }
 
-func (r *reduceSlice) Op() (string, string, int) { return r.sliceOp.Op() }
-func (*reduceSlice) NumDep() int                 { return 1 }
-func (r *reduceSlice) Dep(i int) Dep             { return Dep{r.Slice, true, true} }
-func (r *reduceSlice) Combiner() *reflect.Value  { return &r.combiner }
+func (r *reduceSlice) Name() Name               { return r.name }
+func (*reduceSlice) NumDep() int                { return 1 }
+func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
+func (r *reduceSlice) Combiner() *reflect.Value { return &r.combiner }
 
 func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	if len(deps) == 1 {

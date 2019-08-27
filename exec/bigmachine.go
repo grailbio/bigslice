@@ -508,7 +508,7 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 			}
 		}
 		slice := inv.Invoke()
-		tasks, _, err := compile(make(taskNamer), inv, slice, w.MachineCombiners)
+		tasks, _, err := compile(make(taskNamer), inv, slice, w.MachineCombiners, false)
 		if err != nil {
 			return err
 		}
