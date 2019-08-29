@@ -162,13 +162,6 @@ type Task struct {
 	// are pipelined into this task.
 	bigslice.Pragma
 
-	// Slices is the set of slices to which this task directly contributes.
-	Slices []bigslice.Slice
-
-	// stateSubs is a set of channels to which this task will be sent whenever
-	// its state changes.
-	stateSubs []chan<- *Task
-
 	// The following are used to coordinate runtime execution.
 
 	sync.Mutex
@@ -261,9 +254,6 @@ func (t *Task) Broadcast() {
 		close(t.waitc)
 		t.waitc = nil
 	}
-	for _, c := range t.stateSubs {
-		c <- t
-	}
 }
 
 // Wait returns after the next call to Broadcast, or if the context
@@ -294,35 +284,6 @@ func (t *Task) WaitState(ctx context.Context, state TaskState) (TaskState, error
 		err = t.Wait(ctx)
 	}
 	return t.state, err
-}
-
-// Subscribe subscribes a channel to be notified of any changes to t's state. If
-// c has already been subscribed, no-op.
-func (t *Task) Subscribe(c chan<- *Task) {
-	t.Lock()
-	defer t.Unlock()
-	for _, cSub := range t.stateSubs {
-		if c == cSub {
-			// It is already registered.
-			return
-		}
-	}
-	t.stateSubs = append(t.stateSubs, c)
-}
-
-// Unsubscribe unsubscribes channel c, previously subscribed with Subscribe,
-// from state change notifications.
-func (t *Task) Unsubscribe(c chan<- *Task) {
-	t.Lock()
-	defer t.Unlock()
-	stateSubs := t.stateSubs[:0]
-	for _, cSub := range t.stateSubs {
-		if c == cSub {
-			continue
-		}
-		stateSubs = append(stateSubs, cSub)
-	}
-	t.stateSubs = stateSubs
 }
 
 // GraphString returns a schematic string of the task graph rooted at t.

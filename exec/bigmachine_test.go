@@ -79,7 +79,7 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 			maxIndex = ix
 		}
 		slice := inv.Invoke()
-		tasks, _, err := compile(make(taskNamer), inv, slice, false, false)
+		tasks, _, err := compile(make(taskNamer), inv, slice, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestBigmachineExecutorTaskExclusive(t *testing.T) {
 	})
 	inv := fn.Invocation("<test>")
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, false, false)
+	tasks, _, err := compile(make(taskNamer), inv, slice, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Inv
 	fn := bigslice.Func(f)
 	inv := fn.Invocation("")
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, false, false)
+	tasks, _, err := compile(make(taskNamer), inv, slice, false)
 	if err != nil {
 		panic(err)
 	}
@@ -370,7 +370,7 @@ func compileFuncExclusive(f func() bigslice.Slice) ([]*Task, bigslice.Slice, big
 	fn := bigslice.Func(f).Exclusive()
 	inv := fn.Invocation("")
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, false, false)
+	tasks, _, err := compile(make(taskNamer), inv, slice, false)
 	if err != nil {
 		panic(err)
 	}

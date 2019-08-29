@@ -200,7 +200,7 @@ type PprofReader struct {
 }
 
 func (r *PprofReader) Read(ctx context.Context, frame frame.Frame) (n int, err error) {
-	labels := pprof.Labels("sliceName", r.Label)
+	labels := pprof.Labels("sliceOp", r.Label)
 	pprof.Do(ctx, labels, func(ctx context.Context) {
 		n, err = r.Reader.Read(ctx, frame)
 	})

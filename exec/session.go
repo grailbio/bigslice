@@ -187,27 +187,14 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	}
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
-	// Only bother to link tasks to their slices if it's actually going to be
-	// used (for status).
-	linkSlices := s.status != nil
-	tasks, _, err := compile(make(taskNamer), inv, slice, s.machineCombiners, linkSlices)
+	tasks, _, err := compile(make(taskNamer), inv, slice, s.machineCombiners)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(marius): give a way to provide names for these groups
-	var taskGroup *status.Group
+	var group *status.Group
 	if s.status != nil {
-		// Make the slice status group come before the more granular task
-		// status group, as we generally want increasing level of detail when
-		// observing status.
-		sliceGroup := s.status.Groupf("run %s [%d] slices", location, inv.Index)
-		_ = s.status.Groups()
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go maintainSliceGroup(ctx, tasks, sliceGroup)
-
-		// taskGroup is managed by Eval.
-		taskGroup = s.status.Groupf("run %s [%d] tasks", location, inv.Index)
+		group = s.status.Groupf("run %s [%d]", location, inv.Index)
 	}
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
@@ -220,7 +207,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		sess:  s,
 		inv:   inv,
 		tasks: tasks,
-	}, Eval(ctx, s.executor, inv, tasks, taskGroup)
+	}, Eval(ctx, s.executor, inv, tasks, group)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

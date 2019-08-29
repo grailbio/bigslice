@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
@@ -71,9 +70,11 @@ const (
 type Slice interface {
 	slicetype.Type
 
-	// Name returns a unique (composite) name for this Slice that also has
-	// useful context for diagnostic or status display.
-	Name() Name
+	// Op returns
+	// - a descriptive name of the operation that this Slice represents.
+	// - the filename, and...
+	// - ...line number at which this Slice is created.
+	Op() (string, string, int)
 
 	// NumShard returns the number of shards in this Slice.
 	NumShard() int
@@ -128,7 +129,7 @@ func (exclusive) Exclusive() bool { return true }
 var Exclusive Pragma = exclusive{}
 
 type constSlice struct {
-	name Name
+	sliceOp
 	slicetype.Type
 	frame  frame.Frame
 	nshard int
@@ -142,7 +143,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 		typecheck.Panic(1, "const: must have at least one column")
 	}
 	s := new(constSlice)
-	s.name = makeName("const")
+	s.sliceOp = makeSliceOp("const")
 	s.nshard = nshard
 	if s.nshard < 1 {
 		typecheck.Panic(1, "const: shard must be >= 1")
@@ -157,7 +158,6 @@ func Const(nshard int, columns ...interface{}) Slice {
 	return s
 }
 
-func (s *constSlice) Name() Name             { return s.name }
 func (*constSlice) Prefix() int              { return 1 }
 func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
@@ -209,8 +209,8 @@ func (s *constSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type readerFuncSlice struct {
-	name Name
 	Pragma
+	sliceOp
 	slicetype.Type
 	nshard    int
 	read      reflect.Value
@@ -239,7 +239,7 @@ type readerFuncSlice struct {
 // reader to maintain local state across the read of a whole shard.
 func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	s := new(readerFuncSlice)
-	s.name = makeName("reader")
+	s.sliceOp = makeSliceOp("reader")
 	s.nshard = nshard
 	s.read = reflect.ValueOf(read)
 	arg, ret, ok := typecheck.Func(read)
@@ -258,7 +258,6 @@ func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	return s
 }
 
-func (r *readerFuncSlice) Name() Name             { return r.name }
 func (*readerFuncSlice) Prefix() int              { return 1 }
 func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
@@ -321,7 +320,7 @@ func (r *readerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Rea
 }
 
 type writerFuncSlice struct {
-	name Name
+	sliceOp
 	Slice
 	stateType reflect.Type
 	write     reflect.Value
@@ -357,7 +356,7 @@ type writerFuncSlice struct {
 // across the write of the whole shard.
 func WriterFunc(slice Slice, write interface{}) Slice {
 	s := new(writerFuncSlice)
-	s.name = makeName("writer")
+	s.sliceOp = makeSliceOp("writer")
 	s.Slice = slice
 
 	// Our error messages for wrongly-typed write functions include a
@@ -393,10 +392,10 @@ func WriterFunc(slice Slice, write interface{}) Slice {
 	return s
 }
 
-func (s *writerFuncSlice) Name() Name             { return s.name }
-func (*writerFuncSlice) NumDep() int              { return 1 }
-func (s *writerFuncSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
-func (*writerFuncSlice) Combiner() *reflect.Value { return nil }
+func (s *writerFuncSlice) Op() (string, string, int) { return s.sliceOp.Op() }
+func (*writerFuncSlice) NumDep() int                 { return 1 }
+func (s *writerFuncSlice) Dep(i int) Dep             { return singleDep(i, s.Slice, false) }
+func (*writerFuncSlice) Combiner() *reflect.Value    { return nil }
 
 type writerFuncReader struct {
 	shard     int
@@ -463,8 +462,8 @@ func (s *writerFuncSlice) Reader(shard int, reader []sliceio.Reader) sliceio.Rea
 }
 
 type mapSlice struct {
-	name Name
 	Pragma
+	sliceOp
 	Slice
 	fval reflect.Value
 	out  slicetype.Type
@@ -481,7 +480,7 @@ type mapSlice struct {
 //	Map(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) (r1, r2, ..., rn)) Slice<r1, r2, ..., rn>
 func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	m := new(mapSlice)
-	m.name = makeName("map")
+	m.sliceOp = makeSliceOp("map")
 	m.Slice = slice
 	m.fval = reflect.ValueOf(fn)
 	arg, ret, ok := typecheck.Func(fn)
@@ -499,13 +498,13 @@ func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	return m
 }
 
-func (m *mapSlice) Name() Name             { return m.name }
-func (m *mapSlice) NumOut() int            { return m.out.NumOut() }
-func (m *mapSlice) Out(c int) reflect.Type { return m.out.Out(c) }
-func (*mapSlice) ShardType() ShardType     { return HashShard }
-func (*mapSlice) NumDep() int              { return 1 }
-func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
-func (*mapSlice) Combiner() *reflect.Value { return nil }
+func (m *mapSlice) NumOut() int               { return m.out.NumOut() }
+func (m *mapSlice) Out(c int) reflect.Type    { return m.out.Out(c) }
+func (*mapSlice) ShardType() ShardType        { return HashShard }
+func (m *mapSlice) Op() (string, string, int) { return m.sliceOp.Op() }
+func (*mapSlice) NumDep() int                 { return 1 }
+func (m *mapSlice) Dep(i int) Dep             { return singleDep(i, m.Slice, false) }
+func (*mapSlice) Combiner() *reflect.Value    { return nil }
 
 type mapReader struct {
 	op     *mapSlice
@@ -555,8 +554,8 @@ func (m *mapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type filterSlice struct {
-	name Name
 	Pragma
+	sliceOp
 	Slice
 	pred reflect.Value
 }
@@ -573,7 +572,7 @@ type filterSlice struct {
 //	Filter(Slice<t1, t2, ..., tn>, func(t1, t2, ..., tn) bool) Slice<t1, t2, ..., tn>
 func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	f := new(filterSlice)
-	f.name = makeName("filter")
+	f.sliceOp = makeSliceOp("filter")
 	f.Slice = slice
 	f.pred = reflect.ValueOf(pred)
 	f.Pragma = Pragmas(prags)
@@ -590,10 +589,10 @@ func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	return f
 }
 
-func (f *filterSlice) Name() Name             { return f.name }
-func (*filterSlice) NumDep() int              { return 1 }
-func (f *filterSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*filterSlice) Combiner() *reflect.Value { return nil }
+func (f *filterSlice) Op() (string, string, int) { return f.sliceOp.Op() }
+func (*filterSlice) NumDep() int                 { return 1 }
+func (f *filterSlice) Dep(i int) Dep             { return singleDep(i, f.Slice, false) }
+func (*filterSlice) Combiner() *reflect.Value    { return nil }
 
 type filterReader struct {
 	op     *filterSlice
@@ -643,8 +642,8 @@ func (f *filterSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type flatmapSlice struct {
-	name Name
 	Pragma
+	sliceOp
 	Slice
 	fval reflect.Value
 	out  slicetype.Type
@@ -661,7 +660,7 @@ type flatmapSlice struct {
 //	Flatmap(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) ([]r1, []r2, ..., []rn)) Slice<r1, r2, ..., rn>
 func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	f := new(flatmapSlice)
-	f.name = makeName("flatmap")
+	f.sliceOp = makeSliceOp("flatmap")
 	f.Slice = slice
 	f.fval = reflect.ValueOf(fn)
 	f.Pragma = Pragmas(prags)
@@ -679,13 +678,13 @@ func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	return f
 }
 
-func (f *flatmapSlice) Name() Name             { return f.name }
-func (f *flatmapSlice) NumOut() int            { return f.out.NumOut() }
-func (f *flatmapSlice) Out(c int) reflect.Type { return f.out.Out(c) }
-func (*flatmapSlice) ShardType() ShardType     { return HashShard }
-func (*flatmapSlice) NumDep() int              { return 1 }
-func (f *flatmapSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*flatmapSlice) Combiner() *reflect.Value { return nil }
+func (f *flatmapSlice) NumOut() int               { return f.out.NumOut() }
+func (f *flatmapSlice) Out(c int) reflect.Type    { return f.out.Out(c) }
+func (*flatmapSlice) ShardType() ShardType        { return HashShard }
+func (f *flatmapSlice) Op() (string, string, int) { return f.sliceOp.Op() }
+func (*flatmapSlice) NumDep() int                 { return 1 }
+func (f *flatmapSlice) Dep(i int) Dep             { return singleDep(i, f.Slice, false) }
+func (*flatmapSlice) Combiner() *reflect.Value    { return nil }
 
 type flatmapReader struct {
 	op     *flatmapSlice
@@ -758,7 +757,7 @@ func (f *flatmapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type foldSlice struct {
-	name Name
+	sliceOp
 	Slice
 	fval reflect.Value
 	out  slicetype.Type
@@ -795,7 +794,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 		typecheck.Panicf(1, "fold: key type %s cannot be accumulated", slice.Out(0))
 	}
 	f := new(foldSlice)
-	f.name = makeName("fold")
+	f.sliceOp = makeSliceOp("fold")
 	f.Slice = slice
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
@@ -818,12 +817,12 @@ func Fold(slice Slice, fold interface{}) Slice {
 	return f
 }
 
-func (f *foldSlice) Name() Name             { return f.name }
-func (f *foldSlice) NumOut() int            { return f.out.NumOut() }
-func (f *foldSlice) Out(c int) reflect.Type { return f.out.Out(c) }
-func (*foldSlice) NumDep() int              { return 1 }
-func (f *foldSlice) Dep(i int) Dep          { return f.dep }
-func (*foldSlice) Combiner() *reflect.Value { return nil }
+func (f *foldSlice) NumOut() int               { return f.out.NumOut() }
+func (f *foldSlice) Out(c int) reflect.Type    { return f.out.Out(c) }
+func (f *foldSlice) Op() (string, string, int) { return f.sliceOp.Op() }
+func (*foldSlice) NumDep() int                 { return 1 }
+func (f *foldSlice) Dep(i int) Dep             { return f.dep }
+func (*foldSlice) Combiner() *reflect.Value    { return nil }
 
 type foldReader struct {
 	op     *foldSlice
@@ -872,7 +871,7 @@ func (f *foldSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type headSlice struct {
-	name Name
+	sliceOp
 	Slice
 	n int
 }
@@ -881,13 +880,13 @@ type headSlice struct {
 // each shard of the underlying slice. Its type is the same as the
 // provided slice.
 func Head(slice Slice, n int) Slice {
-	return headSlice{makeName(fmt.Sprintf("head(%d)", n)), slice, n}
+	return headSlice{makeSliceOp(fmt.Sprintf("head(%d)", n)), slice, n}
 }
 
-func (h headSlice) Name() Name             { return h.name }
-func (headSlice) NumDep() int              { return 1 }
-func (h headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false) }
-func (headSlice) Combiner() *reflect.Value { return nil }
+func (h headSlice) Op() (string, string, int) { return h.sliceOp.Op() }
+func (headSlice) NumDep() int                 { return 1 }
+func (h headSlice) Dep(i int) Dep             { return singleDep(i, h.Slice, false) }
+func (headSlice) Combiner() *reflect.Value    { return nil }
 
 type headReader struct {
 	reader sliceio.Reader
@@ -911,7 +910,7 @@ func (h *headReader) Read(ctx context.Context, out frame.Frame) (n int, err erro
 }
 
 type scanSlice struct {
-	name Name
+	sliceOp
 	Slice
 	scan func(shard int, scanner *sliceio.Scanner) error
 }
@@ -920,15 +919,15 @@ type scanSlice struct {
 // It returns a unit Slice: Scan is inteded to be used for its side
 // effects.
 func Scan(slice Slice, scan func(shard int, scanner *sliceio.Scanner) error) Slice {
-	return scanSlice{makeName("scan"), slice, scan}
+	return scanSlice{makeSliceOp("scan"), slice, scan}
 }
 
-func (s scanSlice) Name() Name             { return s.name }
-func (scanSlice) NumOut() int              { return 0 }
-func (scanSlice) Out(c int) reflect.Type   { panic(c) }
-func (scanSlice) NumDep() int              { return 1 }
-func (s scanSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
-func (scanSlice) Combiner() *reflect.Value { return nil }
+func (scanSlice) NumOut() int                 { return 0 }
+func (scanSlice) Out(c int) reflect.Type      { panic(c) }
+func (s scanSlice) Op() (string, string, int) { return s.sliceOp.Op() }
+func (scanSlice) NumDep() int                 { return 1 }
+func (s scanSlice) Dep(i int) Dep             { return singleDep(i, s.Slice, false) }
+func (scanSlice) Combiner() *reflect.Value    { return nil }
 
 type scanReader struct {
 	slice  scanSlice
@@ -987,7 +986,8 @@ func String(slice Slice) string {
 	for i := range types {
 		types[i] = fmt.Sprint(slice.Out(i))
 	}
-	return fmt.Sprintf("%s<%s>", slice.Name().Op, strings.Join(types, ", "))
+	op, _, _ := slice.Op()
+	return fmt.Sprintf("%s<%s>", op, strings.Join(types, ", "))
 }
 
 func singleDep(i int, slice Slice, shuffle bool) Dep {
@@ -997,50 +997,20 @@ func singleDep(i int, slice Slice, shuffle bool) Dep {
 	return Dep{slice, shuffle, false}
 }
 
-// Name is a unique name for a slice, constructed with useful context for
-// diagnostic or status display.
-type Name struct {
-	// Op is the operation that the slice performs (e.g. "reduce", "map")
-	Op string
-	// File is the file in which the slice was defined.
-	File string
-	// Line is the line in File at which the slice was defined.
-	Line int
-	// Index de-dups slices created on the same File and Line.
-	Index int
-}
-
-func (n Name) String() string {
-	if n.Index == 0 {
-		return fmt.Sprintf("%s@%s:%d", n.Op, n.File, n.Line)
-	}
-	return fmt.Sprintf("%s@%s:%d(%d)", n.Op, n.File, n.Line, n.Index)
-}
-
-func makeName(op string) Name {
-	_, file, line, ok := runtime.Caller(2)
-	if !ok {
-		file = "<unknown>"
-		line = 0
-	}
-	index := newNameIndex(op, file, line)
-	return Name{op, file, line, index}
-}
-
-type sliceNameIndexerKey struct {
-	op   string
+type sliceOp struct {
+	name string
 	file string
 	line int
 }
 
-var sliceNameIndexerMu sync.Mutex
-var sliceNameIndexerMap = make(map[sliceNameIndexerKey]int)
+func (o sliceOp) Op() (string, string, int) {
+	return o.name, o.file, o.line
+}
 
-func newNameIndex(op, file string, line int) int {
-	key := sliceNameIndexerKey{op, file, line}
-	sliceNameIndexerMu.Lock()
-	defer sliceNameIndexerMu.Unlock()
-	c := sliceNameIndexerMap[key]
-	sliceNameIndexerMap[key]++
-	return c
+func makeSliceOp(name string) sliceOp {
+	_, file, line, ok := runtime.Caller(2)
+	if ok {
+		return sliceOp{name, file, line}
+	}
+	return sliceOp{name, "<unknown>", 0}
 }

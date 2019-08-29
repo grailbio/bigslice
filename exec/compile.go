@@ -43,9 +43,6 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // must mint names that are unique to the session. The order in which
 // the namer is invoked is guaranteed to be deterministic.
 //
-// If linkSlices is true, the Slices field of compiled tasks will be populated
-// with the slices they comprise.
-//
 // TODO(marius): we don't currently reuse tasks across compilations,
 // even though this could sometimes safely be done (when the number
 // of partitions and the kind of partitioner matches at shuffle
@@ -56,30 +53,21 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool, linkSlices bool) (tasks []*Task, reused bool, err error) {
+func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
 	// Reuse tasks from a previous invocation.
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		return result.tasks, true, nil
 	}
-	// slices is the set of slices that is comprised of the compiled tasks.
-	// len(slices) may be >1 due to pipelining.
-	slices := []bigslice.Slice{slice}
-	if linkSlices {
-		defer func() {
-			for _, t := range tasks {
-				t.Slices = slices
-			}
-		}()
-	}
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks = make([]*Task, slice.NumShard())
-	slices = pipeline(slice)
+	slices := pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
 	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
 	var pragmas bigslice.Pragmas
 	for i := len(slices) - 1; i >= 0; i-- {
-		ops = append(ops, slices[i].Name().Op)
+		op, _, _ := slices[i].Op()
+		ops = append(ops, op)
 		if pragma, ok := slices[i].(bigslice.Pragma); ok {
 			pragmas = append(pragmas, pragma)
 		}
@@ -99,7 +87,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, reused, err := compile(namer, inv, dep.Slice, machineCombiners, linkSlices)
+		deptasks, reused, err := compile(namer, inv, dep.Slice, machineCombiners)
 		if err != nil {
 			return nil, false, err
 		}
@@ -177,18 +165,19 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	// into a single task by composing their readers.
 	// Use cache when configured.
 	for i := len(slices) - 1; i >= 0; i-- {
-		var (
-			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), inv.Location)
-			reader     = slices[i].Reader
-			shardCache *slicecache.ShardCache
-		)
+		sliceOp, sliceFile, sliceLine := slices[i].Op()
+		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
+
+		var shardCache *slicecache.ShardCache
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
+
 		for shard := range tasks {
 			var (
-				shard = shard
-				prev  = tasks[shard].Do
+				shard  = shard
+				reader = slices[i].Reader
+				prev   = tasks[shard].Do
 			)
 			if prev == nil {
 				// First, read the input directly.
