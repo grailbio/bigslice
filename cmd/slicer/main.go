@@ -31,7 +31,8 @@ Available test are:
 		Testing memory leaks during iterative bigslice invocations.
 	reduce
 		Large-scale testing of reduce functionality.
-
+	oom
+		Trigger the OOM killer.
 `)
 		flag.PrintDefaults()
 		os.Exit(2)
@@ -54,6 +55,8 @@ Available test are:
 			err = memiter(sess, args)
 		case "reduce":
 			err = reduce(sess, args)
+		case "oom":
+			err = oomer(sess, args)
 		}
 		if *wait {
 			if err != nil {
