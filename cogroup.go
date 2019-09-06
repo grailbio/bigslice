@@ -120,6 +120,17 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 	if c.heap == nil {
 		c.heap = new(sortio.FrameBufferHeap)
 		c.heap.Buffers = make([]*sortio.FrameBuffer, 0, len(c.readers))
+		// Maintain a compare buffer that's used to compare values across
+		// the heterogeneously typed buffers.
+		// TODO(marius): the extra copy and indirection here is unnecessary.
+		lessBuf := frame.Make(slicetype.New(c.op.Out(0)), 2, 2)
+		c.heap.LessFunc = func(i, j int) bool {
+			ib, jb := c.heap.Buffers[i], c.heap.Buffers[j]
+			lessBuf.Index(0, 0).Set(ib.Frame.Index(0, ib.Index))
+			lessBuf.Index(0, 1).Set(jb.Frame.Index(0, jb.Index))
+			return lessBuf.Less(0, 1)
+		}
+
 		// Sort each partition one-by-one. Since tasks are scheduled
 		// to map onto a single CPU, we attain parallelism through sharding
 		// at a higher level.
@@ -151,17 +162,9 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 				c.heap.Buffers = append(c.heap.Buffers, buf)
 			}
 		}
-		// Maintain a compare buffer that's used to compare values across
-		// the heterogeneously typed buffers.
-		// TODO(marius): the extra copy and indirection here is unnecessary.
-		lessBuf := frame.Make(slicetype.New(c.op.Out(0)), 2, 2)
-		c.heap.LessFunc = func(i, j int) bool {
-			ib, jb := c.heap.Buffers[i], c.heap.Buffers[j]
-			lessBuf.Index(0, 0).Set(ib.Frame.Index(0, ib.Index))
-			lessBuf.Index(0, 1).Set(jb.Frame.Index(0, jb.Index))
-			return lessBuf.Less(0, 1)
-		}
 	}
+	heap.Init(c.heap)
+
 	// Now that we're sorted, perform a merge from each dependency.
 	var (
 		n       int
@@ -186,7 +189,9 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			lessBuf.Index(0, 1).Set(buf.Frame.Index(0, buf.Index))
 			return lessBuf.Less(0, 1)
 		}
+
 		for last < 0 || len(c.heap.Buffers) > 0 && !less() {
+			// first key: need to pick the smallest one
 			buf := c.heap.Buffers[0]
 			idx := buf.Off / bufferSize
 			row[idx] = frame.AppendFrame(row[idx], buf.Slice(buf.Index, buf.Index+1))

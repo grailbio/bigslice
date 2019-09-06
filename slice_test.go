@@ -71,6 +71,9 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 	fn := bigslice.Func(func() bigslice.Slice { return slice })
 
 	for name, opt := range executors {
+		if testing.Short() && name != "Local" {
+			continue
+		}
 		sess := exec.Start(opt)
 		// TODO(marius): faster teardown in bigmachine so that we can call this here.
 		// defer sess.Shutdown()
@@ -149,6 +152,29 @@ func assertColumnsEqual(t *testing.T, sort bool, columns ...interface{}) {
 	}
 
 	if !reflect.DeepEqual(got, want) {
+		// Print full rows for small results. They are easier to interpret
+		// than diffs.
+		if numRows < 10 && numColumns < 10 {
+			var (
+				gotRows  = make([]string, numRows)
+				wantRows = make([]string, numRows)
+			)
+			for i := range gotRows {
+				var (
+					got  = make([]string, numColumns)
+					want = make([]string, numColumns)
+				)
+				for j := range got {
+					got[j] = fmt.Sprint(gotCols[j].Index(i).Interface())
+					want[j] = fmt.Sprint(wantCols[j].Index(i).Interface())
+				}
+				gotRows[i] = strings.Join(got, " ")
+				wantRows[i] = strings.Join(want, " ")
+			}
+			t.Errorf("result mismatch:\ngot:\n%s\nwant:\n%s", strings.Join(gotRows, "\n"), strings.Join(wantRows, "\n"))
+			return
+		}
+
 		// Print as columns
 		var b bytes.Buffer
 		var tw tabwriter.Writer

@@ -39,10 +39,18 @@ func TestCogroup(t *testing.T) {
 			[][]int{{2}, {3, 4}, nil, nil, {1}},
 			[][]string{nil, {"four"}, {"one"}, {"two"}, {"three"}},
 		)
+		assertEqual(t, bigslice.Cogroup(slice2, slice1), true,
+			[]string{"b", "d", "x", "y", "z"},
+			[][]string{nil, {"four"}, {"one"}, {"two"}, {"three"}},
+			[][]int{{2}, {3, 4}, nil, nil, {1}},
+		)
 		// Should work equally well for one slice.
 		assertEqual(t, bigslice.Cogroup(slice1), true,
 			[]string{"b", "d", "z"},
 			[][]int{{2}, {3, 4}, {1}},
 		)
+		if testing.Short() {
+			break
+		}
 	}
 }
