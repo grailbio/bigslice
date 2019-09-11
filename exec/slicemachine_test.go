@@ -128,6 +128,62 @@ func TestSlicemachineProbation(t *testing.T) {
 	}
 }
 
+// TestSlicemachineProbationTimeout verifies that machines that have been put on
+// probation and do not experience further errors are removed from probation.
+func TestSlicemachineProbationTimeout(t *testing.T) {
+	const machinep = 2
+	const maxp = 16
+	if maxp < machinep*4 {
+		panic("maxp not big enough")
+	}
+	// This test takes way too long to recover with the default probation
+	// timeout.
+	save := ProbationTimeout
+	ProbationTimeout = time.Second
+	defer func() {
+		ProbationTimeout = save
+	}()
+	_, _, mgr, cancel := startTestSystem(machinep, maxp, 1.0)
+	defer cancel()
+	ms := make([]*sliceMachine, maxp)
+	for i := range ms {
+		// To make sure we get m0, m0, m1, m1, ...
+		mgr.Need(1)
+		ms[i] = <-mgr.Offer()
+	}
+	for i := range ms {
+		if i%machinep != 0 {
+			continue
+		}
+		ms[i].Done(errors.New("some error"))
+	}
+	// Bring two machines back from probation with successful completions to
+	// make sure there's no surprising interaction with timeouts.
+	ms[0*machinep].Done(nil)
+	ms[2*machinep].Done(nil)
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("took too long")
+		default:
+		}
+		<-time.After(100 * time.Millisecond)
+		var healthyCount int
+		for i := range ms {
+			if i%machinep != 0 {
+				continue
+			}
+			if ms[i].health == machineOk {
+				healthyCount++
+			}
+		}
+		if healthyCount == maxp/machinep {
+			break
+		}
+	}
+}
+
 func TestSlicemachineLost(t *testing.T) {
 	system, _, mgr, cancel := startTestSystem(2, 4, 1.0)
 	defer cancel()

@@ -291,6 +291,53 @@ func (h *machineFailureQ) Pop() interface{} {
 	return x
 }
 
+// timer is a wrapper around time.Timer with an API convenient for managing
+// probation timeouts.
+type timer struct {
+	// t is the underlying *time.Timer. It may be nil.
+	t *time.Timer
+	// at is the time (or later) at which t expired or will expire, if t is
+	// non-nil.
+	at time.Time
+}
+
+// Clear clears t; subsequent calls to C() will return nil. If t is already
+// cleared, no-op.
+func (t *timer) Clear() {
+	if t.t == nil {
+		return
+	}
+	t.t.Stop()
+	t.t = nil
+}
+
+// Set sets t to expire at at. If the timer was already set to expire at at,
+// no-op, even if the timer has already expired.
+func (t *timer) Set(at time.Time) {
+	if t.t == nil {
+		t.at = at
+		t.t = time.NewTimer(time.Until(at))
+		return
+	}
+	if t.at == at {
+		return
+	}
+	if !t.t.Stop() {
+		<-t.t.C
+	}
+	t.at = at
+	t.t.Reset(time.Until(at))
+}
+
+// C returns a channel on which the current time is sent when t expires. If t is
+// cleared, returns nil.
+func (t *timer) C() <-chan time.Time {
+	if t.t == nil {
+		return nil
+	}
+	return t.t.C
+}
+
 // MachineDone is used to report that a machine's request is done, along
 // with an error used to gauge the machine's health.
 type machineDone struct {
@@ -389,7 +436,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		donec          = make(chan machineDone)
 		machines       machineQ
 		probation      machineFailureQ
-		probationTimer *time.Timer
+		probationTimer timer
 		// We track consecutive failures to start machines as a heuristic to
 		// decide that there might be a systematic problem preventing machines
 		// from starting.
@@ -406,24 +453,21 @@ func (m *machineManager) Do(ctx context.Context) {
 			machc = m.offerc
 		}
 		if len(probation) == 0 {
-			probationTimer = nil
-		} else if probationTimer == nil {
-			probationTimer = time.NewTimer(time.Until(probation[0].lastFailure.Add(ProbationTimeout)))
-		}
-		var timec <-chan time.Time
-		if probationTimer != nil {
-			timec = probationTimer.C
+			probationTimer.Clear()
+		} else {
+			probationTimer.Set(probation[0].lastFailure.Add(ProbationTimeout))
 		}
 		select {
 		case machc <- mach:
 			mach.curprocs++
 			heap.Fix(&machines, mach.index)
-		case <-timec:
+		case <-probationTimer.C():
 			mach := probation[0]
 			mach.health = machineOk
 			log.Printf("removing machine %s from probation", mach.Addr)
 			heap.Remove(&probation, 0)
 			heap.Push(&machines, mach)
+			probationTimer.Clear()
 		case done := <-donec:
 			mach := done.sliceMachine
 			mach.curprocs--
@@ -445,6 +489,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			case mach.health == machineLost:
 				// In this case, the machine has already been removed from the heap.
 			case mach.health == machineProbation:
+				log.Error.Printf("keeping machine %s on probation after error: %v", mach, done.Err)
 				mach.lastFailure = time.Now()
 				heap.Fix(&probation, mach.index)
 			case mach.health == machineOk:
