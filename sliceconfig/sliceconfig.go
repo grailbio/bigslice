@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/grailbio/base/config"
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/must"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -45,11 +46,17 @@ var Path = os.ExpandEnv("$HOME/.bigslice/config")
 // according to the configuration profile, and registers the bigslice
 // session status handlers with it.
 func Parse() (sess *exec.Session, shutdown func()) {
+	log.AddFlags()
+	local := flag.Bool("local", false, "run bigslice in local mode")
 	config.RegisterFlags("", Path)
 	flag.Parse()
 	must.Nil(config.ProcessFlags())
-	bigmachine.Bootstrap()
-	config.Must("bigslice", &sess)
+	if *local {
+		sess = exec.Start(exec.Local, exec.Status(new(status.Status)))
+	} else {
+		bigmachine.Bootstrap()
+		config.Must("bigslice", &sess)
+	}
 	sess.HandleDebug(http.DefaultServeMux)
 	http.Handle("/debug/status", status.Handler(sess.Status()))
 	config.Must("http", nil)
