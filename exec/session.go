@@ -179,6 +179,11 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 	return res
 }
 
+// statusMu is used to prevent interleaving of slice and task status groups.
+// Unrelated status groups may be interleaved, but we are at least internally
+// consistent.
+var statusMu sync.Mutex
+
 func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
 	location := "<unknown>"
 	if _, file, line, ok := runtime.Caller(calldepth + 1); ok {
@@ -192,9 +197,22 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		return nil, err
 	}
 	// TODO(marius): give a way to provide names for these groups
-	var group *status.Group
+	var taskGroup *status.Group
 	if s.status != nil {
-		group = s.status.Groupf("run %s [%d]", location, inv.Index)
+		statusMu.Lock()
+		// Make the slice status group come before the more granular task
+		// status group, as we generally want increasing level of detail when
+		// observing status.
+		sliceGroup := s.status.Groupf("run %s [%d] slices", location, inv.Index)
+		_ = s.status.Groups()
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go maintainSliceGroup(ctx, tasks, sliceGroup)
+
+		// taskGroup is managed by Eval.
+		taskGroup = s.status.Groupf("run %s [%d] tasks", location, inv.Index)
+		_ = s.status.Groups()
+		statusMu.Unlock()
 	}
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
@@ -207,7 +225,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		sess:  s,
 		inv:   inv,
 		tasks: tasks,
-	}, Eval(ctx, s.executor, inv, tasks, group)
+	}, Eval(ctx, s.executor, inv, tasks, taskGroup)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

@@ -17,10 +17,19 @@ import (
 	"text/tabwriter"
 
 	"github.com/grailbio/base/status"
+	"github.com/grailbio/base/sync/ctxsync"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
+
+func init() {
+	close(closedc)
+}
+
+// closedc is closed in init which can be used any time we just want a closed
+// channel (i.e. a channel that is always ready and receives a zero value).
+var closedc = make(chan struct{})
 
 // ErrTaskLost indicates that a Task was in TaskLost state.
 var ErrTaskLost = errors.New("task was lost")
@@ -125,6 +134,57 @@ func (n TaskName) IsCombiner() bool {
 	return n.NumShard == 0
 }
 
+// TaskSubscriber is subscribed to a Task using Subscribe. It is then notified
+// whenever the Task state changes. This is useful for efficiently observing the
+// state changes of many tasks.
+type TaskSubscriber struct {
+	sync.Mutex
+	cond *ctxsync.Cond
+
+	// tasks holds the set of tasks that has changed since the last call to
+	// Tasks.
+	tasks map[*Task]struct{}
+}
+
+// NewTaskSubscriber returns a new TaskSubscriber. It needs to be subscribed to
+// a Task with Subscribe for it to be notified of task state changes.
+func NewTaskSubscriber() *TaskSubscriber {
+	s := &TaskSubscriber{tasks: make(map[*Task]struct{})}
+	s.cond = ctxsync.NewCond(s)
+	return s
+}
+
+// Notify notifies s of a task whose state has changed.
+func (s *TaskSubscriber) Notify(task *Task) {
+	s.Lock()
+	defer s.Unlock()
+	s.tasks[task] = struct{}{}
+	s.cond.Broadcast()
+}
+
+// Ready returns a channel that is closed if a subsequent call to Tasks will
+// return a non-nil slice.
+func (s *TaskSubscriber) Ready() <-chan struct{} {
+	s.Lock()
+	if len(s.tasks) > 0 {
+		s.Unlock()
+		return closedc
+	}
+	return s.cond.Done()
+}
+
+// Tasks returns the tasks whose state has changed since the last call to Tasks.
+func (s *TaskSubscriber) Tasks() []*Task {
+	s.Lock()
+	defer s.Unlock()
+	tasks := make([]*Task, 0, len(s.tasks))
+	for task := range s.tasks {
+		tasks = append(tasks, task)
+	}
+	s.tasks = make(map[*Task]struct{})
+	return tasks
+}
+
 // A Task represents a concrete computational task. Tasks form graphs
 // through dependencies; task graphs are compiled from slices.
 //
@@ -161,6 +221,13 @@ type Task struct {
 	// Pragma comprises the pragmas of all slice operations that
 	// are pipelined into this task.
 	bigslice.Pragma
+
+	// Slices is the set of slices to which this task directly contributes.
+	Slices []bigslice.Slice
+
+	// subs is the set of subscribers to which this task will be sent whenever
+	// its state changes.
+	subs []*TaskSubscriber
 
 	// The following are used to coordinate runtime execution.
 
@@ -254,6 +321,9 @@ func (t *Task) Broadcast() {
 		close(t.waitc)
 		t.waitc = nil
 	}
+	for _, sub := range t.subs {
+		sub.Notify(t)
+	}
 }
 
 // Wait returns after the next call to Broadcast, or if the context
@@ -284,6 +354,35 @@ func (t *Task) WaitState(ctx context.Context, state TaskState) (TaskState, error
 		err = t.Wait(ctx)
 	}
 	return t.state, err
+}
+
+// Subscribe subscribes s to be notified of any changes to t's state. If s has
+// already been subscribed, no-op.
+func (t *Task) Subscribe(s *TaskSubscriber) {
+	t.Lock()
+	defer t.Unlock()
+	for _, sub := range t.subs {
+		if s == sub {
+			// It is already registered.
+			return
+		}
+	}
+	t.subs = append(t.subs, s)
+}
+
+// Unsubscribe unsubscribes previously subscribe s. s will on longer receive
+// task state change notifications. No-op if s was never subscribed.
+func (t *Task) Unsubscribe(s *TaskSubscriber) {
+	t.Lock()
+	defer t.Unlock()
+	subs := t.subs[:0]
+	for _, sub := range t.subs {
+		if s == sub {
+			continue
+		}
+		subs = append(subs, sub)
+	}
+	t.subs = subs
 }
 
 // GraphString returns a schematic string of the task graph rooted at t.

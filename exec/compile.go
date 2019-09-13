@@ -58,16 +58,23 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		return result.tasks, true, nil
 	}
+	// slices is the set of slices that comprise the compiled tasks. len(slices)
+	// may be >1 due to pipelining.
+	slices := []bigslice.Slice{slice}
+	defer func() {
+		for _, t := range tasks {
+			t.Slices = slices
+		}
+	}()
 	// Pipeline slices and create a task for each underlying shard,
 	// pipelining the eligible computations.
 	tasks = make([]*Task, slice.NumShard())
-	slices := pipeline(slice)
+	slices = pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
 	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
 	var pragmas bigslice.Pragmas
 	for i := len(slices) - 1; i >= 0; i-- {
-		op, _, _ := slices[i].Op()
-		ops = append(ops, op)
+		ops = append(ops, slices[i].Name().Op)
 		if pragma, ok := slices[i].(bigslice.Pragma); ok {
 			pragmas = append(pragmas, pragma)
 		}
@@ -165,19 +172,18 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	// into a single task by composing their readers.
 	// Use cache when configured.
 	for i := len(slices) - 1; i >= 0; i-- {
-		sliceOp, sliceFile, sliceLine := slices[i].Op()
-		pprofLabel := fmt.Sprintf("%s:%s:%d(%s)", sliceOp, sliceFile, sliceLine, inv.Location)
-
-		var shardCache *slicecache.ShardCache
+		var (
+			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), inv.Location)
+			reader     = slices[i].Reader
+			shardCache *slicecache.ShardCache
+		)
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
-
 		for shard := range tasks {
 			var (
-				shard  = shard
-				reader = slices[i].Reader
-				prev   = tasks[shard].Do
+				shard = shard
+				prev  = tasks[shard].Do
 			)
 			if prev == nil {
 				// First, read the input directly.
