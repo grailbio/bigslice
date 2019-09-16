@@ -68,6 +68,8 @@ const (
 // Since Go does not support generic typing, Slice combinators
 // perform their own dynamic type checking. Schematically we write
 // the n-ary slice with types t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
+//
+// Types that implement the Slice interface must be comparable.
 type Slice interface {
 	slicetype.Type
 
@@ -103,6 +105,9 @@ type Pragma interface {
 	// Exclusive indicates that a slice task should be given
 	// exclusive access to the underlying machine.
 	Exclusive() bool
+	// Materialize indicates that the result of the slice task should be
+	// materialized, i.e. break pipelining.
+	Materialize() bool
 }
 
 // Pragmas composes multiple underlying Pragmas.
@@ -118,14 +123,42 @@ func (p Pragmas) Exclusive() bool {
 	return false
 }
 
+// Materialize implements Pragma.
+func (p Pragmas) Materialize() bool {
+	for _, q := range p {
+		if q.Materialize() {
+			return true
+		}
+	}
+	return false
+}
+
 type exclusive struct{}
 
-func (exclusive) Exclusive() bool { return true }
+func (exclusive) Exclusive() bool   { return true }
+func (exclusive) Materialize() bool { return false }
 
 // Exclusive is a Pragma that indicates the slice task
 // should be given exclusive access to the machine
 // that runs it.
 var Exclusive Pragma = exclusive{}
+
+type materialize struct{}
+
+func (materialize) Exclusive() bool   { return false }
+func (materialize) Materialize() bool { return true }
+
+// ExperimentalMaterialize is a Pragma that indicates the slice task results
+// should be materialized, i.e. not pipelined. You may want to use this to
+// materialize and reuse results of tasks that would normally have been
+// pipelined.
+//
+// It is tagged "experimental" because we are considering other ways of
+// achieving this.
+//
+// TODO(jcharumilind): Consider doing this automatically for slices on which
+// multiple slices depend.
+var ExperimentalMaterialize Pragma = materialize{}
 
 type constSlice struct {
 	name Name
@@ -881,13 +914,13 @@ type headSlice struct {
 // each shard of the underlying slice. Its type is the same as the
 // provided slice.
 func Head(slice Slice, n int) Slice {
-	return headSlice{makeName(fmt.Sprintf("head(%d)", n)), slice, n}
+	return &headSlice{makeName(fmt.Sprintf("head(%d)", n)), slice, n}
 }
 
-func (h headSlice) Name() Name             { return h.name }
-func (headSlice) NumDep() int              { return 1 }
-func (h headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false) }
-func (headSlice) Combiner() *reflect.Value { return nil }
+func (h *headSlice) Name() Name             { return h.name }
+func (*headSlice) NumDep() int              { return 1 }
+func (h *headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false) }
+func (*headSlice) Combiner() *reflect.Value { return nil }
 
 type headReader struct {
 	reader sliceio.Reader
@@ -920,15 +953,15 @@ type scanSlice struct {
 // It returns a unit Slice: Scan is inteded to be used for its side
 // effects.
 func Scan(slice Slice, scan func(shard int, scanner *sliceio.Scanner) error) Slice {
-	return scanSlice{makeName("scan"), slice, scan}
+	return &scanSlice{makeName("scan"), slice, scan}
 }
 
-func (s scanSlice) Name() Name             { return s.name }
-func (scanSlice) NumOut() int              { return 0 }
-func (scanSlice) Out(c int) reflect.Type   { panic(c) }
-func (scanSlice) NumDep() int              { return 1 }
-func (s scanSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
-func (scanSlice) Combiner() *reflect.Value { return nil }
+func (s *scanSlice) Name() Name             { return s.name }
+func (*scanSlice) NumOut() int              { return 0 }
+func (*scanSlice) Out(c int) reflect.Type   { panic(c) }
+func (*scanSlice) NumDep() int              { return 1 }
+func (s *scanSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
+func (*scanSlice) Combiner() *reflect.Value { return nil }
 
 type scanReader struct {
 	slice  scanSlice

@@ -31,9 +31,16 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 		if dep.Shuffle {
 			return
 		}
+		if pragma, ok := dep.Slice.(bigslice.Pragma); ok && pragma.Materialize() {
+			return
+		}
 		slice = dep.Slice
 	}
 }
+
+// compileMemo is used to memoize slice compilations for a single invocation.
+// This enables task reuse within an invocation.
+type compileMemo map[bigslice.Slice][]*Task
 
 // Compile compiles the provided slice into a set of task graphs,
 // each representing the computation for one shard of the slice. The
@@ -54,10 +61,25 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
 func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
+	return memoizedCompile(make(compileMemo), namer, inv, slice, machineCombiners)
+}
+
+// memoizedCompile compiles the provided slice into a set of task graphs,
+// memoizing the compilation so that tasks can be reused within the invocation.
+func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
 	// Reuse tasks from a previous invocation.
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		return result.tasks, true, nil
 	}
+	if tasks, ok := memo[slice]; ok {
+		return tasks, true, nil
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		memo[slice] = tasks
+	}()
 	// slices is the set of slices that comprise the compiled tasks. len(slices)
 	// may be >1 due to pipelining.
 	slices := []bigslice.Slice{slice}
@@ -94,7 +116,7 @@ func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, mac
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, reused, err := compile(namer, inv, dep.Slice, machineCombiners)
+		deptasks, reused, err := memoizedCompile(memo, namer, inv, dep.Slice, machineCombiners)
 		if err != nil {
 			return nil, false, err
 		}
