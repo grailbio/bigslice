@@ -60,7 +60,9 @@ func iterTasks(tasks []*Task, f func(*Task)) {
 		visited[tasks[0]] = struct{}{}
 		for _, t := range tasks {
 			for _, d := range t.Deps {
-				walk(d.Tasks)
+				for i := 0; i < d.NumTask(); i++ {
+					walk([]*Task{d.Task(i)})
+				}
 			}
 			f(t)
 		}

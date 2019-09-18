@@ -147,10 +147,10 @@ type state struct {
 	// yet been returned via Done.
 	pending map[*Task]bool
 
-	// wait stores memoized task waiting decisions (based on a single
+	// wait stores memoized task waiting count (based on a single
 	// atomic reading of task state), per round. This is what enables
 	// state to maintain a consistent view of the task graph state.
-	wait map[*Task]bool
+	wait map[*Task]int
 
 	err error
 }
@@ -162,39 +162,53 @@ func newState() *state {
 		counts:  make(map[*Task]int),
 		todo:    make(map[*Task]bool),
 		pending: make(map[*Task]bool),
-		wait:    make(map[*Task]bool),
+		wait:    make(map[*Task]int),
 	}
 }
 
 // Enqueue enqueues all ready tasks in the provided task graph,
 // traversing only as much of it as necessary to schedule all
-// currently runnable tasks in the graph. Enqueue maintains
-// the waiting state for tasks so the correct (and minimal) task
-// graphs can be efficiently enqueued on task completion.
-func (s *state) Enqueue(task *Task) (wait bool) {
-	if w, ok := s.wait[task]; ok {
-		return w
+// currently runnable tasks in the graph. Enqueue maintains the
+// waiting state for tasks so the correct (and minimal) task graphs
+// can be efficiently enqueued on task completion.
+//
+// Enqueue understands the phase structure of the task graph,
+// allowing it to skip fine-grained dependency maintenance across
+// shuffle dependencies. Instead, for such dependencies, it keeps
+// track of dependencies across task phases (i.e., groups of tasks
+// that must all be done until we can schedule the next group), and
+// maintaining simple counts of the number of dependencies satisfied.
+// This allows scheduling to be done in O(Ntasks) instead of
+// O(Nedges). Nedges in turn is quadratic in the number of tasks when
+// there are shuffle dependencies.
+func (s *state) Enqueue(task *Task) (nwait int) {
+	if n, ok := s.wait[task.Head()]; ok {
+		return n
 	}
-	switch task.State() {
-	case TaskOk, TaskErr:
-		wait = false
-	case TaskWaiting, TaskRunning:
-		s.schedule(task)
-		wait = true
-	case TaskInit, TaskLost:
-		for _, dep := range task.Deps {
-			for _, deptask := range dep.Tasks {
-				if s.Enqueue(deptask) {
-					s.add(deptask, task)
+	for _, task := range task.Phase() {
+		switch task.State() {
+		case TaskOk, TaskErr:
+		case TaskWaiting, TaskRunning:
+			s.schedule(task)
+			nwait++
+		case TaskInit, TaskLost:
+			ready := true
+			for _, dep := range task.Deps {
+				n := s.Enqueue(dep.Head)
+				if n == 0 {
+					continue
 				}
+				s.add(dep.Head, task, n)
+				ready = false
+				continue
+			}
+			nwait++
+			if ready {
+				s.schedule(task)
 			}
 		}
-		if s.ready(task) {
-			s.schedule(task)
-		}
-		wait = true
 	}
-	s.wait[task] = wait
+	s.wait[task.Head()] = nwait
 	return
 }
 
@@ -206,7 +220,7 @@ func (s *state) Return(task *Task) {
 	}
 	// Clear the wait map between each call since the state of tasks may
 	// have changed between calls.
-	s.wait = make(map[*Task]bool)
+	s.wait = make(map[*Task]int)
 	delete(s.pending, task)
 	switch task.State() {
 	default:
@@ -216,7 +230,7 @@ func (s *state) Return(task *Task) {
 	case TaskErr:
 		s.err = task.err
 	case TaskOk:
-		for _, task := range s.done(task) {
+		for _, task := range s.done(task.Head()) {
 			s.Enqueue(task)
 		}
 	case TaskLost:
@@ -268,13 +282,13 @@ func (s *state) schedule(task *Task) {
 }
 
 // Add adds a dependency from the provided src to dst tasks.
-func (s *state) add(src, dst *Task) {
-	if s.deps[src] == nil {
-		s.deps[src] = make(map[*Task]struct{})
-	}
-	if _, waiting := s.deps[src][dst]; !waiting {
-		s.deps[src][dst] = struct{}{}
-		s.counts[dst]++
+func (s *state) add(src, dst *Task, n int) {
+	if d := s.deps[src]; d == nil {
+		s.deps[src] = map[*Task]struct{}{dst: struct{}{}}
+		s.counts[dst] += n
+	} else if _, ok := d[dst]; !ok {
+		d[dst] = struct{}{}
+		s.counts[dst] += n
 	}
 }
 
@@ -291,8 +305,8 @@ func (s *state) done(src *Task) (ready []*Task) {
 		s.counts[dst]--
 		if s.counts[dst] == 0 {
 			ready = append(ready, dst)
+			delete(s.deps[src], dst)
 		}
 	}
-	s.deps[src] = nil
 	return
 }

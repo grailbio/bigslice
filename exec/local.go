@@ -61,22 +61,22 @@ func (l *localExecutor) Run(task *Task) {
 	in := make([]sliceio.Reader, 0, len(task.Deps))
 	for _, dep := range task.Deps {
 		reader := new(multiReader)
-		reader.q = make([]sliceio.Reader, len(dep.Tasks))
-		for j, deptask := range dep.Tasks {
-			reader.q[j] = l.Reader(ctx, deptask, dep.Partition)
+		reader.q = make([]sliceio.Reader, dep.NumTask())
+		for j := 0; j < dep.NumTask(); j++ {
+			reader.q[j] = l.Reader(ctx, dep.Task(j), dep.Partition)
 		}
-		if len(dep.Tasks) > 0 && dep.Tasks[0].Combiner != nil {
+		if dep.NumTask() > 0 && dep.Task(0).Combiner != nil {
 			// Perform input combination in-line, one for each partition.
 			combineKey := task.Name
 			if task.CombineKey != "" {
 				combineKey = TaskName{Op: task.CombineKey}
 			}
-			combiner, err := newCombiner(dep.Tasks[0], combineKey.String(), *dep.Tasks[0].Combiner, *defaultChunksize*100)
+			combiner, err := newCombiner(dep.Task(0), combineKey.String(), *dep.Task(0).Combiner, *defaultChunksize*100)
 			if err != nil {
 				task.Error(err)
 				return
 			}
-			buf := frame.Make(dep.Tasks[0], *defaultChunksize, *defaultChunksize)
+			buf := frame.Make(dep.Task(0), *defaultChunksize, *defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
 				if err != nil && err != sliceio.EOF {

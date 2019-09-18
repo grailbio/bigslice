@@ -45,7 +45,7 @@ func TestReuse(t *testing.T) {
 	})
 	inv := diamond.Invocation("<unknown>")
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, false)
+	tasks, err := compile(slice, inv, false)
 	if err != nil {
 		t.Fatalf("compilation failed")
 	}
@@ -82,7 +82,7 @@ func countTasks(t *testing.T, f *bigslice.FuncValue) int {
 	t.Helper()
 	inv := f.Invocation("<unknown>")
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, false)
+	tasks, err := compile(slice, inv, false)
 	if err != nil {
 		t.Fatal("compilation failed")
 	}

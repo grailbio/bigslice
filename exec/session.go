@@ -200,7 +200,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	}
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
-	tasks, _, err := compile(make(taskNamer), inv, slice, s.machineCombiners)
+	tasks, err := compile(slice, inv, s.machineCombiners)
 	if err != nil {
 		return nil, err
 	}

@@ -305,7 +305,8 @@ compile:
 	machineIndices := make(map[string]int)
 	g, _ := errgroup.WithContext(ctx)
 	for _, dep := range task.Deps {
-		for _, deptask := range dep.Tasks {
+		for i := 0; i < dep.NumTask(); i++ {
+			deptask := dep.Task(i)
 			depm := b.location(deptask)
 			if depm == nil {
 				// TODO(marius): make this a separate state, or a separate
@@ -314,13 +315,13 @@ compile:
 				m.Done(nil)
 				return
 			}
-			i, ok := machineIndices[depm.Addr]
+			j, ok := machineIndices[depm.Addr]
 			if !ok {
-				i = len(machineIndices)
-				machineIndices[depm.Addr] = i
+				j = len(machineIndices)
+				machineIndices[depm.Addr] = j
 				req.Machines = append(req.Machines, depm.Addr)
 			}
-			req.Locations = append(req.Locations, i)
+			req.Locations = append(req.Locations, j)
 			key := dep.CombineKey
 			if key == "" {
 				continue
@@ -508,7 +509,7 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 			}
 		}
 		slice := inv.Invoke()
-		tasks, _, err := compile(make(taskNamer), inv, slice, w.MachineCombiners)
+		tasks, err := compile(slice, inv, w.MachineCombiners)
 		if err != nil {
 			return err
 		}
@@ -627,7 +628,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		// are committed on the machines.
 		if dep.CombineKey != "" {
 			locations := make(map[string]bool)
-			for range dep.Tasks {
+			for i := 0; i < dep.NumTask(); i++ {
 				addr := req.location(taskIndex)
 				taskIndex++
 				// We only read the first combine key for each location.
@@ -658,10 +659,10 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			}
 		} else {
 			reader := new(multiReader)
-			reader.q = make([]sliceio.Reader, len(dep.Tasks))
+			reader.q = make([]sliceio.Reader, dep.NumTask())
 		Tasks:
-			for j := range dep.Tasks {
-				deptask := dep.Tasks[j]
+			for j := 0; j < dep.NumTask(); j++ {
+				deptask := dep.Task(j)
 				// If we have it locally, or if we're using a shared backend store
 				// (e.g., S3), then read it directly.
 				info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)

@@ -38,10 +38,6 @@ func pipeline(slice bigslice.Slice) (slices []bigslice.Slice) {
 	}
 }
 
-// compileMemo is used to memoize slice compilations for a single invocation.
-// This enables task reuse within an invocation.
-type compileMemo map[bigslice.Slice][]*Task
-
 // Compile compiles the provided slice into a set of task graphs,
 // each representing the computation for one shard of the slice. The
 // slice is produced by the provided invocation. Compile coalesces
@@ -60,25 +56,34 @@ type compileMemo map[bigslice.Slice][]*Task
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
-	return memoizedCompile(make(compileMemo), namer, inv, slice, machineCombiners)
+func compile(slice bigslice.Slice, inv bigslice.Invocation, machineCombiners bool) (tasks []*Task, err error) {
+	c := compiler{make(taskNamer), inv, machineCombiners, make(map[bigslice.Slice][]*Task)}
+	tasks, _, err = c.compile(slice)
+	return
 }
 
-// memoizedCompile compiles the provided slice into a set of task graphs,
+type compiler struct {
+	namer            taskNamer
+	inv              bigslice.Invocation
+	machineCombiners bool
+	memo             map[bigslice.Slice][]*Task
+}
+
+// compile_ compiles the provided slice into a set of task graphs,
 // memoizing the compilation so that tasks can be reused within the invocation.
-func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, reused bool, err error) {
+func (c *compiler) compile(slice bigslice.Slice) (tasks []*Task, reused bool, err error) {
 	// Reuse tasks from a previous invocation.
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		return result.tasks, true, nil
 	}
-	if tasks, ok := memo[slice]; ok {
+	if tasks, ok := c.memo[slice]; ok {
 		return tasks, true, nil
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
-		memo[slice] = tasks
+		c.memo[slice] = tasks
 	}()
 	// slices is the set of slices that comprise the compiled tasks. len(slices)
 	// may be >1 due to pipelining.
@@ -93,7 +98,7 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 	tasks = make([]*Task, slice.NumShard())
 	slices = pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
-	ops = append(ops, fmt.Sprintf("inv%x", inv.Index))
+	ops = append(ops, fmt.Sprintf("inv%x", c.inv.Index))
 	var pragmas bigslice.Pragmas
 	for i := len(slices) - 1; i >= 0; i-- {
 		ops = append(ops, slices[i].Name().Op)
@@ -101,12 +106,12 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 			pragmas = append(pragmas, pragma)
 		}
 	}
-	opName := namer.New(strings.Join(ops, "_"))
+	opName := c.namer.New(strings.Join(ops, "_"))
 	for i := range tasks {
 		tasks[i] = &Task{
 			Type:         slices[0],
 			Name:         TaskName{Op: opName, Shard: i, NumShard: len(tasks)},
-			Invocation:   inv,
+			Invocation:   c.inv,
 			NumPartition: 1,
 			Pragma:       pragmas,
 		}
@@ -116,7 +121,7 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 	lastSlice := slices[len(slices)-1]
 	for i := 0; i < lastSlice.NumDep(); i++ {
 		dep := lastSlice.Dep(i)
-		deptasks, reused, err := memoizedCompile(memo, namer, inv, dep.Slice, machineCombiners)
+		deptasks, reused, err := c.compile(dep.Slice)
 		if err != nil {
 			return nil, false, err
 		}
@@ -129,7 +134,7 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 			}
 			for shard := range tasks {
 				tasks[shard].Deps = append(tasks[shard].Deps,
-					TaskDep{[]*Task{deptasks[shard]}, 0, dep.Expand, ""})
+					TaskDep{deptasks[shard], 0, dep.Expand, ""})
 			}
 			continue
 		}
@@ -156,21 +161,25 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 			for shard, task := range deptasks {
 				newDeps[shard] = &Task{
 					Type:       dep.Slice,
-					Invocation: inv,
+					Invocation: c.inv,
 					Name: TaskName{
 						Op:       fmt.Sprintf("%s_shuffle_%d", opName, i),
 						Shard:    shard,
 						NumShard: len(deptasks),
 					},
 					Do:   func(readers []sliceio.Reader) sliceio.Reader { return readers[0] },
-					Deps: []TaskDep{{[]*Task{task}, 0, false, ""}},
+					Deps: []TaskDep{{task, 0, false, ""}},
 				}
 			}
 			deptasks = newDeps
 		}
 
+		for _, task := range deptasks {
+			task.Group = deptasks
+		}
+
 		var combineKey string
-		if lastSlice.Combiner() != nil && machineCombiners {
+		if lastSlice.Combiner() != nil && c.machineCombiners {
 			combineKey = opName
 		}
 		// Assign a partitioner and partition width our dependencies, so that
@@ -187,7 +196,7 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 		// Each shard reads different partitions from all of the previous slice's shards.
 		for partition := range tasks {
 			tasks[partition].Deps = append(tasks[partition].Deps,
-				TaskDep{deptasks, partition, dep.Expand, combineKey})
+				TaskDep{deptasks[0], partition, dep.Expand, combineKey})
 		}
 	}
 	// Pipeline execution, folding multiple frame operations
@@ -195,7 +204,7 @@ func memoizedCompile(memo compileMemo, namer taskNamer, inv bigslice.Invocation,
 	// Use cache when configured.
 	for i := len(slices) - 1; i >= 0; i-- {
 		var (
-			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), inv.Location)
+			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
 			reader     = slices[i].Reader
 			shardCache *slicecache.ShardCache
 		)

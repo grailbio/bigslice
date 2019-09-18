@@ -88,7 +88,10 @@ func (s TaskState) String() string {
 // comprises one or more tasks and the partition number of the task
 // set that must be read at run time.
 type TaskDep struct {
-	Tasks     []*Task
+	// Head holds the underlying task that represents this dependency.
+	// For shuffle dependencies, that task is the head task of the
+	// phase, and the evaluator must expand the phase.
+	Head      *Task
 	Partition int
 
 	// Expand indicates that the task's dependencies for a given
@@ -102,6 +105,25 @@ type TaskDep struct {
 	//
 	// CombineKeys must be provided to tasks that contain combiners.
 	CombineKey string
+}
+
+// NumTask returns the number of tasks that are comprised by this dependency.
+func (d TaskDep) NumTask() int {
+	if d.Head == nil {
+		return 0
+	}
+	if n := len(d.Head.Group); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// Task returns the i'th task comprised by this dependency.
+func (d TaskDep) Task(i int) *Task {
+	if i == 0 {
+		return d.Head
+	}
+	return d.Head.Group[i]
 }
 
 // A TaskName uniquely names a task by its constituent components.
@@ -225,6 +247,13 @@ type Task struct {
 	// Slices is the set of slices to which this task directly contributes.
 	Slices []bigslice.Slice
 
+	// Group stores an ordered list of peer tasks. If Group is nonempty,
+	// it is guaranteed that these sets of tasks constitute a shuffle
+	// dependency, and share a set of shuffle dependencies. This allows
+	// the evaluator to perform optimizations while tracking such
+	// dependencies.
+	Group []*Task
+
 	// subs is the set of subscribers to which this task will be sent whenever
 	// its state changes.
 	subs []*TaskSubscriber
@@ -243,6 +272,23 @@ type Task struct {
 
 	// Status is a status object to which task status is reported.
 	Status *status.Task
+}
+
+// Phase returns the phase to which this task belongs.
+func (t *Task) Phase() []*Task {
+	if len(t.Group) == 0 {
+		return []*Task{t}
+	}
+	return t.Group
+}
+
+// Head returns the head task of this task's phase. If the task does
+// not belong to a phase, Head returns the task t.
+func (t *Task) Head() *Task {
+	if len(t.Group) == 0 {
+		return t
+	}
+	return t.Group[0]
 }
 
 // String returns a short, human-readable string describing the
@@ -413,7 +459,8 @@ func (t *Task) WriteGraph(w io.Writer) {
 
 func (t *Task) writeDeps(w io.Writer) {
 	for _, dep := range t.Deps {
-		for _, task := range dep.Tasks {
+		for i := 0; i < dep.NumTask(); i++ {
+			task := dep.Task(i)
 			fmt.Fprintf(w, "\t%s:\t%s[%d]\n", t.Name, task.Name, dep.Partition)
 			task.writeDeps(w)
 		}
@@ -441,8 +488,8 @@ func (t *Task) all(tasks map[*Task]bool) {
 	}
 	tasks[t] = true
 	for _, dep := range t.Deps {
-		for _, task := range dep.Tasks {
-			task.all(tasks)
+		for i := 0; i < dep.NumTask(); i++ {
+			dep.Task(i).all(tasks)
 		}
 	}
 }

@@ -29,8 +29,11 @@ func sample(r *rand.Rand, tasks [][]*Task, n int) [][]*Task {
 
 // setUpDep sets dst to be a dependency of src.
 func setUpDep(src, dst []*Task) {
+	if len(src) != len(dst) {
+		panic("src, dst mismatch")
+	}
 	for i := range src {
-		src[i].Deps = append(src[i].Deps, TaskDep{Tasks: dst})
+		src[i].Deps = append(src[i].Deps, TaskDep{Head: dst[i]})
 	}
 }
 

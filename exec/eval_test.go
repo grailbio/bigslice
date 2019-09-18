@@ -7,6 +7,7 @@ package exec
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"net/http"
 	"sync"
@@ -57,7 +58,7 @@ func (s *simpleEvalTest) Go(t *testing.T) {
 		slice = bigslice.Cogroup(slice)
 		return slice
 	})
-	s.ConstTask = s.Tasks[0].Deps[0].Tasks[0]
+	s.ConstTask = s.Tasks[0].Deps[0].Task(0)
 	s.CogroupTask = s.Tasks[0]
 	ctx := context.Background()
 	s.wg.Add(1)
@@ -70,6 +71,19 @@ func (s *simpleEvalTest) Go(t *testing.T) {
 func (s *simpleEvalTest) Wait() error {
 	s.wg.Wait()
 	return s.evalErr
+}
+
+func waitState(t *testing.T, task *Task, state TaskState) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	task.Lock()
+	defer task.Unlock()
+	for task.state != state {
+		if err := task.Wait(ctx); err != nil {
+			t.Fatalf("task %v (state %v) did not reach desired state %v", task.Name, task.state, state)
+		}
+	}
 }
 
 func TestEvalErr(t *testing.T) {
@@ -86,7 +100,7 @@ func TestEvalErr(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	if got, want := test.CogroupTask.State(), TaskInit; got != want {
-		t.Fatalf("got %v, want %v", got, want)
+		t.Fatalf("got %v, want %v: %v", got, want, test.CogroupTask)
 	}
 	constErr := errors.New("const task error")
 	test.ConstTask.Error(constErr)
@@ -174,61 +188,216 @@ func TestResubmitLostTask(t *testing.T) {
 }
 
 func TestResubmitLostInteriorTask(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	tasks, _, inv := compileFunc(func() (slice bigslice.Slice) {
-		slice = bigslice.Const(2, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
-		slice = bigslice.Cogroup(slice)
-		return
-	})
+	for _, parallel := range []int{1, 10} {
+		parallel := parallel
+		t.Run(fmt.Sprintf("parallel=%v", parallel), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tasks, _, inv := compileFunc(func() (slice bigslice.Slice) {
+				slice = bigslice.Const(2, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+				slice = bigslice.Cogroup(slice)
+				return
+			})
 
-	// Why not.
-	var g errgroup.Group
-	for i := 0; i < 10; i++ {
-		g.Go(func() error { return Eval(ctx, testExecutor{t}, inv, tasks, nil) })
-	}
-
-	var (
-		const0   = tasks[0].Deps[0].Tasks[0]
-		const1   = tasks[0].Deps[0].Tasks[1]
-		cogroup0 = tasks[0]
-		cogroup1 = tasks[1]
-	)
-	wait := func(task *Task, state TaskState) {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		task.Lock()
-		defer task.Unlock()
-		for task.state != state {
-			if err := task.Wait(ctx); err != nil {
-				t.Fatalf("task %v (state %v) did not reach desired state %v", task.Name, task.state, state)
+			var g errgroup.Group
+			for i := 0; i < parallel; i++ {
+				g.Go(func() error { return Eval(ctx, testExecutor{t}, inv, tasks, nil) })
 			}
+
+			var (
+				const0   = tasks[0].Deps[0].Task(0)
+				const1   = tasks[0].Deps[0].Task(1)
+				cogroup0 = tasks[0]
+				cogroup1 = tasks[1]
+			)
+			waitState(t, const0, TaskRunning)
+			const0.Set(TaskOk)
+			waitState(t, const1, TaskRunning)
+			const1.Set(TaskOk)
+
+			waitState(t, cogroup0, TaskRunning)
+			waitState(t, cogroup1, TaskRunning)
+			const0.Set(TaskLost)
+			cogroup0.Set(TaskLost)
+			cogroup1.Set(TaskLost)
+
+			// Now, the evaluator must first recompute const0.
+			waitState(t, const0, TaskRunning)
+			// ... and then each of the cogroup tasks
+			const0.Set(TaskOk)
+			waitState(t, cogroup0, TaskRunning)
+			waitState(t, cogroup1, TaskRunning)
+			cogroup0.Set(TaskOk)
+			cogroup1.Set(TaskOk)
+
+			if err := g.Wait(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func multiPhaseCompile(nshard, nstage int) ([]*Task, bigslice.Invocation) {
+	tasks, _, inv := compileFunc(func() bigslice.Slice {
+		keys := make([]string, nshard*2)
+		for i := range keys {
+			keys[i] = fmt.Sprint(i)
+		}
+		values := make([]int, nshard*2)
+		for i := range values {
+			values[i] = i
+		}
+
+		slice := bigslice.Const(nshard, keys, values)
+		for stage := 0; stage < nstage; stage++ {
+			slice = bigslice.Reduce(slice, func(i, j int) int { return i + j })
+		}
+		return slice
+	})
+	return tasks, inv
+}
+
+func TestMultiPhaseEval(t *testing.T) {
+	const (
+		S = 1000
+		P = 10
+	)
+	tasks, inv := multiPhaseCompile(S, P)
+	if got, want := len(tasks), S; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	var phases [][]*Task
+	for task := tasks[0].Deps[0].Task(0); ; {
+		phases = append(phases, task.Group)
+		if len(task.Deps) == 0 {
+			break
+		}
+		task = task.Deps[0].Task(0)
+	}
+	if got, want := len(phases), P; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for _, group := range phases {
+		if got, want := len(group), S; got != want {
+			t.Errorf("got %v, want %v", got, want)
 		}
 	}
-	wait(const0, TaskRunning)
-	const0.Set(TaskOk)
-	wait(const1, TaskRunning)
-	const1.Set(TaskOk)
 
-	wait(cogroup0, TaskRunning)
-	wait(cogroup1, TaskRunning)
-	const0.Set(TaskLost)
-	cogroup0.Set(TaskLost)
-	cogroup1.Set(TaskLost)
-
-	// Now, the evaluator must first recompute const0.
-	wait(const0, TaskRunning)
-	// ... and then each of the cogroup tasks
-	const0.Set(TaskOk)
-	wait(cogroup0, TaskRunning)
-	wait(cogroup1, TaskRunning)
-	cogroup0.Set(TaskOk)
-	cogroup1.Set(TaskOk)
-
-	if err := g.Wait(); err != nil {
-		t.Fatal(err)
+	eval := func() (wait func()) {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			t.Helper()
+			defer wg.Done()
+			if err := Eval(context.Background(), testExecutor{t}, inv, tasks, nil); err != nil {
+				t.Fatal(err)
+			}
+		}()
+		return wg.Wait
 	}
+
+	wait := eval()
+
+	for i := len(phases) - 1; i >= 0; i-- {
+		group := phases[i]
+		for _, task := range group {
+			waitState(t, task, TaskRunning)
+		}
+		// Make sure no other tasks are waiting or running.
+		for j := i - 1; j >= 0; j-- {
+			group := phases[j]
+			for _, task := range group {
+				if task.State() != TaskInit {
+					t.Fatal(task, ": wrong state")
+				}
+			}
+		}
+		for _, task := range group {
+			task.Set(TaskOk)
+		}
+	}
+
+	for _, task := range tasks {
+		waitState(t, task, TaskRunning)
+		task.Set(TaskOk)
+	}
+	wait()
+
+	mustState := func(task *Task, state TaskState) {
+		t.Helper()
+		if got, want := task.State(), state; got != want {
+			t.Fatalf("%v: got %v, want %v", task, got, want)
+		}
+	}
+
+	mustStates := func(def TaskState, states map[*Task]TaskState) {
+		t.Helper()
+		for _, group := range phases {
+			for _, task := range group {
+				state, ok := states[task]
+				if !ok {
+					state = def
+				}
+				mustState(task, state)
+			}
+		}
+		for _, task := range tasks {
+			state, ok := states[task]
+			if !ok {
+				state = def
+			}
+			mustState(task, state)
+		}
+	}
+
+	// An exterior task failure means a single resubmit.
+	tasks[S/2].Set(TaskLost)
+	wait = eval()
+
+	waitState(t, tasks[S/2], TaskRunning)
+	mustStates(TaskOk, map[*Task]TaskState{
+		tasks[S/2]: TaskRunning,
+	})
+	tasks[S/2].Set(TaskOk)
+	wait()
+
+	// A reachable path of interior task failures get resubmitted.
+	lost := []*Task{
+		tasks[S/2],
+		phases[0][S/2],
+		phases[1][S/2],
+	}
+	unreachable := phases[3][S/2]
+	for _, task := range lost {
+		task.Set(TaskLost)
+	}
+	unreachable.Set(TaskLost)
+	wait = eval()
+	waitState(t, lost[len(lost)-1], TaskRunning)
+	mustStates(TaskOk, map[*Task]TaskState{
+		unreachable: TaskLost,
+		lost[0]:     TaskLost,
+		lost[1]:     TaskLost,
+		lost[2]:     TaskRunning,
+	})
+	lost[2].Set(TaskOk)
+	waitState(t, lost[1], TaskRunning)
+	mustStates(TaskOk, map[*Task]TaskState{
+		unreachable: TaskLost,
+		lost[0]:     TaskLost,
+		lost[1]:     TaskRunning,
+	})
+	lost[1].Set(TaskOk)
+	waitState(t, lost[0], TaskRunning)
+	mustStates(TaskOk, map[*Task]TaskState{
+		unreachable: TaskLost,
+		lost[0]:     TaskRunning,
+	})
+	lost[0].Set(TaskOk)
+	mustStates(TaskOk, map[*Task]TaskState{
+		unreachable: TaskLost,
+	})
+	wait()
 }
 
 type benchExecutor struct{ *testing.B }
@@ -252,38 +421,43 @@ func (benchExecutor) HandleDebug(handler *http.ServeMux) {
 	panic("not implemented")
 }
 
-func BenchmarkEval(b *testing.B) {
-	compile := func() ([]*Task, bigslice.Invocation) {
-		tasks, _, inv := compileFunc(func() bigslice.Slice {
-			const (
-				Nstage = 5
-				Nshard = 1000
-			)
-			keys := make([]string, Nshard*2)
-			for i := range keys {
-				keys[i] = fmt.Sprint(i)
-			}
-			values := make([]int, Nshard*2)
-			for i := range values {
-				values[i] = i
-			}
+var evalStages = flag.Int("eval.bench.stages", 5, "number of stages for eval benchmark")
 
-			slice := bigslice.Const(Nshard, keys, values)
-			for stage := 0; stage < Nstage; stage++ {
-				slice = bigslice.Reduce(slice, func(i, j int) int { return i + j })
+func BenchmarkEval(b *testing.B) {
+	for _, nshard := range []int{10, 100, 1000, 5000 /*, 100000*/} {
+		b.Run(fmt.Sprintf("eval.%d", nshard), func(b *testing.B) {
+			ctx := context.Background()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				tasks, inv := multiPhaseCompile(nshard, *evalStages)
+				if i == 0 {
+					b.Log("ntask=", len(tasks))
+				}
+				b.StartTimer()
+				if err := Eval(ctx, benchExecutor{b}, inv, tasks, nil); err != nil {
+					b.Fatal(err)
+				}
 			}
-			return slice
 		})
-		return tasks, inv
 	}
-	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
-		tasks, inv := compile()
-		if i == 0 {
-			b.Log("ntask=", len(tasks))
-		}
-		if err := Eval(ctx, benchExecutor{b}, inv, tasks, nil); err != nil {
-			b.Fatal(err)
-		}
+}
+
+func BenchmarkEnqueue(b *testing.B) {
+	for _, nshard := range []int{10, 100, 1000, 5000 /*, 100000*/} {
+		b.Run(fmt.Sprintf("enqueue.%d", nshard), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				tasks, _ := multiPhaseCompile(nshard, *evalStages)
+				if i == 0 {
+					b.Log("ntask=", len(tasks))
+				}
+				state := newState()
+				b.StartTimer()
+
+				for _, task := range tasks {
+					state.Enqueue(task)
+				}
+			}
+		})
 	}
 }

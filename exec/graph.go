@@ -82,7 +82,8 @@ func (s *Session) handleTasksGraph(w http.ResponseWriter, r *http.Request) {
 		node.Group = int(task.State())
 		graph.Nodes[index] = node
 		for _, dep := range task.Deps {
-			for _, deptask := range dep.Tasks {
+			for i := 0; i < dep.NumTask(); i++ {
+				deptask := dep.Task(i)
 				graph.Links = append(graph.Links, link{index, indexed[deptask]})
 			}
 		}
