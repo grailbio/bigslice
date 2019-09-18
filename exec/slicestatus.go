@@ -139,6 +139,7 @@ func monitorSliceStatus(ctx context.Context, tasks []*Task, group *status.Group,
 				taskToLastState[task] = state
 			}
 		case <-ctx.Done():
+			close(statusc)
 			return
 		}
 	}
