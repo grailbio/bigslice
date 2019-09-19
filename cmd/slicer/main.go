@@ -11,8 +11,8 @@ import (
 	"os"
 
 	"github.com/grailbio/base/log"
-	"github.com/grailbio/bigslice/exec"
-	"github.com/grailbio/bigslice/slicecmd"
+	"github.com/grailbio/base/must"
+	"github.com/grailbio/bigslice/sliceconfig"
 )
 
 func main() {
@@ -39,33 +39,35 @@ Available test are:
 	}
 
 	wait := flag.Bool("wait", false, "don't exit after completion")
-	slicecmd.Main(func(sess *exec.Session, args []string) error {
-		if len(args) == 0 {
-			flag.Usage()
+	sess, shutdown := sliceconfig.Parse()
+	defer shutdown()
+
+	if flag.NArg() == 0 {
+		flag.Usage()
+	}
+
+	cmd, args := flag.Arg(0), flag.Args()[1:]
+	var err error
+	switch cmd {
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %s\n", cmd)
+		flag.Usage()
+	case "cogroup":
+		err = cogroup(sess, args)
+	case "memiter":
+		err = memiter(sess, args)
+	case "reduce":
+		err = reduce(sess, args)
+	case "oom":
+		err = oomer(sess, args)
+	}
+	if *wait {
+		if err != nil {
+			log.Printf("finished with error %v: waiting", err)
+		} else {
+			log.Print("done: waiting")
 		}
-		cmd, args := args[0], args[1:]
-		var err error
-		switch cmd {
-		default:
-			fmt.Fprintf(os.Stderr, "unknown command %s\n", cmd)
-			flag.Usage()
-		case "cogroup":
-			err = cogroup(sess, args)
-		case "memiter":
-			err = memiter(sess, args)
-		case "reduce":
-			err = reduce(sess, args)
-		case "oom":
-			err = oomer(sess, args)
-		}
-		if *wait {
-			if err != nil {
-				log.Printf("finished with error %v: waiting", err)
-			} else {
-				log.Print("done: waiting")
-			}
-			<-make(chan struct{})
-		}
-		return err
-	})
+		<-make(chan struct{})
+	}
+	must.Nil(err, cmd)
 }

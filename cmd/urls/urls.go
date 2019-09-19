@@ -11,7 +11,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/csv"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,9 +23,9 @@ import (
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/file/s3file"
 	"github.com/grailbio/base/log"
+	"github.com/grailbio/base/must"
 	"github.com/grailbio/bigslice"
-	"github.com/grailbio/bigslice/exec"
-	"github.com/grailbio/bigslice/slicecmd"
+	"github.com/grailbio/bigslice/sliceconfig"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -103,30 +102,27 @@ func main() {
 		n   = flag.Int("n", 1000, "number of shards to process")
 		out = flag.String("out", "", "output path")
 	)
-	slicecmd.Main(func(sess *exec.Session, args []string) error {
-		if *out == "" {
-			return errors.New("missing flag -out")
+	sess, shutdown := sliceconfig.Parse()
+	defer shutdown()
+
+	must.True(*out != "", "missing flag -out")
+
+	ctx := context.Background()
+	var paths []string
+	url := "s3://gdelt-open-data/v2/events"
+	lst := file.List(ctx, url, true)
+	for lst.Scan() {
+		if strings.HasSuffix(lst.Path(), ".csv") {
+			paths = append(paths, lst.Path())
 		}
-		ctx := context.Background()
-		var paths []string
-		url := "s3://gdelt-open-data/v2/events"
-		lst := file.List(ctx, url, true)
-		for lst.Scan() {
-			if strings.HasSuffix(lst.Path(), ".csv") {
-				paths = append(paths, lst.Path())
-			}
-		}
-		if err := lst.Err(); err != nil {
-			log.Fatal(err)
-		}
-		sort.Strings(paths)
-		if len(paths) > *n {
-			paths = paths[:*n]
-		}
-		log.Printf("computing %d paths", len(paths))
-		if _, err := sess.Run(ctx, domainCounts, paths, *out); err != nil {
-			return err
-		}
-		return nil
-	})
+	}
+	if err := lst.Err(); err != nil {
+		log.Fatal(err)
+	}
+	sort.Strings(paths)
+	if len(paths) > *n {
+		paths = paths[:*n]
+	}
+	log.Printf("computing %d paths", len(paths))
+	sess.Must(ctx, domainCounts, paths, *out)
 }

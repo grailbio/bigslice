@@ -16,8 +16,7 @@ import (
 	"time"
 
 	"github.com/grailbio/bigslice"
-	"github.com/grailbio/bigslice/exec"
-	"github.com/grailbio/bigslice/slicecmd"
+	"github.com/grailbio/bigslice/sliceconfig"
 )
 
 var makeFuncs = []func() *bigslice.FuncValue{
@@ -48,26 +47,20 @@ func ok() {
 	for i, makeFunc := range makeFuncs {
 		funcs[i] = makeFunc()
 	}
-	slicecmd.Main(func(sess *exec.Session, args []string) error {
-		ctx := context.Background()
-		_, err := sess.Run(ctx, funcs[0])
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	sess, shutdown := sliceconfig.Parse()
+	defer shutdown()
+
+	ctx := context.Background()
+	sess.Must(ctx, funcs[0])
 }
 
 func toolate() {
-	slicecmd.Main(func(sess *exec.Session, args []string) error {
-		f0 := makeFuncs[0]()
-		ctx := context.Background()
-		_, err := sess.Run(ctx, f0)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	sess, shutdown := sliceconfig.Parse()
+	defer shutdown()
+
+	f0 := makeFuncs[0]()
+	ctx := context.Background()
+	sess.Must(ctx, f0)
 }
 
 func random() {
@@ -79,19 +72,15 @@ func random() {
 	for i, makeFunc := range makeFuncs {
 		funcs[i] = makeFunc()
 	}
-	slicecmd.Main(func(sess *exec.Session, args []string) error {
-		ctx := context.Background()
-		_, err := sess.Run(ctx, funcs[0])
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	sess, shutdown := sliceconfig.Parse()
+	defer shutdown()
+	ctx := context.Background()
+	sess.Must(ctx, funcs[0])
 }
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `usage: badfuncs [slicecmd-options] test-name
+		fmt.Fprintf(os.Stderr, `usage: badfuncstest-name
 
 Command badfuncs tests various scenarios of Func creation that may fail to
 satisfy the invariant that all workers share common definitions of Funcs. All
