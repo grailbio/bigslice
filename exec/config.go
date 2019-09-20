@@ -11,14 +11,14 @@ import (
 )
 
 func init() {
-	config.Register("bigslice", func(inst *config.Instance) {
+	config.Register("bigslice", func(constr *config.Constructor) {
 		sess := newSession()
-		inst.IntVar(&sess.p, "parallelism", 1024, "allowable parallelism for the job")
+		constr.IntVar(&sess.p, "parallelism", 1024, "allowable parallelism for the job")
 		var system bigmachine.System
-		inst.InstanceVar(&system, "system", "", "the bigmachine system used for job execution")
-		inst.FloatVar(&sess.maxLoad, "max-load", DefaultMaxLoad, "per-machine maximum load")
-		inst.Doc = "bigslice configures the bigslice runtime"
-		inst.New = func() (interface{}, error) {
+		constr.InstanceVar(&system, "system", "", "the bigmachine system used for job execution")
+		constr.FloatVar(&sess.maxLoad, "max-load", DefaultMaxLoad, "per-machine maximum load")
+		constr.Doc = "bigslice configures the bigslice runtime"
+		constr.New = func() (interface{}, error) {
 			if system != nil {
 				sess.executor = newBigmachineExecutor(system)
 			} else {
