@@ -6,6 +6,7 @@ package exec
 
 import (
 	"github.com/grailbio/base/config"
+	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 )
 
@@ -23,6 +24,11 @@ func init() {
 			} else {
 				sess.executor = newLocalExecutor()
 			}
+			sess.status = new(status.Status)
+			// Ensure bigmachine's group is displayed first.
+			_ = sess.status.Group(BigmachineStatusGroup)
+			_ = sess.status.Groups()
+
 			sess.start()
 			return sess, nil
 		}

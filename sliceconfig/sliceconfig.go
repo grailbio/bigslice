@@ -12,14 +12,25 @@ package sliceconfig
 
 import (
 	"flag"
+	"net/http"
+
+	// Imported to install pprof http handlers.
+	_ "net/http/pprof"
 	"os"
 
 	"github.com/grailbio/base/config"
 	"github.com/grailbio/base/must"
+	"github.com/grailbio/base/status"
+	"github.com/grailbio/bigmachine"
 
-	// Used to provide ec2system.System bigmachines.
+	// Imported to provide ec2system.System bigmachines.
+	_ "github.com/grailbio/base/config/aws"
 	_ "github.com/grailbio/bigmachine/ec2system"
+
 	"github.com/grailbio/bigslice/exec"
+
+	// Imported to provide an http server.
+	_ "github.com/grailbio/base/config/http"
 )
 
 // Path determines the location of the bigslice profile read
@@ -30,11 +41,17 @@ var Path = os.ExpandEnv("$HOME/.bigslice/config")
 // flag.Parse. It reads bigslice configuration from Path defined in
 // this package. Parse returns session as configured by the
 // configuration and any flags provided. Parse panics if session
-// creation fails.
+// creation fails. Parse also instantiates the default http server
+// according to the configuration profile, and registers the bigslice
+// session status handlers with it.
 func Parse() (sess *exec.Session, shutdown func()) {
 	config.RegisterFlags("", Path)
 	flag.Parse()
 	must.Nil(config.ProcessFlags())
+	bigmachine.Bootstrap()
 	config.Must("bigslice", &sess)
+	sess.HandleDebug(http.DefaultServeMux)
+	http.Handle("/debug/status", status.Handler(sess.Status()))
+	config.Must("http", nil)
 	return sess, func() {}
 }
