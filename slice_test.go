@@ -32,7 +32,6 @@ func init() {
 }
 
 var (
-	typeOfString  = reflect.TypeOf("")
 	typeOfInt     = reflect.TypeOf(int(0))
 	typeOfInt64   = reflect.TypeOf(int64(0))
 	typeOfFloat64 = reflect.TypeOf(float64(0))

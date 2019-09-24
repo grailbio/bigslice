@@ -123,4 +123,12 @@ func init() {
 			},
 		}
 	})
+	RegisterOps(func(slice []struct{}) Ops {
+		return Ops{
+			Less: func(i, j int) bool { return false },
+			HashWithSeed: func(i int, seed uint32) uint32 {
+				return seed
+			},
+		}
+	})
 }
