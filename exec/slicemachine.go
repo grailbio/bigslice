@@ -363,8 +363,11 @@ type machineManager struct {
 	maxp    int
 	maxLoad float64
 	worker  *worker
-	needc   chan int
-	offerc  chan *sliceMachine
+	// schedQ is the priority queue of scheduling requests, which determines the
+	// order in which requests are satisfied. See Offer.
+	schedQ   scheduleRequestQ
+	schedc   chan scheduleRequest
+	unschedc chan scheduleRequest
 }
 
 // NewMachineManager returns a new machineManager paramterized by the
@@ -393,27 +396,33 @@ func newMachineManager(b *bigmachine.B, params []bigmachine.Param, group *status
 		maxp = (maxp + maxprocs - 1) / maxprocs
 	}
 	return &machineManager{
-		b:       b,
-		params:  params,
-		group:   group,
-		maxp:    maxp,
-		maxLoad: maxLoad,
-		worker:  worker,
-		needc:   make(chan int),
-		offerc:  make(chan *sliceMachine),
+		b:        b,
+		params:   params,
+		group:    group,
+		maxp:     maxp,
+		maxLoad:  maxLoad,
+		worker:   worker,
+		schedc:   make(chan scheduleRequest),
+		unschedc: make(chan scheduleRequest),
 	}
 }
 
-// Offer is a channel to which idle sliceMachines are sent.
-// Each send indicates an idle capacity of one proc.
-func (m *machineManager) Offer() <-chan *sliceMachine {
-	return m.offerc
-}
-
-// Need indicates that an additional n procs are needed.
-// Requests are canceled by passing negative values.
-func (m *machineManager) Need(n int) {
-	m.needc <- n
+// Offer asks m to offer a machine on which to run work with the given priority.
+// When m schedules the request, the machine is sent to the returned channel.
+// The second return value is a function that cancels the request when called.
+// If the request has already been serviced (i.e. a machine has already been
+// delivered), calling the cancel function is a no-op.
+func (m *machineManager) Offer(priority int) (<-chan *sliceMachine, func()) {
+	machc := make(chan *sliceMachine)
+	s := scheduleRequest{
+		priority: priority,
+		machc:    machc,
+	}
+	m.schedc <- s
+	cancel := func() {
+		m.unschedc <- s
+	}
+	return machc, cancel
 }
 
 // Do starts machine management. The user typically calls this
@@ -448,9 +457,9 @@ func (m *machineManager) Do(ctx context.Context) {
 			mach  *sliceMachine
 			machc chan<- *sliceMachine
 		)
-		if len(machines) > 0 && machines[0].Load() < m.maxLoad {
+		if len(machines) > 0 && machines[0].Load() < m.maxLoad && len(m.schedQ) > 0 {
 			mach = machines[0]
-			machc = m.offerc
+			machc = m.schedQ[0].machc
 		}
 		if len(probation) == 0 {
 			probationTimer.Clear()
@@ -461,6 +470,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		case machc <- mach:
 			mach.curprocs++
 			heap.Fix(&machines, mach.index)
+			heap.Pop(&m.schedQ)
 		case <-probationTimer.C():
 			mach := probation[0]
 			mach.health = machineOk
@@ -469,6 +479,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			heap.Push(&machines, mach)
 			probationTimer.Clear()
 		case done := <-donec:
+			need--
 			mach := done.sliceMachine
 			mach.curprocs--
 			switch {
@@ -497,8 +508,17 @@ func (m *machineManager) Do(ctx context.Context) {
 			default:
 				panic("invalid machine state")
 			}
-		case n := <-m.needc:
-			need += n
+		case s := <-m.schedc:
+			heap.Push(&m.schedQ, s)
+			need++
+		case s := <-m.unschedc:
+			if s.index < 0 {
+				// The scheduling request is no longer queued, which means
+				// scheduling request has already been serviced.
+				break
+			}
+			need--
+			heap.Remove(&m.schedQ, s.index)
 		case result := <-startc:
 			pending -= machprocs * (len(result.machines) + result.nFailures)
 			for _, mach := range result.machines {
@@ -619,6 +639,47 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, n 
 		}
 	}
 	return slicemachines[:n]
+}
+
+type scheduleRequest struct {
+	// priority is the priority of the request. Lower values have higher
+	// priority. If there is more than one request waiting for a machine, the
+	// request with the lowest priority value will be satisfied first.
+	priority int
+	machc    chan *sliceMachine
+	// index is the index of this request in the request heap.
+	index int
+}
+
+// scheduleRequestQ is a priority queue based on request priority.
+type scheduleRequestQ []scheduleRequest
+
+func (q scheduleRequestQ) Len() int { return len(q) }
+
+func (q scheduleRequestQ) Less(i, j int) bool {
+	return q[i].priority < q[j].priority
+}
+
+func (q scheduleRequestQ) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
+	q[i].index = i
+	q[j].index = j
+}
+
+func (q *scheduleRequestQ) Push(x interface{}) {
+	n := len(*q)
+	s := x.(scheduleRequest)
+	s.index = n
+	*q = append(*q, s)
+}
+
+func (q *scheduleRequestQ) Pop() interface{} {
+	old := *q
+	n := len(old)
+	s := old[n-1]
+	s.index = -1
+	*q = old[0 : n-1]
+	return s
 }
 
 func max(x, y int) int {

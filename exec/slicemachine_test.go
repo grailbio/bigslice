@@ -35,29 +35,25 @@ func TestSlicemachineLoad(t *testing.T) {
 			if got, want := system.N(), 0; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
-			mgr.Need(1)
+			ctx := context.Background()
+			ms := getMachines(ctx, mgr, 1)
 			if got, want := system.Wait(1), 1; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
-			mgr.Need(ntask - 1)
+			ms = append(ms, getMachines(ctx, mgr, ntask-1)...)
 			if got, want := system.Wait(Nmach), Nmach; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
-			// (This is racy.)
-			mgr.Need(ntask)
-			time.Sleep(10 * time.Millisecond)
+			mustUnavailable(t, mgr)
 			if got, want := system.Wait(Nmach), Nmach; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
 			// Machines should be balanced, and allow maxLoad load.
 			loads := make(map[*sliceMachine]int)
-			for i := 0; i < ntask; i++ {
-				loads[<-mgr.Offer()]++
-			}
-			select {
-			case m := <-mgr.Offer():
-				t.Errorf("offered machine %s", m)
-			default:
+			for i := range ms {
+				if ms[i] != nil {
+					loads[ms[i]]++
+				}
 			}
 			if got, want := len(loads), Nmach; got != want {
 				t.Errorf("got %v, want %v", got, want)
@@ -72,16 +68,16 @@ func TestSlicemachineLoad(t *testing.T) {
 }
 
 func TestSlicemachineExclusive(t *testing.T) {
-	system, _, mgr, cancel := startTestSystem(
-		32,
-		64,
-		0,
+	var (
+		system, _, mgr, cancel = startTestSystem(32, 64, 0)
+		ctx                    = context.Background()
 	)
-	mgr.Need(1)
+	getMachines(ctx, mgr, 1)
 	if got, want := system.Wait(1), 1; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	mgr.Need(10)
+	getMachines(ctx, mgr, 1)
+	mustUnavailable(t, mgr)
 	if got, want := system.Wait(2), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -89,42 +85,32 @@ func TestSlicemachineExclusive(t *testing.T) {
 	if got, want := system.N(), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-
 }
 
 func TestSlicemachineProbation(t *testing.T) {
 	system, _, mgr, cancel := startTestSystem(2, 4, 1.0)
 	defer cancel()
 
-	ms := make([]*sliceMachine, 4)
-	for i := range ms {
-		// To make sure we get m0, m0, m1, m1
-		mgr.Need(1)
-		ms[i] = <-mgr.Offer()
-	}
+	ctx := context.Background()
+	ms := getMachines(ctx, mgr, 4)
 	if got, want := system.N(), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	ms[0].Done(errors.New("some error"))
-	mgr.Need(0)
-	select {
-	case <-mgr.Offer():
-		t.Fatal("did not expect an offer")
-	default:
-	}
+	mustUnavailable(t, mgr)
 	if got, want := ms[0].health, machineProbation; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	ms[1].Done(nil)
-	mgr.Need(0)
+	ns := getMachines(ctx, mgr, 2)
+	if got, want := ns[0], ms[0]; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := ns[1], ms[1]; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 	if got, want := ms[0].health, machineOk; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	if got, want := <-mgr.Offer(), ms[0]; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	if got, want := <-mgr.Offer(), ms[1]; got != want {
-		t.Errorf("got %v, want %v", got, want)
+		t.Errorf("got %v, want %v", ms[0].health, want)
 	}
 }
 
@@ -145,12 +131,8 @@ func TestSlicemachineProbationTimeout(t *testing.T) {
 	}()
 	_, _, mgr, cancel := startTestSystem(machinep, maxp, 1.0)
 	defer cancel()
-	ms := make([]*sliceMachine, maxp)
-	for i := range ms {
-		// To make sure we get m0, m0, m1, m1, ...
-		mgr.Need(1)
-		ms[i] = <-mgr.Offer()
-	}
+	ctx := context.Background()
+	ms := getMachines(ctx, mgr, maxp)
 	for i := range ms {
 		if i%machinep != 0 {
 			continue
@@ -161,7 +143,8 @@ func TestSlicemachineProbationTimeout(t *testing.T) {
 	// make sure there's no surprising interaction with timeouts.
 	ms[0*machinep].Done(nil)
 	ms[2*machinep].Done(nil)
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, ctxcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer ctxcancel()
 	for {
 		select {
 		case <-ctx.Done():
@@ -185,17 +168,66 @@ func TestSlicemachineProbationTimeout(t *testing.T) {
 }
 
 func TestSlicemachineLost(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
+	}
 	system, _, mgr, cancel := startTestSystem(2, 4, 1.0)
 	defer cancel()
 
-	mgr.Need(4)
-	m := <-mgr.Offer()
-	system.Kill(m.Machine)
-	for m.health != machineLost {
-		mgr.Need(0)
+	ctx := context.Background()
+	ms := getMachines(ctx, mgr, 4)
+	system.Kill(ms[0].Machine)
+	for ms[0].health != machineLost {
+		<-time.After(10 * time.Millisecond)
 	}
 	if got, want := system.Wait(2), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestSlicemachinePriority verifies that higher-priority requests are serviced
+// before lower-priority requests.
+func TestSlicemachinePriority(t *testing.T) {
+	const maxp = 16
+	_, _, mgr, cancel := startTestSystem(2, maxp, 1.0)
+	defer cancel()
+
+	ctx, ctxcancel := context.WithCancel(context.Background())
+	defer ctxcancel()
+	// Get machines up to our maximum parallelism. Any requests made afterwards
+	// will need to be queued until these offers are returned.
+	ms := getMachines(ctx, mgr, maxp)
+	sema := make(chan struct{})
+	c := make(chan int)
+	// Queue up many offer requests with distinct priorities in [0, maxp*4).
+	// We'll expect that the offer requests with priorities in [0, maxp) will be
+	// serviced first. Queue in descending priority value in case requests are
+	// serviced in FIFO order.
+	for i := (maxp * 4) - 1; i >= 0; i-- {
+		i := i
+		go func() {
+			offerc, _ := mgr.Offer(i)
+			sema <- struct{}{}
+			select {
+			case <-offerc:
+			case <-ctx.Done():
+				return
+			}
+			c <- i
+		}()
+		// Wait for the goroutine offer request to be queued.
+		<-sema
+	}
+	// Return the original machines/procs to allow the machines to be offered to
+	// our blocked requests.
+	for _, m := range ms {
+		m.Done(nil)
+	}
+	for j := 0; j < maxp; j++ {
+		i := <-c
+		if i >= maxp {
+			t.Error("did not respect priority")
+		}
 	}
 }
 
@@ -241,4 +273,28 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 		wg.Wait()
 	}
 	return
+}
+
+// getMachines gets n machines from mgr and returns them.
+func getMachines(ctx context.Context, mgr *machineManager, n int) []*sliceMachine {
+	ms := make([]*sliceMachine, n)
+	for i := range ms {
+		offerc, _ := mgr.Offer(0)
+		ms[i] = <-offerc
+	}
+	return ms
+}
+
+// mustUnavailable asserts that no machine is immediately available from mgr.
+func mustUnavailable(t *testing.T, mgr *machineManager) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	offerc, cancel := mgr.Offer(0)
+	select {
+	case <-offerc:
+		t.Fatal("unexpected machine available")
+	case <-ctx.Done():
+		cancel()
+	}
 }

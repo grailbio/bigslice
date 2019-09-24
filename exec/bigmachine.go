@@ -233,7 +233,6 @@ func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key st
 }
 
 func (b *bigmachineExecutor) Run(task *Task) {
-	ctx := backgroundcontext.Get()
 	task.Status.Print("waiting for a machine")
 
 	// Use the default/shared cluster unless the func is exclusive.
@@ -244,19 +243,19 @@ func (b *bigmachineExecutor) Run(task *Task) {
 	if task.Pragma.Exclusive() {
 		cluster++
 	}
-	mgr := b.manager(cluster)
-
-	mgr.Need(1)
-	defer mgr.Need(-1)
-
-	var m *sliceMachine
+	var (
+		mgr            = b.manager(cluster)
+		ctx            = backgroundcontext.Get()
+		offerc, cancel = mgr.Offer(int(task.Invocation.Index))
+		m              *sliceMachine
+	)
 	select {
 	case <-ctx.Done():
 		task.Error(ctx.Err())
+		cancel()
 		return
-	case m = <-mgr.Offer():
+	case m = <-offerc:
 	}
-
 	numTasks := m.Stats.Int("tasks")
 	numTasks.Add(1)
 	m.UpdateStatus()
@@ -339,8 +338,8 @@ compile:
 
 	// While we're running, also update task stats directly into the tasks's status.
 	// TODO(marius): also aggregate stats across all tasks.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, ctxcancel := context.WithCancel(ctx)
+	defer ctxcancel()
 
 	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
