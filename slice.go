@@ -1030,6 +1030,31 @@ func singleDep(i int, slice Slice, shuffle bool) Dep {
 	return Dep{slice, shuffle, false}
 }
 
+var (
+	helperMu sync.Mutex
+	helpers  = make(map[string]bool)
+)
+
+// Helper is used to mark a function as a helper function: names for
+// newly created slices will be attributed to the caller of the
+// function instead of the function itself.
+func Helper() {
+	helperMu.Lock()
+	defer helperMu.Unlock()
+	helpers[callerFunc(1)] = true
+}
+
+func callerFunc(skip int) string {
+	var pc [2]uintptr
+	n := runtime.Callers(skip+2, pc[:]) // skip + runtime.Callers + callerFunc
+	if n == 0 {
+		panic("bigslice: zero callers found")
+	}
+	frames := runtime.CallersFrames(pc[:n])
+	frame, _ := frames.Next()
+	return frame.Function
+}
+
 // Name is a unique name for a slice, constructed with useful context for
 // diagnostic or status display.
 type Name struct {
@@ -1048,13 +1073,29 @@ func (n Name) String() string {
 }
 
 func makeName(op string) Name {
-	_, file, line, ok := runtime.Caller(2)
-	if !ok {
-		file = "<unknown>"
-		line = 0
+	// Presume the correct frame is the caller of makeName,
+	// but skip to the frame before the last helper, if any.
+	var pc [50]uintptr             // consider at most 50 frames
+	n := runtime.Callers(3, pc[:]) // caller of makeName, makeName, runtime.Callers.
+	if n == 0 {
+		panic("bigslice: no callers found")
 	}
-	index := newNameIndex(op, file, line)
-	return Name{op, file, line, index}
+	frames := runtime.CallersFrames(pc[:n])
+	helperMu.Lock()
+	var found runtime.Frame
+	for more := true; more; {
+		var frame runtime.Frame
+		frame, more = frames.Next()
+		if found.PC == 0 {
+			found = frame
+		}
+		if helpers[frame.Function] {
+			found = runtime.Frame{}
+		}
+	}
+	helperMu.Unlock()
+	index := newNameIndex(op, found.File, found.Line)
+	return Name{op, found.File, found.Line, index}
 }
 
 type sliceNameIndexerKey struct {
