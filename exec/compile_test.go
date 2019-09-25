@@ -66,6 +66,45 @@ func TestReuse(t *testing.T) {
 	}
 }
 
+// TestPragma verifies that the Pragma field is set for all compiled tasks.
+func TestPragma(t *testing.T) {
+	inv := reuseWithShuffle.Invocation("<unknown>")
+	slice := inv.Invoke()
+	tasks, err := compile(slice, inv, false)
+	if err != nil {
+		t.Fatal("compilation failed")
+	}
+	iterTasks(tasks, func(task *Task) {
+		if task.Pragma == nil {
+			t.Errorf("%v has nil task.Pragma", task)
+		}
+	})
+}
+
+var reuseWithShuffle = bigslice.Func(func() (slice bigslice.Slice) {
+	const N = 100
+	colA := make([]int, N)
+	colB := make([]int, N)
+	for i := range colA {
+		colA[i] = i
+		colB[i] = N - i
+	}
+	slice = bigslice.Const(4, colA, colB)
+	slice = bigslice.Map(slice, func(a, b int) (int, int) {
+		return a, b
+	}, bigslice.ExperimentalMaterialize)
+	branch0 := bigslice.Map(slice, func(a, b int) (int, int) {
+		return a, b
+	})
+	// branch1 will reuse the compiled tasks of slice but requires a shuffle.
+	// This introduces a new layer of tasks.
+	branch1 := bigslice.Reduce(slice, func(b0, b1 int) int {
+		return b0 + b1
+	})
+	slice = bigslice.Cogroup(branch0, branch1)
+	return
+})
+
 func makeMaterializeReader(numShards int) bigslice.Slice {
 	return bigslice.ReaderFunc(numShards, func(shard int, x *int, xs []int) (int, error) {
 		var i int

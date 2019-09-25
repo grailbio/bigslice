@@ -167,8 +167,9 @@ func (c *compiler) compile(slice bigslice.Slice) (tasks []*Task, reused bool, er
 						Shard:    shard,
 						NumShard: len(deptasks),
 					},
-					Do:   func(readers []sliceio.Reader) sliceio.Reader { return readers[0] },
-					Deps: []TaskDep{{task, 0, false, ""}},
+					Do:     func(readers []sliceio.Reader) sliceio.Reader { return readers[0] },
+					Deps:   []TaskDep{{task, 0, false, ""}},
+					Pragma: task.Pragma,
 				}
 			}
 			deptasks = newDeps
