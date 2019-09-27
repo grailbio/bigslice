@@ -5,12 +5,17 @@
 package exec
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"io/ioutil"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/retry"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
@@ -324,6 +329,92 @@ func TestBigmachineCompiler(t *testing.T) {
 		return bigslice.Map(&Result{Slice: slice, inv: inv, tasks: firstTasks}, func(i int) int { return i * 2 })
 	})
 	run(t, x, tasks, TaskOk)
+}
+
+// TestReadRetries verifies that the reader used to read task data from worker
+// machines correctly retries on failures.
+func TestReadRetries(t *testing.T) {
+	const N = 100
+	bs := make([]byte, N)
+	for i := range bs {
+		bs[i] = byte(i)
+	}
+	// The real retry policy makes this test way too slow.
+	origPolicy := retryPolicy
+	retryPolicy = retry.Backoff(1*time.Nanosecond, 10*time.Second, 2)
+	defer func() {
+		retryPolicy = origPolicy
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Given a reader that systematically produces errors, we make sure that we
+	// still read correctly and that our retry behavior is reasonable.
+	var (
+		errorReader = newErrorReader(bytes.NewReader(bs))
+		openerAt    = readSeekerOpenerAt{r: errorReader}
+		r           = newRetryReader(ctx, "test", openerAt)
+		// p is our per-read buffer.
+		p     = make([]byte, 1)
+		total int
+		data  []byte
+	)
+	for {
+		n, err := r.Read(p)
+		if err == io.EOF {
+			break
+		}
+		if err, ok := err.(*errors.Error); ok && err.Kind == errors.Timeout {
+			// If we're properly resetting our retry frequency on successful
+			// reads, this test should finish quickly. If not, it will exceed
+			// the context timeout.
+			t.Fatalf("took too long; check retry behavior")
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		total += n
+		data = append(data, p...)
+	}
+	if got, want := total, N; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := data, bs; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// readSeekerOpenerAt wraps an io.ReadSeeker to implement the openerAt
+// interface. It simply seeks to the desired open offset.
+type readSeekerOpenerAt struct {
+	r io.ReadSeeker
+}
+
+func (o readSeekerOpenerAt) OpenAt(ctx context.Context, offset int64) (io.ReadCloser, error) {
+	o.r.Seek(offset, io.SeekStart)
+	return ioutil.NopCloser(o.r), nil
+}
+
+// errorReader wraps a io.ReadSeeker and systematically returns errors when
+// reading.
+type errorReader struct {
+	r     io.ReadSeeker
+	nread int
+}
+
+func (r *errorReader) Read(data []byte) (int, error) {
+	r.nread++
+	if r.nread%3 != 0 {
+		return 0, errors.New("some error")
+	}
+	return r.r.Read(data)
+}
+
+func (r *errorReader) Seek(offset int64, whence int) (int64, error) {
+	return r.r.Seek(offset, whence)
+}
+
+func newErrorReader(r io.ReadSeeker) *errorReader {
+	return &errorReader{r: r}
 }
 
 func run(t *testing.T, x *bigmachineExecutor, tasks []*Task, expect TaskState) {

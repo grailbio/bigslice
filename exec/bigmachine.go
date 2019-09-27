@@ -1036,18 +1036,6 @@ func (w *worker) Read(ctx context.Context, req readRequest, rc *io.ReadCloser) (
 	return
 }
 
-type machineRPCReader struct {
-	ctx context.Context
-	// Machine is the machine from which task data is read.
-	machine *bigmachine.Machine
-	// TaskPartition is the task and partition that should be read.
-	taskPartition taskPartition
-	err           error
-	reader        io.ReadCloser // The raw data from the remote worker
-	bytes         int64         // Cumulative # of bytes read from the worker.
-	retries       int
-}
-
 // readRequest is the request payload for Worker.Run
 type readRequest struct {
 	// Name is the name of the task whose output is to be read.
@@ -1058,35 +1046,81 @@ type readRequest struct {
 	Offset int64
 }
 
-func (r *machineRPCReader) Read(data []byte) (int, error) {
+// openerAt opens an io.ReadCloser at a given offset. This is used to
+// reestablish io.ReadClosers when they are lost due to potentially recoverable
+// errors.
+type openerAt interface {
+	// Open returns a new io.ReadCloser.
+	OpenAt(ctx context.Context, offset int64) (io.ReadCloser, error)
+}
+
+// machineTaskPartition is a task partition on a specific machine. It implements
+// the openerAt interface to provide an io.ReadCloser to read the task data.
+type machineTaskPartition struct {
+	// machine is the machine from which task data is read.
+	machine *bigmachine.Machine
+	// taskPartition is the task and partition that should be read.
+	taskPartition taskPartition
+}
+
+func (m machineTaskPartition) OpenAt(ctx context.Context, offset int64) (reader io.ReadCloser, err error) {
+	err = m.machine.RetryCall(ctx, "Worker.Read",
+		readRequest{m.taskPartition.Name, m.taskPartition.Partition, offset}, &reader)
+	return
+}
+
+// retryReader implements an io.ReadCloser that is backed by an openerAt. If it
+// encounters an error, it retries by using the openerAt to reopen a new
+// io.ReadCloser.
+type retryReader struct {
+	ctx context.Context
+	// name is used for descriptive logging.
+	name string
+	// openerAt is used to open and reopen the backing io.ReadCloser.
+	openerAt openerAt
+
+	err     error
+	reader  io.ReadCloser
+	bytes   int64
+	retries int
+}
+
+func newRetryReader(ctx context.Context, name string, openerAt openerAt) *retryReader {
+	return &retryReader{
+		ctx:      ctx,
+		name:     name,
+		openerAt: openerAt,
+	}
+}
+
+func (r *retryReader) Read(data []byte) (int, error) {
 	for {
 		if r.err != nil {
 			return 0, r.err
 		}
 		if r.reader == nil {
 			if r.retries > 0 {
-				log.Printf("Worker.Read %s: retrying(%d) rpc from offset %d",
-					r.taskPartition.Name, r.retries, r.bytes)
+				log.Debug.Printf("reader %s: retrying(%d) from offset %d",
+					r.name, r.retries, r.bytes)
 			}
-			if err := r.machine.RetryCall(r.ctx, "Worker.Read",
-				readRequest{r.taskPartition.Name, r.taskPartition.Partition, r.bytes}, &r.reader); err != nil {
-				// machine.Call retries on temp errors, so we don't need to retry here.
-				r.err = err
+			r.reader, r.err = r.openerAt.OpenAt(r.ctx, r.bytes)
+			if r.err != nil {
 				return 0, r.err
 			}
 		}
 		n, err := r.reader.Read(data)
 		if err == nil || err == io.EOF {
+			r.retries = 0
 			r.err = err
 			r.bytes += int64(n)
 			return n, err
 		}
 		// Here, we blindly retry regardless of error kind/severity.
-		// This allows us to retry on on errors such as aws-sdk or io.UnexpectedEOF.
-		// The subsequent call to Worker.Read will detect any permenent
+		// This allows us to retry on errors such as aws-sdk or io.UnexpectedEOF.
+		// The subsequent call to Worker.Read will detect any permanent
 		// errors in any case.
-		log.Error.Printf("machineReader %s: error (%d) at %d bytes: %v",
-			r.machine.Addr, r.retries, r.bytes, err)
+		log.Error.Printf("reader %s: error(retry %d) at %d bytes: %v",
+			r.name, r.retries, r.bytes, err)
 		r.reader.Close()
 		r.reader = nil
 		r.retries++
@@ -1096,7 +1130,7 @@ func (r *machineRPCReader) Read(data []byte) (int, error) {
 	}
 }
 
-func (r *machineRPCReader) Close() error {
+func (r *retryReader) Close() error {
 	if r.reader == nil {
 		return nil
 	}
@@ -1117,7 +1151,7 @@ type machineReader struct {
 	TaskPartition taskPartition
 
 	reader sliceio.Reader
-	rpc    *machineRPCReader
+	rpc    *retryReader
 }
 
 func newMachineReader(machine *bigmachine.Machine, partition taskPartition) *machineReader {
@@ -1130,11 +1164,13 @@ func newMachineReader(machine *bigmachine.Machine, partition taskPartition) *mac
 
 func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	if m.rpc == nil {
-		m.rpc = &machineRPCReader{
-			ctx:           ctx,
+		name := fmt.Sprintf("Worker.Read %s:%s:%d",
+			m.Machine.Addr, m.TaskPartition.Name, m.TaskPartition.Partition)
+		openerAt := machineTaskPartition{
 			machine:       m.Machine,
 			taskPartition: m.TaskPartition,
 		}
+		m.rpc = newRetryReader(ctx, name, openerAt)
 		m.reader = sliceio.NewDecodingReader(m.rpc)
 	}
 	n, err := m.reader.Read(ctx, f)
