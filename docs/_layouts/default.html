@@ -1,0 +1,83 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- TODO: favicon -->
+
+<title>{{page.title}}</title>
+
+<style>
+@import url('https://rsms.me/inter/inter.css');
+html { font-family: 'Inter', sans-serif; }
+@supports (font-variation-settings: normal) {
+  html { font-family: 'Inter var', sans-serif; }
+}
+
+*,
+:before,
+:after {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.45;
+  margin: 0;
+  padding: 0;
+}
+.links,
+footer {
+  color: #666;
+  font-size: .9em;
+  padding: 1em 1em 2em;
+  text-align: center;
+}
+main {
+  flex: 1;
+  padding: 0 1em;
+}
+
+h1, h2, h3 {
+  font-size: 20px;
+}
+
+/* h1, h2, h3 {
+  font-family: 'Roboto Slab', serif;
+} */
+.container {
+  margin: 0 auto;
+  max-width: 50em;
+}
+.homeLink:link,
+.homeLink:visited {
+  color: #000;
+  text-decoration: none;
+}
+pre {
+  background: #eee;
+  padding: 1em;
+  border-radius: 1em;
+}
+
+pre, code {
+  font-family: SFMono-Regular,Consolas,Liberation Mono,Menlo,Courier,monospace;
+  font-size: 90%;
+}
+
+blockquote {
+  background: #ddd;
+  padding: 0.1em 1em;
+  border-radius: 1em;
+}
+
+span.small {
+  font-variant: small-caps;
+  font-feature-settings: 'case' 1;
+}
+
+</style>
+<script>
+</script>
+<main><div class="container">{{content}}</div></main>
