@@ -112,8 +112,8 @@ type cogroupReader struct {
 
 func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	const (
-		bufferSize = 1024
-		spillSize  = 1 << 29
+		bufferSize = 128
+		spillSize  = 1 << 25
 	)
 	if c.err != nil {
 		return 0, c.err
@@ -136,7 +136,7 @@ func (c *cogroupReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 		// to map onto a single CPU, we attain parallelism through sharding
 		// at a higher level.
 		for i := range c.readers {
-			// Do the actual sort. Aim for ~500 MB spill files.
+			// Do the actual sort. Aim for ~30 MB spill files.
 			// TODO(marius): make spill sizes configurable, or dependent
 			// on the environment: for example, we could pass down a memory
 			// allotment to each task from the scheduler.
