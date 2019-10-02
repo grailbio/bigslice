@@ -198,16 +198,22 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		location = fmt.Sprintf("%s:%d", file, line)
 		defer typecheck.Location(file, line)
 	}
+	// Make invocation and status setup atomic so that status displays in
+	// invocation index order.
+	//
+	// TODO(jcharumilind): Add functionality to status package to control
+	// ordering.
+	statusMu.Lock()
 	inv := funcv.Invocation(location, args...)
 	slice := inv.Invoke()
 	tasks, err := compile(slice, inv, s.machineCombiners)
 	if err != nil {
+		statusMu.Unlock()
 		return nil, err
 	}
 	// TODO(marius): give a way to provide names for these groups
 	var taskGroup *status.Group
 	if s.status != nil {
-		statusMu.Lock()
 		// Make the slice status group come before the more granular task
 		// status group, as we generally want increasing level of detail when
 		// observing status.
@@ -220,8 +226,8 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		// taskGroup is managed by Eval.
 		taskGroup = s.status.Groupf("run %s [%d] tasks", location, inv.Index)
 		_ = s.status.Groups()
-		statusMu.Unlock()
 	}
+	statusMu.Unlock()
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
 	for _, task := range tasks {
