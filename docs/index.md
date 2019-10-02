@@ -7,7 +7,7 @@ layout: default
 
 # Bigslice
 
-<img src="unicorn.png" height=200 />
+<img src="unicorn.png" alt="Bigslice logo" height="200"/>
 
 Bigslice is a system for
 <i>fast</i>, large-scale,
@@ -41,7 +41,7 @@ but with different aims:
   Go programs, providing users with a familiar environment and tools.
   A Bigslice program can be run on a single node like any other program,
   but it is also capable of transparently distributing itself across an
-  ad hoc cluster, management entirely by the program itself.
+  ad hoc cluster, managed entirely by the program itself.
 
 <div class="links">
 <a href="https://godoc.org/github.com/grailbio/bigslice">API documentation</a> &middot;
