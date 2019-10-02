@@ -20,7 +20,7 @@ import (
 
 var numCanaryRows = &defaultsize.SortCanary
 
-// SortReader sorts a Reader by its first column. SortReader may
+// SortReader sorts a Reader by its prefix columns. SortReader may
 // spill to disk, in which case it targets spill file sizes of
 // spillTarget (in bytes). Because the encoded size of objects is not
 // known in advance, sortReader uses a "canary" batch size of ~16k
@@ -147,8 +147,8 @@ type mergeReader struct {
 	heap *FrameBufferHeap
 }
 
-// NewMergeReader returns a new Reader that is sorted by its first
-// column. The readers to be merged must already be sorted.
+// NewMergeReader returns a new Reader that is sorted by its prefix columns. The
+// readers to be merged must already be sorted.
 func NewMergeReader(ctx context.Context, typ slicetype.Type, readers []sliceio.Reader) (sliceio.Reader, error) {
 	h := new(FrameBufferHeap)
 	h.Buffers = make([]*FrameBuffer, 0, len(readers))

@@ -198,7 +198,7 @@ func Copy(dst, src Frame) (n int) {
 	return
 }
 
-// AppendFrame appends src to dst, growing src if needed.
+// AppendFrame appends src to dst, growing dst if needed.
 func AppendFrame(dst, src Frame) Frame {
 	var i0, i1 int
 	if dst.IsZero() {
