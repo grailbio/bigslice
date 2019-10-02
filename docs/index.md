@@ -1,5 +1,5 @@
 ---
-title: Bigslice
+title: Bigslice - cluster computing in Go
 layout: default
 ---
 
