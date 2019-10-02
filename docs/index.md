@@ -7,7 +7,7 @@ layout: default
 
 # Bigslice
 
-<img src="unicorn.png" alt="Bigslice logo" height="200"/>
+<img src="bigslice.png" alt="Bigslice gopher" height="200"/>
 
 Bigslice is a system for
 <i>fast</i>, large-scale,
@@ -44,6 +44,7 @@ but with different aims:
   ad hoc cluster, managed entirely by the program itself.
 
 <div class="links">
+<a href="https://github.com/grailbio/bigslice">GitHub project</a> &middot;
 <a href="https://godoc.org/github.com/grailbio/bigslice">API documentation</a> &middot;
 <a href="https://github.com/grailbio/bigslice/issues">issue tracker</a> &middot;
 <a href="implementation.html">about the implementation</a> &middot;
@@ -475,6 +476,6 @@ See its documentation for further details.
 
 
 <footer>
-The Bigslice gopher was created with <a href="https://gopherize.me/">gopherize.me</a>.
-The Go gopher was designed by <a href="http://reneefrench.blogspot.com/">Renee French</a>.
+The Bigslice gopher design was inspired by
+<a href="http://reneefrench.blogspot.com/">Renee French</a>.
 </footer>
