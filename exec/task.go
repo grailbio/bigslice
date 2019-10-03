@@ -298,7 +298,7 @@ func (t *Task) String() string {
 	// err without holding the task's mutex) so that it is safe to call
 	// String even when the lock is held.
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "task %s(%x) %s", t.Name, t.Invocation.Index, t.state)
+	fmt.Fprintf(&b, "task %s [%d] %s", t.Name, t.Invocation.Index, t.state)
 	if t.err != nil {
 		fmt.Fprintf(&b, ": %v", t.err)
 	}

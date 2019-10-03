@@ -98,7 +98,7 @@ func (c *compiler) compile(slice bigslice.Slice) (tasks []*Task, reused bool, er
 	tasks = make([]*Task, slice.NumShard())
 	slices = pipeline(slice)
 	ops := make([]string, 0, len(slices)+1)
-	ops = append(ops, fmt.Sprintf("inv%x", c.inv.Index))
+	ops = append(ops, fmt.Sprintf("inv%d", c.inv.Index))
 	var pragmas bigslice.Pragmas
 	for i := len(slices) - 1; i >= 0; i-- {
 		ops = append(ops, slices[i].Name().Op)

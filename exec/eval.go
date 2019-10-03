@@ -90,7 +90,7 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				log.Printf("evaluator: resubmitting lost task %v", task)
 				task.state = TaskInit
 			}
-			status := group.Startf("%s(%x)", task.Name, inv.Index)
+			status := group.Start(task.Name)
 			if task.state == TaskInit {
 				task.state = TaskWaiting
 				task.Status = status
