@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,10 +103,13 @@ func TestEvalErr(t *testing.T) {
 	if got, want := test.CogroupTask.State(), TaskInit; got != want {
 		t.Fatalf("got %v, want %v: %v", got, want, test.CogroupTask)
 	}
-	constErr := errors.New("const task error")
-	test.ConstTask.Error(constErr)
+	test.ConstTask.Error(errors.New("const task error"))
 
-	if got, want := test.Wait(), constErr; got != want {
+	err = test.Wait()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got, want := strings.Contains(err.Error(), "const task error"), true; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if got, want := test.CogroupTask.State(), TaskInit; got != want {

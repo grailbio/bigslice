@@ -8,8 +8,10 @@ package exec
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice"
@@ -228,7 +230,8 @@ func (s *state) Return(task *Task) {
 		// we get into an actionable state.
 		s.schedule(task)
 	case TaskErr:
-		s.err = task.err
+		msg := fmt.Sprintf("error running %s", task.Name)
+		s.err = errors.E(msg, task.err)
 	case TaskOk:
 		for _, task := range s.done(task.Head()) {
 			s.Enqueue(task)
