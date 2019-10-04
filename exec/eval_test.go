@@ -241,6 +241,47 @@ func TestResubmitLostInteriorTask(t *testing.T) {
 	}
 }
 
+// TestPersistentTaskLoss verifies that the evaluator will abandon evaluation
+// with a task that is repeatedly lost on attempts to run it, as it is unable to
+// make meaningful progress.
+func TestPersistentTaskLoss(t *testing.T) {
+	var (
+		test simpleEvalTest
+		ctx  = context.Background()
+	)
+	test.Go(t)
+	fst := test.ConstTask
+	c := time.After(10 * time.Second)
+	for {
+		select {
+		case <-c:
+			t.Fatal("did not abandon persisently lost task")
+		default:
+		}
+		fst.Lock()
+		for fst.state != TaskRunning {
+			if err := fst.Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fst.state = TaskLost
+		fst.Broadcast()
+		for fst.state == TaskLost {
+			if err := fst.Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if fst.state == TaskErr {
+			// The evaluator has given up on the task.
+			break
+		}
+		fst.Unlock()
+	}
+	if test.Wait() == nil {
+		t.Errorf("expected error")
+	}
+}
+
 func multiPhaseCompile(nshard, nstage int) ([]*Task, bigslice.Invocation) {
 	tasks, _, inv := compileFunc(func() bigslice.Slice {
 		keys := make([]string, nshard*2)

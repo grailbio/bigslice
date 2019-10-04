@@ -21,6 +21,12 @@ import (
 
 var defaultChunksize = &defaultsize.Chunk
 
+// maxConsecutiveLost is the maximum number of times a task can be run and lost
+// consecutively before we give up and consider it an error. This helps catch
+// persistent errors that prevent meaningful progress from being made in an
+// evaluation (e.g. an error that causes worker processes to exit).
+const maxConsecutiveLost = 5
+
 // Executor defines an interface used to provide implementations of
 // task runners. An Executor is responsible for running single tasks,
 // partitioning their outputs, and instantiating readers to retrieve the
@@ -93,7 +99,9 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				task.state = TaskInit
 			}
 			status := group.Start(task.Name)
-			if task.state == TaskInit {
+			// runner is true if this evaluator is going to execute the task.
+			runner := task.state == TaskInit
+			if runner {
 				task.state = TaskWaiting
 				task.Status = status
 				go executor.Run(task)
@@ -105,6 +113,24 @@ func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots
 				var err error
 				for task.state < TaskOk && err == nil {
 					err = task.Wait(ctx)
+				}
+				if runner {
+					// Only the runner bookkeeps consecutiveLost to avoid
+					// double-counting task loss.
+					switch task.state {
+					case TaskOk:
+						task.consecutiveLost = 0
+					case TaskLost:
+						task.consecutiveLost++
+						if task.consecutiveLost >= maxConsecutiveLost {
+							// We've lost this task too many times, so we
+							// consider it in error.
+							task.state = TaskErr
+							task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
+							task.Status.Printf(task.err.Error())
+							task.Broadcast()
+						}
+					}
 				}
 				task.Unlock()
 				status.Done()

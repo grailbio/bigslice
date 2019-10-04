@@ -270,6 +270,10 @@ type Task struct {
 	// Err is defines when state == TaskErr.
 	err error
 
+	// consecutiveLost is the number of times this task has been run and lost
+	// consecutively. See maxConsecutiveLost.
+	consecutiveLost int
+
 	// Status is a status object to which task status is reported.
 	Status *status.Task
 }
