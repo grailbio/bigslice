@@ -278,18 +278,16 @@ compile:
 			// is racy: the behavior remains correct but may imply additional
 			// data transfer. C'est la vie.
 			m.Compiles.Forget(task.Invocation.Index)
-		case errors.Is(errors.Net, err), errors.Is(errors.Unavailable, err), errors.IsTemporary(err):
-			// Compilations don't involve invoking user code, nor does it
+		case errors.Is(errors.Remote, err):
+			// Compilations don't involve invoking user code, nor do they
 			// involve dependencies other than potentially uploading data from
-			// the driver node, so we can relax our usual assumptions and mark
-			// the task as lost. This will cause it to be rescheduled and compilation
-			// will be retried.
-			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
-			task.Set(TaskLost)
+			// the driver node, so we consider any error to be fatal to the task.
+			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
 			m.Done(err)
 			return
 		default:
-			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
+			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
+			task.Set(TaskLost)
 			m.Done(err)
 			return
 		}
@@ -355,16 +353,7 @@ compile:
 	case ctx.Err() != nil:
 		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
 		task.Error(err)
-	case errors.Match(fatalErr, err) && !errors.Is(errors.Unavailable, err):
-		// We assume errors.Unavailable indicates that a worker machine, either
-		// directly or transitively, is unavailable, so we consider the task
-		// lost and able to rescheduled.
-
-		// TODO(jcharumilind): Make this precise. As it is, this may be a false
-		// positive, as user code can produce Unavailable errors that should be
-		// fatal. In practice, this does not seem to happen. All cases I've
-		// seen have been machine unavailability from which bigslice should try
-		// to recover.
+	case errors.Match(fatalErr, err):
 		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)

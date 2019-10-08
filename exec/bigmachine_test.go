@@ -311,7 +311,7 @@ func TestBigmachineExecutorFatalErrorRun(t *testing.T) {
 		return &errorSlice{bigslice.Const(1, []int{123}), err}
 	})
 	run(t, x, tasks, TaskErr)
-	if got, want := tasks[0].Err(), err; !errors.Match(want, got) {
+	if got, want := errors.Recover(tasks[0].Err()).Severity, errors.Fatal; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }

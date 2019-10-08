@@ -483,10 +483,15 @@ func (m *machineManager) Do(ctx context.Context) {
 			mach := done.sliceMachine
 			mach.curprocs--
 			switch {
-			case done.Err != nil && !errors.Is(errors.Unavailable, done.Err) && mach.health == machineOk:
-				// We don't consider errors.Unavailable for probation because these likely
-				// originate from a transitive machine failure. The evaluator will reschedule
-				// these tasks for us.
+			case done.Err != nil && !errors.Is(errors.Remote, done.Err) && mach.health == machineOk:
+				// We only consider probation if we have problems with RPC
+				// machinery, e.g. host unavailable or other network errors. If
+				// the error is from application code of an RPC, we defer to the
+				// evaluation engine for remediation. This is to limit the blast
+				// radius of a problematic machine, e.g. a call to machine A
+				// transitively calls machine B, but machine B is down; the call
+				// to machine A will return an error, but we do not want to put
+				// machine A on probation.
 				log.Error.Printf("putting machine %s on probation after error: %v", mach, done.Err)
 				mach.health = machineProbation
 				heap.Remove(&machines, mach.index)
