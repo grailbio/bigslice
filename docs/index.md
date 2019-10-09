@@ -467,7 +467,7 @@ to use [m5.24xlarge](https://aws.amazon.com/ec2/instance-types/m5/)
 instances in Bigslice cluster:
 
 ```
-bigslice run shake.go -set bigmachine/ec2cluster.instance=m5.24xlarge
+$ bigslice run shake.go -set bigmachine/ec2cluster.instance=m5.24xlarge
 ```
 
 Bigslice uses [bigmachine](https://github.com/grailbio/bigmachine)
