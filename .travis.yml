@@ -8,5 +8,5 @@ dist: trusty
 sudo: false
 install: true
 script:
-  - env GO111MODULE=on GOSUMDB=off go test -v -short ./...
+  - env GO111MODULE=on GOPROXY=direct GOSUMDB=off go test -v -short ./...
 
