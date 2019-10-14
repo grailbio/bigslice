@@ -218,7 +218,9 @@ func build(paths []string, output string) string {
 
 	outputFile, err := os.OpenFile(output, os.O_WRONLY|os.O_APPEND, 0777)
 	must.Nil(err)
-	fat := fatbin.NewWriter(outputFile)
+	outputInfo, err := outputFile.Stat()
+	must.Nil(err)
+	fat := fatbin.NewWriter(outputFile, outputInfo.Size(), runtime.GOOS, runtime.GOARCH)
 
 	linuxAmd64File, err := os.Open(object)
 	must.Nil(err)
