@@ -90,11 +90,6 @@ github.com/grailbio/bigmachine v0.5.2 h1:Ai5k8osqlgeNlqZ6QygrnQHS/DpC6w3qxDjj5QC
 github.com/grailbio/bigmachine v0.5.2/go.mod h1:LQjKh/2MoQPFue4W9Wsy/RWGHbxAEq1YsmqM390m8b0=
 github.com/grailbio/bigmachine v0.5.3 h1:OfO37Eg7U9Fzhvu/Ac9m0LXtsDhnSLmg+b3sjda1Mhs=
 github.com/grailbio/bigmachine v0.5.3/go.mod h1:4y1gfjFTiKNkyvUTRbxAw44Pbd7l0GRBp08iy5RuO1g=
-github.com/grailbio/testutil v0.0.1/go.mod h1:j7teGaXqRY1n6m7oM8oy954lxL37Myt7nEJZlif3nMA=
-github.com/grailbio/testutil v0.0.2-0.20190910222532-7f08e0a97d25 h1:qZeT0HwHiLfLPxZhWTGaHEENWWy7fSBsmwz0N8tbeGo=
-github.com/grailbio/testutil v0.0.2-0.20190910222532-7f08e0a97d25/go.mod h1:j7teGaXqRY1n6m7oM8oy954lxL37Myt7nEJZlif3nMA=
-github.com/grailbio/testutil v0.0.3 h1:+DdeASW5pAXYkffT7crMfFjmNc+QQr3VwUduSirdBoo=
-github.com/grailbio/testutil v0.0.3/go.mod h1:f9+y7xMXeXwyNcdV5cmo6GzRiitSOubMmqcqEON7NQQ=
 github.com/grailbio/v23/factories/grail v0.0.0-20190904050408-8a555d238e9a h1:kAl1x1ErQgs55bcm/WdoKCPny/kIF7COmC+UGQ9GKcM=
 github.com/grailbio/v23/factories/grail v0.0.0-20190904050408-8a555d238e9a/go.mod h1:2g5HI42KHw+BDBdjLP3zs+WvTHlDK3RoE8crjCl26y4=
 github.com/hanwen/go-fuse v1.0.0/go.mod h1:unqXarDXqzAk0rt98O2tVndEPIpUgLD9+rwFisZH3Ok=
