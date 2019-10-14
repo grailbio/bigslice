@@ -672,7 +672,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				tp := taskPartition{deptask.Name, dep.Partition}
-				if err := machine.Call(ctx, "Worker.Stat", tp, &info); err != nil {
+				if err := machine.RetryCall(ctx, "Worker.Stat", tp, &info); err != nil {
 					return err
 				}
 				r := &machineReader{
