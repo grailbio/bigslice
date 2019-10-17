@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -27,9 +28,14 @@ func buildCmd(args []string) {
 	flags.Usage = func() { buildCmdUsage(flags) }
 	must.Nil(flags.Parse(args))
 
+	if len(flags.Args()) == 0 {
+		log.Fatalf("no arguments")
+	}
+
 	paths := flags.Args()[1:]
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
-	bigslicecmd.Build(paths, *output)
+	ctx := context.Background()
+	bigslicecmd.Build(ctx, paths, *output)
 }

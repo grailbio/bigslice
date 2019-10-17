@@ -5,6 +5,8 @@
 package bigslicecmd
 
 import (
+	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/scanner"
@@ -64,13 +66,7 @@ The flags are:
 
 // Build builds the bigslice binary and writes it out to specified output filename,
 // if that string is empty then a suitable name is computed and returned.
-func Build(ctx context.Contex, paths []string, output string) (binary string, returnError error) {
-	defer func() {
-		if r := recover(); r != nil {
-			returnErr = fmt.Error("%v", r)
-		}
-	}()
-
+func Build(ctx context.Context, paths []string, output string) string {
 	must.True(len(paths) > 0, "no paths defined")
 
 	// If we are passed multiple paths, then they must be Go files.
@@ -190,7 +186,7 @@ func Build(ctx context.Contex, paths []string, output string) (binary string, re
 	// We currently assume that the target is linux/amd64.
 	// TODO(marius): don't hard code this.
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		return output, nil
+		return output
 	}
 
 	f, err := ioutil.TempFile("", output)
@@ -221,7 +217,7 @@ func Build(ctx context.Contex, paths []string, output string) (binary string, re
 	must.Nil(linuxAmd64File.Close())
 	must.Nil(outputFile.Close())
 
-	return output, nil
+	return output
 }
 
 func printGoErrors(err error) {

@@ -29,6 +29,5 @@ func runCmd(args []string) {
 		}
 		buildIndex++
 	}
-	ctx := context.Background()
-	return bigslicecmd.Run(ctx, args[buildIndex:])
+	bigslicecmd.Run(context.Background(), args[buildIndex:])
 }
