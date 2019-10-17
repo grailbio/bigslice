@@ -8,6 +8,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/grailbio/base/must"
@@ -29,9 +30,11 @@ func buildCmd(args []string) {
 	must.Nil(flags.Parse(args))
 
 	if len(flags.Args()) == 0 {
-		log.Fatalf("no arguments")
+		log.Fatal("no arguments")
 	}
 
+	// TODO(cosnicolaou): this seems wrong to me, surely it should just be
+	//   flags.Args()?
 	paths := flags.Args()[1:]
 	if len(paths) == 0 {
 		paths = []string{"."}
