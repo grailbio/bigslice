@@ -336,18 +336,20 @@ compile:
 
 	// While we're running, also update task stats directly into the tasks's status.
 	// TODO(marius): also aggregate stats across all tasks.
-	ctx, ctxcancel := context.WithCancel(ctx)
-	defer ctxcancel()
+	statsCtx, statsCancel := context.WithCancel(ctx)
+	go monitorTaskStats(statsCtx, m, task)
 
 	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
 	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
+	statsCancel()
 	m.Done(err)
 	switch {
 	case err == nil:
 		b.sess.tracer.Event(m, task, "E")
 		b.setLocation(task, m)
+		task.Status.Printf("done: %s", reply.Vals)
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
@@ -363,6 +365,32 @@ compile:
 		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "lost")
 		task.Status.Printf("lost task during task evaluation: %v", err)
 		task.Set(TaskLost)
+	}
+}
+
+// monitorTaskStats monitors stats (e.g. records read/written) of the task
+// running on m, updating task's status until ctx is done.
+func monitorTaskStats(ctx context.Context, m *sliceMachine, task *Task) {
+	wait := func() {
+		select {
+		case <-time.After(statsPollInterval):
+		case <-ctx.Done():
+		}
+	}
+	for ctx.Err() == nil {
+		req := taskStatsRequest{
+			Name:       task.Name,
+			Invocation: task.Invocation.Index,
+		}
+		var vals *stats.Values
+		err := m.RetryCall(ctx, "Worker.TaskStats", req, &vals)
+		if err != nil {
+			log.Error.Printf("error getting task stats from %s: %v", m.Addr, err)
+			wait()
+			continue
+		}
+		task.Status.Printf("%s: %s", m.Addr, *vals)
+		wait()
 	}
 }
 
@@ -421,12 +449,13 @@ type worker struct {
 	b     *bigmachine.B
 	store Store
 
-	mu       sync.Mutex
-	cond     *ctxsync.Cond
-	compiles once.Map
-	tasks    map[uint64]map[TaskName]*Task
-	slices   map[uint64]bigslice.Slice
-	stats    *stats.Map
+	mu        sync.Mutex
+	cond      *ctxsync.Cond
+	compiles  once.Map
+	tasks     map[uint64]map[TaskName]*Task
+	taskStats map[uint64]map[TaskName]*stats.Map
+	slices    map[uint64]bigslice.Slice
+	stats     *stats.Map
 
 	// CombinerStates and combiners are used to manage shared combine
 	// buffers.
@@ -439,6 +468,7 @@ type worker struct {
 func (w *worker) Init(b *bigmachine.B) error {
 	w.cond = ctxsync.NewCond(&w.mu)
 	w.tasks = make(map[uint64]map[TaskName]*Task)
+	w.taskStats = make(map[uint64]map[TaskName]*stats.Map)
 	w.slices = make(map[uint64]bigslice.Slice)
 	w.combiners = make(map[TaskName][]chan *combiner)
 	w.combinerStates = make(map[TaskName]combinerState)
@@ -509,8 +539,13 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 		for task := range all {
 			named[task.Name] = task
 		}
+		namedStats := make(map[TaskName]*stats.Map)
+		for task := range all {
+			namedStats[task.Name] = stats.NewMap()
+		}
 		w.mu.Lock()
 		w.tasks[inv.Index] = named
+		w.taskStats[inv.Index] = namedStats
 		w.slices[inv.Index] = &Result{Slice: slice, tasks: tasks}
 		w.mu.Unlock()
 		return nil
@@ -539,15 +574,18 @@ func (r *taskRunRequest) location(taskIndex int) string {
 	return r.Machines[r.Locations[taskIndex]]
 }
 
-type taskRunReply struct{} // nothing here yet
+type taskRunReply struct {
+	// Vals are the stat values for the run of the task.
+	Vals stats.Values
+}
 
 // Run runs an individual task as described in the request. Run
 // returns a nil error when the task was successfully run and its
 // output deposited in a local buffer.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
-	recordsOut := w.stats.Int("write")
 	w.mu.Lock()
 	named := w.tasks[req.Invocation]
+	namedStats := w.taskStats[req.Invocation]
 	w.mu.Unlock()
 	if named == nil {
 		return errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))
@@ -556,6 +594,12 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	if task == nil {
 		return errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Name))
 	}
+	taskStats := namedStats[req.Name]
+
+	defer func() {
+		reply.Vals = make(stats.Values)
+		taskStats.AddAll(reply.Vals)
+	}()
 
 	task.Lock()
 	switch task.state {
@@ -597,10 +641,21 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// Gather inputs from the bigmachine cluster, dialing machines
 	// as necessary.
 	var (
+		// Stats for the task.
+		taskTotalRecordsIn *stats.Int
+		taskRecordsIn      *stats.Int
+		taskRecordsOut     = taskStats.Int("write")
+		// Stats for the machine.
 		totalRecordsIn *stats.Int
 		recordsIn      *stats.Int
+		recordsOut     = w.stats.Int("write")
 	)
+	taskRecordsOut.Set(0)
 	if len(task.Deps) > 0 {
+		taskTotalRecordsIn = taskStats.Int("inrecords")
+		taskTotalRecordsIn.Set(0)
+		taskRecordsIn = taskStats.Int("read")
+		taskRecordsIn.Set(0)
 		totalRecordsIn = w.stats.Int("inrecords")
 		recordsIn = w.stats.Int("read")
 	}
@@ -642,7 +697,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					Machine:       machine,
 					TaskPartition: taskPartition{TaskName{Op: dep.CombineKey}, dep.Partition},
 				}
-				in = append(in, &statsReader{r, recordsIn})
+				in = append(in, &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}})
 				defer r.Close()
 			}
 		} else {
@@ -658,7 +713,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition, 0)
 					if err == nil {
 						defer rc.Close()
-						reader.q[j] = sliceio.NewDecodingReader(rc)
+						r := sliceio.NewDecodingReader(rc)
+						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+						taskTotalRecordsIn.Add(info.Records)
 						totalRecordsIn.Add(info.Records)
 						taskIndex++
 						continue Tasks
@@ -679,7 +736,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					Machine:       machine,
 					TaskPartition: tp,
 				}
-				reader.q[j] = &statsReader{r, recordsIn}
+				reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+				taskTotalRecordsIn.Add(info.Records)
 				totalRecordsIn.Add(info.Records)
 				defer r.Close()
 			}
@@ -703,7 +761,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// If we have a combiner, then we partition globally for the machine
 	// into common combiners.
 	if task.Combiner != nil {
-		return w.runCombine(ctx, task, task.Do(in))
+		return w.runCombine(ctx, task, taskStats, task.Do(in))
 	}
 
 	// Stream partition output directly to the underlying store, but
@@ -778,6 +836,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					lens[p] = 0
 				}
 			}
+			taskRecordsOut.Add(int64(n))
 			recordsOut.Add(int64(n))
 			if err == sliceio.EOF {
 				break
@@ -802,6 +861,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
 				return err
 			}
+			taskRecordsOut.Add(int64(n))
 			recordsOut.Add(int64(n))
 			count[0] += int64(n)
 			if err == sliceio.EOF {
@@ -823,7 +883,27 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
-func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) (err error) {
+type taskStatsRequest struct {
+	// Invocation is the invocation from which the task was compiled.
+	Invocation uint64
+
+	// Name is the name of the task compiled from Invocation.
+	Name TaskName
+}
+
+// TaskStats returns the stats for the current or most recent run of a task on
+// w. This can be polled to display task status.
+func (w *worker) TaskStats(ctx context.Context, req taskStatsRequest, vals *stats.Values) error {
+	w.mu.Lock()
+	namedStats := w.taskStats[req.Invocation]
+	w.mu.Unlock()
+	taskStats := namedStats[req.Name]
+	taskStats.AddAll(*vals)
+	return nil
+}
+
+func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Map,
+	in sliceio.Reader) (err error) {
 	combineKey := task.Name
 	if task.CombineKey != "" {
 		combineKey = TaskName{Op: task.CombineKey}
@@ -865,6 +945,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 		}
 	}()
 
+	taskRecordsOut := taskStats.Int("write")
 	recordsOut := w.stats.Int("write")
 	// Now perform the partition-combine operation. We maintain a
 	// per-task combine buffer for each partition. When this buffer
@@ -914,6 +995,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, in sliceio.Reader) 
 				return err
 			}
 		}
+		taskRecordsOut.Add(int64(n))
 		recordsOut.Add(int64(n))
 		if err == sliceio.EOF {
 			break
@@ -1174,13 +1256,17 @@ func (m *machineReader) Close() error {
 }
 
 type statsReader struct {
-	reader  sliceio.Reader
-	numRead *stats.Int
+	reader sliceio.Reader
+	// numRead is a slice of *stats.Int, each of which is incremented with the
+	// number of records read.
+	numRead []*stats.Int
 }
 
 func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	n, err = s.reader.Read(ctx, f)
-	s.numRead.Add(int64(n))
+	for _, istat := range s.numRead {
+		istat.Add(int64(n))
+	}
 	return
 }
 
