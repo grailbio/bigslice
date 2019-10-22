@@ -33,9 +33,7 @@ func buildCmd(args []string) {
 		log.Fatal("no arguments")
 	}
 
-	// TODO(cosnicolaou): this seems wrong to me, surely it should just be
-	//   flags.Args()?
-	paths := flags.Args()[1:]
+	paths := flags.Args()
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
