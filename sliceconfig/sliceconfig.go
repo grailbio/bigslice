@@ -53,7 +53,7 @@ func Parse() (sess *exec.Session, shutdown func()) {
 	if *local {
 		sess = exec.Start(exec.Local, exec.Status(new(status.Status)))
 	} else {
-		bigmachine.Bootstrap()
+		bigmachine.Init()
 		config.Must("bigslice", &sess)
 	}
 	sess.HandleDebug(http.DefaultServeMux)
