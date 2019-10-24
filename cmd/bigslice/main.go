@@ -11,6 +11,7 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/must"
+	"github.com/grailbio/bigslice/cmd/bigslice/bigslicecmd"
 )
 
 /*
@@ -19,8 +20,6 @@ import (
 	bigslice run -cluster=ec2 -- -foo -bar
 	bigslice list // configured clusters, where they are coming from?
 */
-
-var cwd string
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Bigslice is a tool for managing Bigslice builds and configuration.
@@ -52,9 +51,7 @@ func main() {
 		flag.Usage()
 	}
 
-	var err error
-	cwd, err = os.Getwd()
-	if err != nil {
+	if err := bigslicecmd.Init(); err != nil {
 		log.Fatal(err)
 	}
 

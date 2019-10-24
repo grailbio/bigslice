@@ -12,7 +12,6 @@ package sliceconfig
 
 import (
 	"flag"
-	"net/http"
 
 	// Imported to install pprof http handlers.
 	_ "net/http/pprof"

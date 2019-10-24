@@ -31,7 +31,7 @@ var ProbationTimeout = 30 * time.Second
 // may be started in one batch.
 const maxStartMachines = 10
 
-// MachineHealth is the overall assessment of machine health by
+// MachineHealth is the overall assessment of machine health by589
 // the bigmachine executor.
 type machineHealth int
 

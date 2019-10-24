@@ -5,20 +5,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
-	"github.com/grailbio/base/must"
+	"github.com/grailbio/bigslice/cmd/bigslice/bigslicecmd"
 )
 
 func runCmdUsage() {
-	fmt.Fprintf(os.Stderr, `usage: bigslice run [input] [flags]
-
-Command run builds and then runs the provided package or files. See
-"bigslice build -help" for more details.
-`)
+	fmt.Fprintf(os.Stderr, bigslicecmd.RunUsage)
 	os.Exit(2)
 }
 
@@ -33,17 +29,5 @@ func runCmd(args []string) {
 		}
 		buildIndex++
 	}
-	var binary string
-	if buildIndex == 0 {
-		binary = build([]string{"."}, "")
-	} else {
-		binary = build(args[:buildIndex], "")
-	}
-
-	cmd := exec.Command(binary, args[buildIndex:]...)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	cmd.Stdin = os.Stdin
-	must.Nil(cmd.Run())
-	must.Nil(os.Remove(binary))
+	bigslicecmd.Run(context.Background(), args[buildIndex:])
 }
