@@ -92,7 +92,7 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 	}
 	wg.Wait()
 	var n int
-	for i := 1; i < 2*maxIndex+1; i++ {
+	for i := 1; i < maxIndex+1; i++ {
 		if x.managers[i] != nil {
 			n++
 		}

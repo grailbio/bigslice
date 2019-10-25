@@ -5,7 +5,6 @@
 package exec
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -96,12 +95,12 @@ func TestSlicemachineProbation(t *testing.T) {
 	if got, want := system.N(), 2; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	ms[0].Done(errors.New("some error"))
+	ms[0].Done(1, errors.New("some error"))
 	mustUnavailable(t, mgr)
 	if got, want := ms[0].health, machineProbation; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	ms[1].Done(nil)
+	ms[1].Done(1, nil)
 	ns := getMachines(ctx, mgr, 2)
 	if got, want := ns[0], ms[0]; got != want {
 		t.Errorf("got %v, want %v", got, want)
@@ -137,12 +136,12 @@ func TestSlicemachineProbationTimeout(t *testing.T) {
 		if i%machinep != 0 {
 			continue
 		}
-		ms[i].Done(errors.New("some error"))
+		ms[i].Done(1, errors.New("some error"))
 	}
 	// Bring two machines back from probation with successful completions to
 	// make sure there's no surprising interaction with timeouts.
-	ms[0*machinep].Done(nil)
-	ms[2*machinep].Done(nil)
+	ms[0*machinep].Done(1, nil)
+	ms[2*machinep].Done(1, nil)
 	ctx, ctxcancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer ctxcancel()
 	for {
@@ -206,7 +205,7 @@ func TestSlicemachinePriority(t *testing.T) {
 	for i := (maxp * 4) - 1; i >= 0; i-- {
 		i := i
 		go func() {
-			offerc, _ := mgr.Offer(i)
+			offerc, _ := mgr.Offer(i, 1)
 			sema <- struct{}{}
 			select {
 			case <-offerc:
@@ -221,34 +220,13 @@ func TestSlicemachinePriority(t *testing.T) {
 	// Return the original machines/procs to allow the machines to be offered to
 	// our blocked requests.
 	for _, m := range ms {
-		m.Done(nil)
+		m.Done(1, nil)
 	}
 	for j := 0; j < maxp; j++ {
 		i := <-c
 		if i >= maxp {
 			t.Error("did not respect priority")
 		}
-	}
-}
-
-func TestMachineQ(t *testing.T) {
-	q := machineQ{
-		{Machine: &bigmachine.Machine{Maxprocs: 2}, curprocs: 1},
-		{Machine: &bigmachine.Machine{Maxprocs: 4}, curprocs: 1},
-		{Machine: &bigmachine.Machine{Maxprocs: 3}, curprocs: 0},
-	}
-	heap.Init(&q)
-	if got, want := q[0].Maxprocs, 3; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	q[0].curprocs++
-	heap.Fix(&q, 0)
-	expect := []int{4, 3, 2}
-	for _, procs := range expect {
-		if got, want := q[0].Maxprocs, procs; got != want {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-		heap.Pop(&q)
 	}
 }
 
@@ -279,7 +257,7 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 func getMachines(ctx context.Context, mgr *machineManager, n int) []*sliceMachine {
 	ms := make([]*sliceMachine, n)
 	for i := range ms {
-		offerc, _ := mgr.Offer(0)
+		offerc, _ := mgr.Offer(0, 1)
 		ms[i] = <-offerc
 	}
 	return ms
@@ -290,7 +268,7 @@ func mustUnavailable(t *testing.T, mgr *machineManager) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	offerc, cancel := mgr.Offer(0)
+	offerc, cancel := mgr.Offer(0, 1)
 	select {
 	case <-offerc:
 		t.Fatal("unexpected machine available")
