@@ -13,26 +13,27 @@ import (
 )
 
 type reshardSlice struct {
-	name Name
+	name   Name
+	nshard int
 	Slice
 }
 
-// Reshard returns a slice that shuffles rows by prefix so that
-// all rows with equal prefix values end up in the same shard.
-// Rows are not sorted within a shard.
-//
-// The output slice has the same type as the input.
-//
-// TODO: Add ReshardSort, which also sorts keys within each shard.
-func Reshard(slice Slice) Slice {
+// Reshard returns a slice that is resharded to the given
+// number of shards; this is done by re-shuffling to the
+// provided number of shards.
+func Reshard(slice Slice, nshard int) Slice {
 	if err := canMakeCombiningFrame(slice); err != nil {
 		typecheck.Panic(1, err.Error())
 	}
-	return &reshardSlice{makeName("reshard"), slice}
+	if slice.NumShard() == nshard {
+		return slice
+	}
+	return &reshardSlice{makeName("reshard"), nshard, slice}
 }
 
 func (r *reshardSlice) Name() Name             { return r.name }
 func (*reshardSlice) NumDep() int              { return 1 }
+func (r *reshardSlice) NumShard() int          { return r.nshard }
 func (r *reshardSlice) Dep(i int) Dep          { return Dep{r.Slice, true, false} }
 func (*reshardSlice) Combiner() *reflect.Value { return nil }
 
