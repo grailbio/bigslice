@@ -248,7 +248,7 @@ func TestBigmachineExecutorLost(t *testing.T) {
 	})
 	mapTask := mapTasks[0]
 	go x.Run(mapTask)
-	if state, err := mapTask.WaitState(ctx, TaskLost); err != nil {
+	if state, err := mapTask.WaitState(ctx, TaskOk); err != nil {
 		t.Fatal(err)
 	} else if state != TaskLost {
 		t.Fatal(state)

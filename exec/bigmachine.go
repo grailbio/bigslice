@@ -356,7 +356,7 @@ compile:
 	case ctx.Err() != nil:
 		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
 		task.Error(err)
-	case errors.Match(fatalErr, err):
+	case errors.Is(errors.Remote, err) && errors.Match(fatalErr, err):
 		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)
@@ -580,20 +580,71 @@ type taskRunReply struct {
 	Vals stats.Values
 }
 
-// Run runs an individual task as described in the request. Run
-// returns a nil error when the task was successfully run and its
-// output deposited in a local buffer.
+// maybeTaskFatalErr wraps errors in (*worker).Run that can cause fatal task
+// errors, errors that will cause the evaluator to mark the task in TaskErr
+// state and halt evaluation. This is generally used to identify (fatal) errors
+// returned by application code. These errors are not returned from
+// (*worker).Run; they are used internally to revise severity.
+type maybeTaskFatalErr struct {
+	error
+}
+
+// reviseSeverity revises the severity of err for (*worker).Run. (*worker).Run
+// only returns fatal errors for task fatal errors, errors that will cause tasks
+// on the driver to be marked TaskErr and halt evaluation.
+func reviseSeverity(err error) error {
+	if err == nil {
+		return nil
+	}
+	if e, ok := err.(maybeTaskFatalErr); ok {
+		return e.error
+	}
+	if e, ok := err.(*errors.Error); ok && e != nil && e.Severity == errors.Fatal {
+		// The error is fatal to this attempt to run the task but not fatal to
+		// the task overall, e.g. a fatal unavailable error when trying to read
+		// dependencies from other machines. We downgrade the error, so that the
+		// evaluator will retry.
+		e.Severity = errors.Unknown
+		return e
+	}
+	return err
+}
+
+// Run runs an individual task as described in the request. Run returns a nil
+// error when the task was successfully run and its output deposited in a local
+// buffer. If Run returns a *errors.Error with errors.Fatal severity, the task
+// wll be marked in TaskErr, and evaluation will halt.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
+	var task *Task
+	defer func() {
+		if e := recover(); e != nil {
+			stack := debug.Stack()
+			err = fmt.Errorf("panic while evaluating slice: %v\n%s", e, string(stack))
+			err = maybeTaskFatalErr{errors.E(err, errors.Fatal)}
+		}
+		if err != nil {
+			log.Error.Printf("task %s error: %v", req.Name, err)
+			err = reviseSeverity(err)
+			if task != nil {
+				task.Error(errors.Recover(err))
+			}
+			return
+		}
+		if task != nil {
+			task.Set(TaskOk)
+		}
+	}()
+
 	w.mu.Lock()
 	named := w.tasks[req.Invocation]
 	namedStats := w.taskStats[req.Invocation]
 	w.mu.Unlock()
 	if named == nil {
-		return errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))
+		return maybeTaskFatalErr{errors.E(errors.Fatal, fmt.Errorf("invocation %x not compiled", req.Invocation))}
 	}
-	task := named[req.Name]
+	task = named[req.Name]
 	if task == nil {
-		return errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Name))
+		return maybeTaskFatalErr{errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Name))}
 	}
 	taskStats := namedStats[req.Name]
 
@@ -625,20 +676,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	}
 	task.state = TaskRunning
 	task.Unlock()
-	defer func() {
-		if e := recover(); e != nil {
-			stack := debug.Stack()
-			err = fmt.Errorf("panic while evaluating slice: %v\n%s", e, string(stack))
-			err = errors.E(err, errors.Fatal)
-		}
-		if err != nil {
-			log.Printf("task %s error: %v", req.Name, err)
-			task.Error(errors.Recover(err))
-		} else {
-			task.Set(TaskOk)
-		}
-	}()
-
 	// Gather inputs from the bigmachine cluster, dialing machines
 	// as necessary.
 	var (
@@ -807,7 +844,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		if err == sliceio.EOF {
 			err = nil
 		}
-		return err
+		return maybeTaskFatalErr{err}
 	case task.NumPartition > 1:
 		var psize = *defaultChunksize / 100
 		var (
@@ -821,7 +858,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
-				return err
+				return maybeTaskFatalErr{err}
 			}
 			for i := 0; i < n; i++ {
 				p := int(in.Hash(i)) % task.NumPartition
@@ -857,7 +894,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		for {
 			n, err := out.Read(ctx, in)
 			if err != nil && err != sliceio.EOF {
-				return err
+				return maybeTaskFatalErr{err}
 			}
 			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
 				return err
@@ -1246,6 +1283,11 @@ func (m *machineReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 		m.reader = sliceio.NewDecodingReader(m.rpc)
 	}
 	n, err := m.reader.Read(ctx, f)
+	// This is how all slice operations read data to process and does not
+	// involve application code. By revising the severity here, it saves slice
+	// operation implementations from each individually revising the severity of
+	// machine reads.
+	err = reviseSeverity(err)
 	return n, err
 }
 
