@@ -279,6 +279,10 @@ compile:
 			// is racy: the behavior remains correct but may imply additional
 			// data transfer. C'est la vie.
 			m.Compiles.Forget(task.Invocation.Index)
+		case errors.Is(errors.Invalid, err) && errors.Match(fatalErr, err):
+			// Fatally invalid compilation parameters, e.g. func arguments that
+			// are not gob-encodable, are fatal to the task.
+			fallthrough
 		case errors.Is(errors.Remote, err):
 			// Compilations don't involve invoking user code, nor do they
 			// involve dependencies other than potentially uploading data from
@@ -869,7 +873,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				// Flush when we fill up.
 				if lens[p] == psize {
 					if err := partitions[p].Encode(partitionv[p]); err != nil {
-						return err
+						return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 					}
 					lens[p] = 0
 				}
@@ -886,7 +890,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				continue
 			}
 			if err := partitions[p].Encode(partitionv[p].Slice(0, n)); err != nil {
-				return err
+				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 		}
 	default:
@@ -897,7 +901,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				return maybeTaskFatalErr{err}
 			}
 			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
-				return err
+				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 			taskRecordsOut.Add(int64(n))
 			recordsOut.Add(int64(n))
