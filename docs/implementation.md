@@ -111,3 +111,50 @@ Frames are pre-allocated and managed by the Bigslice runtime.
 They are layed out in a columnar fashion,
 so the underlying data layout can be exploited for locality.
 
+# Frames
+
+[Frames](https://godoc.org/github.com/grailbio/bigslice/frame#Frame)
+are used within Bigslice to store data and operate on it.
+Frames represent a rectangular data frame,
+comprising one or more columns
+and one or more rows.
+Frames follow the semantics of Go's slices.
+That is,
+each frame is a descriptor of an underlying set of typed arrays.
+Each frame stores a pointer to the underlying data,
+together with its offset, length, and capacity.
+Thus, frames may be appended, copied, and sub-sliced
+in the manner of Go slices.
+(However, the set of columns remain fixed once a Frame has been created.)
+Frames also store the type of each column
+so that operations may be type-checked at runtime.
+
+Frames implement a columnar memory layout:
+that is, 
+each column in a Frame is an independent, contiguous array.
+An an example, consider a 3-column Frame 
+with types `A`, `B`, and `C`
+of length 4.
+This frame has the following memory layout: `AAAABBBBCCCC`.
+(a row-based layout would have the layout `ABCABCABCABC`.)
+
+In addition to managing storage,
+Frames provide a set of [type-driven operations](https://godoc.org/github.com/grailbio/bigslice/frame#Ops)
+that are required to implement various aspects of Bigslice.
+For example,
+operations are required for hashing and sorting data 
+(e.g., for a reduce or group-by operation);
+Ops also allow users to supply custom 
+marshaling and unmarshal functions
+(by default, Bigslice will use [gob](https://godoc.org/encoding/gob)).
+User-provided operations are provided through 
+[frame.RegisterOps](https://godoc.org/github.com/grailbio/bigslice/frame#RegisterOps).
+
+Frames thus provide a mechanism to efficiently 
+and safely manage and operate on rectangular data.
+Frames expose operations in a type-oblivious way,
+so that algorithms can be generalized.
+For example,
+the Bigslice [combiner](https://github.com/grailbio/bigslice/blob/cafa2ff6e7ea96fa4d094a9f2149109825b3774a/exec/combiner.go#L148)
+implements a hash table on top of frames,
+without any knowledge of the types of the values it contains.
