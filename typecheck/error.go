@@ -10,7 +10,7 @@ import (
 	"runtime"
 )
 
-// TestCalldepth may be overriden by a user to add call depths to
+// TestCalldepth may be overridden by a user to add call depths to
 // errors that are constructed by NewError. This is useful for
 // testing that error messages capture the correct locations.
 var TestCalldepth = 0

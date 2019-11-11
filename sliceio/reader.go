@@ -71,7 +71,6 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 		n, err := m.q[0].Read(ctx, out)
 		switch {
 		case err == EOF:
-			err = nil
 			m.q = m.q[1:]
 		case err != nil:
 			m.err = err

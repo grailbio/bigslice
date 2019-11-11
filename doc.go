@@ -15,7 +15,7 @@
 
 	Bigslice jobs can run locally, but uses bigmachine for distribution
 	among a cluster of compute nodes. In either case, user code does not
-	change; the detials of distribution are handled by the combination
+	change; the details of distribution are handled by the combination
 	of bigmachine and bigslice.
 
 	Because Go cannot easily serialize code to be sent over the wire and
