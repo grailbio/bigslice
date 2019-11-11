@@ -125,7 +125,9 @@ func setupEC2SecurityGroup(svc *ec2.EC2, name string) (string, error) {
 		return "", fmt.Errorf("error retrieving default VPC while creating new security group:% v", err)
 	}
 	if len(vpcResp.Vpcs) == 0 {
-		return "", errors.New("AWS account does not have a default VPC; needs manual setup")
+		return "", errors.New(
+			"AWS account does not have a default VPC and requires manual setup.\n" +
+				"See https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc.html#create-default-vpc")
 	} else if len(vpcResp.Vpcs) > 1 {
 		// I'm not sure this is possible. But keep it as a sanity check.
 		return "", errors.New("AWS account has multiple default VPCs; needs manual setup")
