@@ -145,7 +145,7 @@ For example,
 operations are required for hashing and sorting data 
 (e.g., for a reduce or group-by operation);
 Ops also allow users to supply custom 
-marshaling and unmarshal functions
+encoding and decoding functions
 (by default, Bigslice will use [gob](https://godoc.org/encoding/gob)).
 User-provided operations are provided through 
 [frame.RegisterOps](https://godoc.org/github.com/grailbio/bigslice/frame#RegisterOps).
