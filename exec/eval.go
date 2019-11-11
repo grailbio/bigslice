@@ -313,7 +313,7 @@ func (s *state) schedule(task *Task) {
 // Add adds a dependency from the provided src to dst tasks.
 func (s *state) add(src, dst *Task, n int) {
 	if d := s.deps[src]; d == nil {
-		s.deps[src] = map[*Task]struct{}{dst: struct{}{}}
+		s.deps[src] = map[*Task]struct{}{dst: {}}
 		s.counts[dst] += n
 	} else if _, ok := d[dst]; !ok {
 		d[dst] = struct{}{}
