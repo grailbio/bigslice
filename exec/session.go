@@ -313,15 +313,19 @@ type Result struct {
 	tasks []*Task
 }
 
-// Scan returns a scanner that scans the output. If the output
-// contains multiple shards, they are scanned sequentially.
-func (r *Result) Scan(ctx context.Context) *sliceio.Scanner {
-	readers := make([]sliceio.Reader, len(r.tasks))
+// Scanner returns a scanner that scans the output. If the output contains
+// multiple shards, they are scanned sequentially. You must call Close on the
+// returned scanner when you are done scanning. You may get and scan multiple
+// scanners concurrently from r.
+func (r *Result) Scanner() *sliceio.Scanner {
+	reader := r.open()
+	return sliceio.NewScanner(r, reader)
+}
+
+func (r *Result) open() sliceio.ReadCloser {
+	readers := make([]sliceio.ReadCloser, len(r.tasks))
 	for i := range readers {
-		readers[i] = r.sess.executor.Reader(ctx, r.tasks[i], 0)
+		readers[i] = r.sess.executor.Reader(r.tasks[i], 0)
 	}
-	return &sliceio.Scanner{
-		Type:   r,
-		Reader: sliceio.MultiReader(readers...),
-	}
+	return sliceio.MultiReader(readers...)
 }

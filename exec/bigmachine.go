@@ -399,13 +399,13 @@ func monitorTaskStats(ctx context.Context, m *sliceMachine, task *Task) {
 	}
 }
 
-func (b *bigmachineExecutor) Reader(ctx context.Context, task *Task, partition int) sliceio.Reader {
+func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 	m := b.location(task)
 	if m == nil {
-		return sliceio.ErrReader(errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name)))
+		return sliceio.NopCloser(sliceio.ErrReader(errors.E(errors.NotExist, fmt.Sprintf("task %s", task.Name))))
 	}
 	if task.CombineKey != "" {
-		return sliceio.ErrReader(fmt.Errorf("read %s: cannot read tasks with combine keys", task.Name))
+		return sliceio.NopCloser(sliceio.ErrReader(fmt.Errorf("read %s: cannot read tasks with combine keys", task.Name)))
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return &machineReader{

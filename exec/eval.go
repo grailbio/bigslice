@@ -43,8 +43,8 @@ type Executor interface {
 	// time Run returns the task state is >= TaskOk.
 	Run(*Task)
 
-	// Reader returns a locally accessible reader for the requested task.
-	Reader(context.Context, *Task, int) sliceio.Reader
+	// Reader returns a locally accessible ReadCloser for the requested task.
+	Reader(*Task, int) sliceio.ReadCloser
 
 	// HandleDebug adds executor-specific debug handlers to the provided
 	// http.ServeMux. This is used to serve diagnostic information relating

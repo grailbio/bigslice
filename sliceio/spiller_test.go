@@ -42,6 +42,7 @@ func TestSpiller(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	reader := MultiReader(readers...)
+	defer reader.Close()
 	m, err := ReadFull(context.Background(), reader, f12.Slice(n, 2*n))
 	if err != nil {
 		t.Fatal(err)

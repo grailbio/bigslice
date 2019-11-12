@@ -71,7 +71,8 @@ func cogroup(sess *exec.Session, args []string) error {
 		return err
 	}
 	seen := make([]bool, *nkey)
-	scan := r.Scan(ctx)
+	scan := r.Scanner()
+	defer scan.Close()
 	ok := true
 	errorf := func(format string, v ...interface{}) {
 		log.Error.Printf(format, v...)

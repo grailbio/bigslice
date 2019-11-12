@@ -63,7 +63,7 @@ func (l *localExecutor) Run(task *Task) {
 		reader := new(multiReader)
 		reader.q = make([]sliceio.Reader, dep.NumTask())
 		for j := 0; j < dep.NumTask(); j++ {
-			reader.q[j] = l.Reader(ctx, dep.Task(j), dep.Partition)
+			reader.q[j] = l.Reader(dep.Task(j), dep.Partition)
 		}
 		if dep.NumTask() > 0 && dep.Task(0).Combiner != nil {
 			// Perform input combination in-line, one for each partition.
@@ -122,7 +122,7 @@ func (l *localExecutor) Run(task *Task) {
 	task.Unlock()
 }
 
-func (l *localExecutor) Reader(_ context.Context, task *Task, partition int) sliceio.Reader {
+func (l *localExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 	l.mu.Lock()
 	buf := l.buffers[task]
 	l.mu.Unlock()

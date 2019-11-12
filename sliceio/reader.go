@@ -50,16 +50,35 @@ type Reader interface {
 	Read(ctx context.Context, frame frame.Frame) (int, error)
 }
 
+// ReadCloser groups the Read and Close methods.
+type ReadCloser interface {
+	Reader
+	io.Closer
+}
+
+// nopCloser decorates a reader with a no-op Close method. Use it to adapt a
+// Reader to a ReadCloser when the Reader has no resources to release on Close.
+type nopCloser struct {
+	Reader
+}
+
+func (nopCloser) Close() error {
+	return nil
+}
+
+func NopCloser(r Reader) ReadCloser {
+	return nopCloser{r}
+}
+
 type multiReader struct {
-	q   []Reader
+	q   []ReadCloser
 	err error
 }
 
-// MultiReader returns a Reader that's the logical concatenation of
-// the provided input readers. Once every underlying Reader has
-// returned EOF, Read will return EOF, too. Non-EOF errors are
-// returned immediately.
-func MultiReader(readers ...Reader) Reader {
+// MultiReader returns a ReadCloser that's the logical concatenation of the
+// provided input readers. Once every underlying ReadCloser has returned EOF,
+// Read will return EOF, too. Non-EOF errors are returned immediately.
+func MultiReader(readers ...ReadCloser) ReadCloser {
 	return &multiReader{q: readers}
 }
 
@@ -71,6 +90,9 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 		n, err := m.q[0].Read(ctx, out)
 		switch {
 		case err == EOF:
+			// There's not much for us to do if the Close fails, so we just
+			// ignore it.
+			_ = m.q[0].Close()
 			m.q = m.q[1:]
 		case err != nil:
 			m.err = err
@@ -80,6 +102,17 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 		}
 	}
 	return 0, EOF
+}
+
+func (m *multiReader) Close() error {
+	var err error
+	for _, r := range m.q {
+		cerr := r.Close()
+		if err == nil {
+			err = cerr
+		}
+	}
+	return err
 }
 
 // FrameReader implements a Reader for a single Frame.
@@ -168,19 +201,41 @@ func (e errReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	return 0, e.Err
 }
 
-// A ClosingReader closes the provided io.Closer when Read returns
-// any error.
-type ClosingReader struct {
+// ReaderWithCloseFunc is a ReadCloser that wraps an existing Reader and uses a
+// provided function for its Close.
+type ReaderWithCloseFunc struct {
 	Reader
-	io.Closer
+	CloseFunc func() error
+}
+
+// Close implements io.Closer.
+func (r ReaderWithCloseFunc) Close() error {
+	return r.CloseFunc()
+}
+
+// TODO(jcharumilind): Get rid of ClosingReader, as it makes it too tempting to
+// not properly handle errors. We use it in cases where we expect to read from
+// many readers (e.g. mergeReader). On failure, we should close all of them, but
+// ClosingReader obscures this a bit and makes it so that the only way to close
+// is by reading until non-nil error.
+
+// ClosingReader closes the wrapped ReadCloser when Read returns any error.
+type ClosingReader struct {
+	r      ReadCloser
+	closed bool
+}
+
+// NewClosingReader returns a new ClosingReader for r.
+func NewClosingReader(r ReadCloser) *ClosingReader {
+	return &ClosingReader{r: r}
 }
 
 // Read implements sliceio.Reader.
 func (c *ClosingReader) Read(ctx context.Context, out frame.Frame) (int, error) {
-	n, err := c.Reader.Read(ctx, out)
-	if err != nil && c.Closer != nil {
-		c.Closer.Close()
-		c.Closer = nil
+	n, err := c.r.Read(ctx, out)
+	if err != nil && !c.closed {
+		c.r.Close()
+		c.closed = true
 	}
 	return n, err
 }

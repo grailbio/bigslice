@@ -6,6 +6,7 @@ package sliceio
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -41,6 +42,60 @@ func TestFrameReader(t *testing.T) {
 
 	if !reflect.DeepEqual(f.Interface(0).([]string), out.Interface(0).([]string)) {
 		t.Error("frames do not match")
+	}
+}
+
+// TestMultiReaderClose verifies that (*multiReader).Close closes all of the
+// comprising readers.
+func TestMultiReaderClose(t *testing.T) {
+	const NReaders = 10
+	var (
+		fz        = fuzz.NewWithSeed(12345)
+		readers   = make([]ReadCloser, NReaders)
+		numClosed int
+	)
+	for i := range readers {
+		f := fuzzFrame(fz, 1000, typeOfString)
+		closeFunc := func() error {
+			numClosed++
+			return nil
+		}
+		readers[i] = ReaderWithCloseFunc{FrameReader(f), closeFunc}
+	}
+	r := MultiReader(readers...)
+	r.Close()
+	if got, want := numClosed, NReaders; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestMultiReaderClose verifies that (*multiReader).Close closes all of the
+// comprising readers, even if not all readers have been exhausted.
+func TestMultiReaderErrClose(t *testing.T) {
+	const NReaders = 10
+	var (
+		fz        = fuzz.NewWithSeed(12345)
+		readers   = make([]ReadCloser, NReaders)
+		numClosed int
+	)
+	for i := range readers {
+		closeFunc := func() error {
+			numClosed++
+			return nil
+		}
+		// One of the readers in the middle returns an error.
+		if i == 3 {
+			readers[i] = ReaderWithCloseFunc{ErrReader(errors.New("some error")), closeFunc}
+			continue
+		}
+		f := fuzzFrame(fz, 1000, typeOfString)
+		readers[i] = ReaderWithCloseFunc{FrameReader(f), closeFunc}
+	}
+	r := MultiReader(readers...)
+	r.Close()
+	// Make sure all readers are closed, despite error in the middle.
+	if got, want := numClosed, NReaders; got != want {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 

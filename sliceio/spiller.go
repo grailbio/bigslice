@@ -76,8 +76,8 @@ func (dir Spiller) Spill(frame frame.Frame) (int, error) {
 	return int(size), nil
 }
 
-// Readers returns a reader for each spiller file.
-func (dir Spiller) Readers() ([]Reader, error) {
+// Readers returns a ReadCloser for each spiller file.
+func (dir Spiller) Readers() ([]ReadCloser, error) {
 	var paths []string
 	// These are always on local paths, so background context is ok.
 	list := file.List(backgroundcontext.Get(), string(dir), true)
@@ -90,22 +90,33 @@ func (dir Spiller) Readers() ([]Reader, error) {
 	if err := list.Err(); err != nil {
 		return nil, err
 	}
-	var (
-		readers = make([]Reader, len(paths))
-		closers = make([]io.Closer, len(paths))
-	)
+	readers := make([]ReadCloser, len(paths))
 	for i, path := range paths {
 		f, err := os.Open(path)
 		if err != nil {
 			for j := 0; j < i; j++ {
-				closers[j].Close()
+				readers[j].Close()
 			}
 			return nil, err
 		}
-		closers[i] = f
-		readers[i] = &ClosingReader{NewDecodingReader(f), f}
+		readers[i] = ReaderWithCloseFunc{NewDecodingReader(f), f.Close}
 	}
 	return readers, nil
+}
+
+// ClosingReaders returns a reader for each spiller file. The readers close the
+// underlying file when Read returns a non-nil error (otherwise the underlying
+// file resource will leak).
+func (dir Spiller) ClosingReaders() ([]Reader, error) {
+	readers, err := dir.Readers()
+	if err != nil {
+		return nil, err
+	}
+	cReaders := make([]Reader, len(readers))
+	for i, r := range readers {
+		cReaders[i] = NewClosingReader(r)
+	}
+	return cReaders, nil
 }
 
 // Cleanup removes the spiller's temporary files. It is safe to call

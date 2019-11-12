@@ -33,7 +33,7 @@ func (t testExecutor) Run(task *Task) {
 	task.Unlock()
 }
 
-func (testExecutor) Reader(context.Context, *Task, int) sliceio.Reader {
+func (testExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
 }
 
@@ -458,7 +458,7 @@ func (b benchExecutor) Run(task *Task) {
 	task.Unlock()
 }
 
-func (benchExecutor) Reader(context.Context, *Task, int) sliceio.Reader {
+func (benchExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
 }
 

@@ -47,9 +47,13 @@ func (b taskBuffer) Slice(partition, off int) (frame.Frame, int) {
 type taskBufferReader struct {
 	q       taskBuffer
 	i, j, k int
+	closed  bool
 }
 
 func (r *taskBufferReader) Read(ctx context.Context, out frame.Frame) (int, error) {
+	if r.closed {
+		panic("closed")
+	}
 loop:
 	for {
 		switch {
@@ -76,10 +80,16 @@ loop:
 	return n, nil
 }
 
+func (r *taskBufferReader) Close() error {
+	r.q = nil
+	r.closed = true
+	return nil
+}
+
 // Reader returns a Reader for a partition of the taskBuffer.
-func (b taskBuffer) Reader(partition int) sliceio.Reader {
+func (b taskBuffer) Reader(partition int) sliceio.ReadCloser {
 	if len(b) == 0 {
-		return sliceio.EmptyReader{}
+		return sliceio.NopCloser(sliceio.EmptyReader{})
 	}
 	return &taskBufferReader{q: b[partition : partition+1]}
 }

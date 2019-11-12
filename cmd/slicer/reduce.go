@@ -47,7 +47,8 @@ func reduce(sess *exec.Session, args []string) error {
 	if err != nil {
 		return err
 	}
-	scan := r.Scan(ctx)
+	scan := r.Scanner()
+	defer scan.Close()
 	ok := true
 	errorf := func(format string, v ...interface{}) {
 		log.Error.Printf(format, v...)

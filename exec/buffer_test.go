@@ -31,10 +31,7 @@ func TestTaskBuffer(t *testing.T) {
 	for _, batch := range batches {
 		b[0] = append(b[0], frame.Slices(batch))
 	}
-	s := &sliceio.Scanner{
-		Reader: b.Reader(0),
-		Type:   slicetype.New(typeOfString),
-	}
+	s := sliceio.NewScanner(slicetype.New(typeOfString), b.Reader(0))
 	var (
 		i   int
 		str string

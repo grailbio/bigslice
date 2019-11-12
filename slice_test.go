@@ -81,7 +81,7 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 			t.Errorf("executor %s error %v", name, err)
 			continue
 		}
-		results[name] = res.Scan(ctx)
+		results[name] = res.Scanner()
 	}
 	return results
 }
@@ -209,6 +209,7 @@ func assertEqual(t *testing.T, slice bigslice.Slice, sort bool, expect ...interf
 	t.Helper()
 	for name, s := range run(context.Background(), t, slice) {
 		t.Run(name, func(t *testing.T) {
+			defer s.Close()
 			args := make([]interface{}, len(expect))
 			for i := range args {
 				// Make this one larger to make sure we exhaust the scanner.
@@ -451,7 +452,8 @@ func TestWriterFunc(t *testing.T) {
 			}
 
 			// Check the columns in the output slice.
-			scanner := res.Scan(ctx)
+			scanner := res.Scanner()
+			defer scanner.Close()
 			var (
 				s       string
 				i       int

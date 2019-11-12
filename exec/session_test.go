@@ -74,10 +74,11 @@ func TestSessionIterative(t *testing.T) {
 			}
 		}
 		var (
-			scan = res.Scan(ctx)
+			scan = res.Scanner()
 			ints []int
 			x    int
 		)
+		defer scan.Close()
 		for scan.Scan(ctx, &x) {
 			ints = append(ints, x)
 		}
@@ -193,7 +194,9 @@ func readFrame(t *testing.T, res *Result, n int) frame.Frame {
 	t.Helper()
 	f := frame.Make(res, n+1, n+1)
 	ctx := context.Background()
-	m, err := sliceio.ReadFull(ctx, res.Scan(ctx).Reader, f)
+	reader := res.open()
+	defer reader.Close()
+	m, err := sliceio.ReadFull(ctx, reader, f)
 	if err != sliceio.EOF {
 		t.Fatal(err)
 	}
