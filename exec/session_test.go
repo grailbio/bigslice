@@ -16,6 +16,8 @@ import (
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/testutil/assert"
+	"github.com/grailbio/testutil/h"
 )
 
 func init() {
@@ -156,6 +158,25 @@ func TestSessionReuse(t *testing.T) {
 			if got, want := v[i], k[i]*2; got != want {
 				t.Errorf("index %d: got %v, want %v", i, got, want)
 			}
+		}
+	})
+}
+
+// TestSessionFuncPanic verifies that the session survives a Func that panics
+// on invocation.
+func TestSessionFuncPanic(t *testing.T) {
+	panicker := bigslice.Func(func() bigslice.Slice {
+		panic("panic")
+	})
+	nonPanicker := bigslice.Func(func() bigslice.Slice {
+		return bigslice.Const(1, []int{})
+	})
+	ctx := context.Background()
+	testSession(t, func(t *testing.T, sess *Session) {
+		assert.That(t, func() { _, _ = sess.Run(ctx, panicker) }, h.Panics(h.NotNil()))
+		_, err := sess.Run(ctx, nonPanicker)
+		if err != nil {
+			t.Errorf("session did not survive panic")
 		}
 	})
 }
