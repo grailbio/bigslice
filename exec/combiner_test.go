@@ -13,6 +13,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -36,7 +37,7 @@ func deepEqual(f, g frame.Frame) bool {
 
 func TestCombiningFrame(t *testing.T) {
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }), 2, 1)
+	f := makeCombiningFrame(typ, slicefunc.Of(func(n, m int) int { return n + m }), 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}
@@ -64,7 +65,7 @@ func TestCombiningFrame(t *testing.T) {
 func TestCombiningFrameManyKeys(t *testing.T) {
 	const N = 100000
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, reflect.ValueOf(func(n, m int) int { return n + m }), 2, 1)
+	f := makeCombiningFrame(typ, slicefunc.Of(func(n, m int) int { return n + m }), 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}
@@ -113,7 +114,7 @@ func TestCombiner(t *testing.T) {
 	const N = 100
 	typ := slicetype.New(typeOfString, typeOfInt)
 	// Set a small target value to ensure spilling.
-	c, err := newCombiner(typ, "test", reflect.ValueOf(func(n, m int) int { return n + m }), 2)
+	c, err := newCombiner(typ, "test", slicefunc.Of(func(n, m int) int { return n + m }), 2)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -798,7 +798,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 
 	// If we have a combiner, then we partition globally for the machine
 	// into common combiners.
-	if task.Combiner != nil {
+	if !task.Combiner.IsNil() {
 		return w.runCombine(ctx, task, taskStats, task.Do(in))
 	}
 
@@ -954,7 +954,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), *task.Combiner, *defaultChunksize*100)
+			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), task.Combiner, *defaultChunksize*100)
 			if err != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
@@ -999,7 +999,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		out               = frame.Make(task, *defaultChunksize, *defaultChunksize)
 	)
 	for i := range partitionCombiner {
-		partitionCombiner[i] = makeCombiningFrame(task, *task.Combiner, 8, 1)
+		partitionCombiner[i] = makeCombiningFrame(task, task.Combiner, 8, 1)
 	}
 	for {
 		n, err := in.Read(ctx, out)

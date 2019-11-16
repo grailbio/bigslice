@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/sortio"
@@ -108,7 +109,7 @@ func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
 func (c *cogroupSlice) Prefix() int            { return c.prefix }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
 func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
-func (*cogroupSlice) Combiner() *reflect.Value { return nil }
+func (*cogroupSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type cogroupReader struct {
 	err error

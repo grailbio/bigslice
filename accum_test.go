@@ -10,6 +10,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -28,7 +29,7 @@ outer:
 			t.Errorf("expected to be able to make accumulator for %s", typ)
 			continue
 		}
-		step := reflect.ValueOf(func(a, e int) int { return a + e })
+		step := slicefunc.Of(func(a, e int) int { return a + e })
 		accum := makeAccumulator(typ, typeOfInt, step)
 		const N = 100
 		for i := 0; i < N; i++ {

@@ -14,6 +14,7 @@ import (
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/sortio"
@@ -62,7 +63,7 @@ type combiningFrame struct {
 	// Combiner is a function that combines values in the frame.
 	// It should have the signature func(x, y t) t, where t is the type
 	// of Frame[1].
-	Combiner reflect.Value
+	Combiner slicefunc.Func
 
 	typ slicetype.Type
 
@@ -97,7 +98,7 @@ type combiningFrame struct {
 // is type disagreement. N and nscratch determine the initial frame
 // size and scratch space size respective. The initial frame size
 // must be a power of two.
-func makeCombiningFrame(typ slicetype.Type, combiner reflect.Value, n, nscratch int) *combiningFrame {
+func makeCombiningFrame(typ slicetype.Type, combiner slicefunc.Func, n, nscratch int) *combiningFrame {
 	if res := typ.NumOut() - typ.Prefix(); res != 1 {
 		typecheck.Panicf(1, "combining frame expects 1 residual column, got %d", res)
 	}
@@ -147,6 +148,8 @@ func (c *combiningFrame) Combine(f frame.Frame) {
 // Combine combines n items in the scratch space.
 func (c *combiningFrame) combine(n int) {
 	// TODO(marius): use cuckoo hashing
+	// TODO(marius): propagate context
+	ctx := context.Background()
 	for i := 0; i < n; i++ {
 		idx := int(c.scratch.HashWithSeed(i, hashSeed)) & c.mask
 		for try := 1; ; try++ {
@@ -158,7 +161,7 @@ func (c *combiningFrame) combine(n int) {
 			} else if !c.data.Less(idx, c.cap+i) && !c.data.Less(c.cap+i, idx) {
 				c.scratchCall[0] = c.data.Index(c.vcol, idx)
 				c.scratchCall[1] = c.scratch.Index(c.vcol, i)
-				rvs := c.Combiner.Call(c.scratchCall[:])
+				rvs := c.Combiner.Call(ctx, c.scratchCall[:])
 				c.data.Index(c.vcol, idx).Set(rvs[0])
 				c.hits[idx]++
 				break
@@ -226,7 +229,7 @@ type combiner struct {
 
 	targetSize int
 	comb       *combiningFrame
-	combiner   reflect.Value
+	combiner   slicefunc.Func
 	spiller    sliceio.Spiller
 	name       string
 	total      int
@@ -236,7 +239,7 @@ type combiner struct {
 // NewCombiner creates a new combiner with the given type, name,
 // combiner, and target in-memory size (rows). Combiners can be
 // safely accessed concurrently.
-func newCombiner(typ slicetype.Type, name string, comb reflect.Value, targetSize int) (*combiner, error) {
+func newCombiner(typ slicetype.Type, name string, comb slicefunc.Func, targetSize int) (*combiner, error) {
 	c := &combiner{
 		Type:       typ,
 		name:       name,
