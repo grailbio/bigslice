@@ -5,9 +5,11 @@
 package bigslice
 
 import (
+	"context"
 	"reflect"
 
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -32,7 +34,7 @@ func canMakeAccumulatorForKey(keyType reflect.Type) bool {
 	}
 }
 
-func makeAccumulator(keyType, accType reflect.Type, fn reflect.Value) Accumulator {
+func makeAccumulator(keyType, accType reflect.Type, fn slicefunc.Func) Accumulator {
 	switch keyType.Kind() {
 	case reflect.String:
 		return &stringAccumulator{
@@ -60,11 +62,12 @@ func makeAccumulator(keyType, accType reflect.Type, fn reflect.Value) Accumulato
 // StringAccumulator accumulates values by string keys.
 type stringAccumulator struct {
 	accType reflect.Type
-	fn      reflect.Value
+	fn      slicefunc.Func
 	state   map[string]reflect.Value
 }
 
 func (s *stringAccumulator) Accumulate(in frame.Frame, n int) {
+	ctx := context.Background()
 	keys := in.Interface(0).([]string)
 	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
@@ -77,7 +80,7 @@ func (s *stringAccumulator) Accumulate(in frame.Frame, n int) {
 		for j := 1; j < in.NumOut(); j++ {
 			args[j] = in.Index(j, i)
 		}
-		s.state[key] = s.fn.Call(args)[0]
+		s.state[key] = s.fn.Call(ctx, args)[0]
 	}
 }
 
@@ -101,11 +104,12 @@ func (s *stringAccumulator) Read(keys, values reflect.Value) (n int, err error) 
 // IntAccumulator accumulates values by integer keys.
 type intAccumulator struct {
 	accType reflect.Type
-	fn      reflect.Value
+	fn      slicefunc.Func
 	state   map[int]reflect.Value
 }
 
 func (s *intAccumulator) Accumulate(in frame.Frame, n int) {
+	ctx := context.Background()
 	keys := in.Interface(0).([]int)
 	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
@@ -118,7 +122,7 @@ func (s *intAccumulator) Accumulate(in frame.Frame, n int) {
 		for j := 1; j < in.NumOut(); j++ {
 			args[j] = in.Index(j, i)
 		}
-		s.state[key] = s.fn.Call(args)[0]
+		s.state[key] = s.fn.Call(ctx, args)[0]
 	}
 }
 
@@ -142,11 +146,12 @@ func (s *intAccumulator) Read(keys, values reflect.Value) (n int, err error) {
 // Int64Accumulator accumulates values by integer keys.
 type int64Accumulator struct {
 	accType reflect.Type
-	fn      reflect.Value
+	fn      slicefunc.Func
 	state   map[int64]reflect.Value
 }
 
 func (s *int64Accumulator) Accumulate(in frame.Frame, n int) {
+	ctx := context.Background()
 	keys := in.Interface(0).([]int64)
 	args := make([]reflect.Value, in.NumOut())
 	for i := 0; i < n; i++ {
@@ -159,7 +164,7 @@ func (s *int64Accumulator) Accumulate(in frame.Frame, n int) {
 		for j := 1; j < in.NumOut(); j++ {
 			args[j] = in.Index(j, i)
 		}
-		s.state[key] = s.fn.Call(args)[0]
+		s.state[key] = s.fn.Call(ctx, args)[0]
 	}
 }
 

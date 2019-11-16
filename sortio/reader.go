@@ -11,6 +11,7 @@ import (
 
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/internal/defaultsize"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
@@ -21,7 +22,7 @@ var defaultChunksize = defaultsize.Chunk
 type reader struct {
 	typ      slicetype.Type
 	name     string
-	combiner reflect.Value
+	combiner slicefunc.Func
 	readers  []sliceio.Reader
 	err      error
 
@@ -32,7 +33,7 @@ type reader struct {
 // Reduce returns a Reader that merges and reduces a set of
 // sorted (and possibly combined) readers. Reduce panics if
 // the provided type is not reducable.
-func Reduce(typ slicetype.Type, name string, readers []sliceio.Reader, combiner reflect.Value) sliceio.Reader {
+func Reduce(typ slicetype.Type, name string, readers []sliceio.Reader, combiner slicefunc.Func) sliceio.Reader {
 	if typ.NumOut()-typ.Prefix() != 1 {
 		typecheck.Panicf(1, "cannot reduce type %s", slicetype.String(typ))
 	}
@@ -98,7 +99,7 @@ func (r *reader) Read(ctx context.Context, out frame.Frame) (int, error) {
 			if i == 0 {
 				combined = val
 			} else {
-				combined = r.combiner.Call([]reflect.Value{combined, val})[0]
+				combined = r.combiner.Call(ctx, []reflect.Value{combined, val})[0]
 			}
 		}
 		// Emit the output before overwriting the frame. Copy key columns

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/base/sync/ctxsync"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -234,10 +234,10 @@ type Task struct {
 	NumPartition int
 
 	// Combiner specifies an (optional) combiner to use for this task's output.
-	// If a Combiner is specified, CombineKey names the combine buffer used:
+	// If a Combiner is not Nil(), CombineKey names the combine buffer used:
 	// each combine buffer contains combiner outputs from multiple tasks.
 	// If CombineKey is not set, then per-task buffers are used instead.
-	Combiner   *reflect.Value
+	Combiner   slicefunc.Func
 	CombineKey string
 
 	// Pragma comprises the pragmas of all slice operations that

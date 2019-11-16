@@ -6,12 +6,12 @@ package exec
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/internal/slicecache"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -54,7 +54,7 @@ type partitioner struct {
 	// numPartition is the number of partitions in the output for a shuffle
 	// dependency, if >1. If 0, the output is not used by a shuffle.
 	numPartition int
-	Combiner     *reflect.Value
+	Combiner     slicefunc.Func
 	CombineKey   string
 }
 
@@ -111,7 +111,7 @@ type compiler struct {
 func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Task, err error) {
 	// We never reuse combiner tasks, as we currently don't have a way of
 	// identifying equivalent combiner functions.
-	if part.Combiner == nil {
+	if part.Combiner.IsNil() {
 		// TODO(jcharumilind): Repartition already-computed data instead of
 		// forcing recomputation of the slice if we get a different
 		// numPartition.
@@ -140,7 +140,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	// Reuse tasks from a previous invocation.
 	if result, ok := bigslice.Unwrap(slice).(*Result); ok {
 		for _, task := range result.tasks {
-			if task.Combiner != nil {
+			if !task.Combiner.IsNil() {
 				// TODO(marius): we may consider supporting this, but it should
 				// be very rare, since it requires the user to explicitly reuse
 				// an intermediate slice, which is impossible via the current
@@ -223,7 +223,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 			continue
 		}
 		var combineKey string
-		if lastSlice.Combiner() != nil && c.machineCombiners {
+		if !lastSlice.Combiner().IsNil() && c.machineCombiners {
 			combineKey = opName
 		}
 		depPart := partitioner{slice.NumShard(), lastSlice.Combiner(), combineKey}

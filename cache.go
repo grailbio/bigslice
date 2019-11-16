@@ -6,9 +6,9 @@ package bigslice
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/grailbio/bigslice/internal/slicecache"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -23,7 +23,7 @@ var _ slicecache.Cacheable = (*cacheSlice)(nil)
 func (c *cacheSlice) Name() Name                                             { return c.name }
 func (c *cacheSlice) NumDep() int                                            { return 1 }
 func (c *cacheSlice) Dep(i int) Dep                                          { return Dep{c.Slice, false, false} }
-func (*cacheSlice) Combiner() *reflect.Value                                 { return nil }
+func (*cacheSlice) Combiner() slicefunc.Func                                 { return slicefunc.Nil }
 func (c *cacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 
 func (c *cacheSlice) Cache() *slicecache.ShardCache { return c.cache }

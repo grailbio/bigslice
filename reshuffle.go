@@ -6,8 +6,8 @@ package bigslice
 
 import (
 	"fmt"
-	"reflect"
 
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -34,7 +34,7 @@ func Reshuffle(slice Slice) Slice {
 func (r *reshuffleSlice) Name() Name             { return r.name }
 func (*reshuffleSlice) NumDep() int              { return 1 }
 func (r *reshuffleSlice) Dep(i int) Dep          { return Dep{r.Slice, true, false} }
-func (*reshuffleSlice) Combiner() *reflect.Value { return nil }
+func (*reshuffleSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 func (r *reshuffleSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	if len(deps) != 1 {

@@ -14,6 +14,7 @@ import (
 var (
 	typeOfString = reflect.TypeOf("")
 	typeOfInt    = reflect.TypeOf(0)
+	typeOfBool   = reflect.TypeOf(false)
 )
 
 func TestEqual(t *testing.T) {
