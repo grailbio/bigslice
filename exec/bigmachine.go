@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -459,8 +460,10 @@ type worker struct {
 	stats     *stats.Map
 
 	// CombinerStates and combiners are used to manage shared combine
-	// buffers.
+	// buffers. combinerErrors is used to track the original cause of an
+	// a combiner error and report it accordingly.
 	combinerStates map[TaskName]combinerState
+	combinerErrors map[TaskName]error
 	combiners      map[TaskName][]chan *combiner
 
 	commitLimiter *limiter.Limiter
@@ -473,6 +476,7 @@ func (w *worker) Init(b *bigmachine.B) error {
 	w.slices = make(map[uint64]bigslice.Slice)
 	w.combiners = make(map[TaskName][]chan *combiner)
 	w.combinerStates = make(map[TaskName]combinerState)
+	w.combinerErrors = make(map[TaskName]error)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
 	if err != nil {
@@ -599,11 +603,12 @@ func reviseSeverity(err error) error {
 	if e, ok := err.(maybeTaskFatalErr); ok {
 		return e.error
 	}
-	if e, ok := err.(*errors.Error); ok && e != nil && e.Severity == errors.Fatal {
+	if e, ok := err.(*errors.Error); ok && e != nil && e.Severity == errors.Fatal && e.Kind != errors.Invalid {
 		// The error is fatal to this attempt to run the task but not fatal to
 		// the task overall, e.g. a fatal unavailable error when trying to read
 		// dependencies from other machines. We downgrade the error, so that the
-		// evaluator will retry.
+		// evaluator will retry. Do not revise the severity for 'invalid'
+		// errors since there's no way to recover from them without recompiling.
 		e.Severity = errors.Unknown
 		return e
 	}
@@ -628,6 +633,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if task != nil {
 				task.Error(errors.Recover(err))
 			}
+			// Allow log/printf output to flush to journalctl, without this,
+			// it appears that some log output is lost.
+			time.Sleep(time.Second)
 			return
 		}
 		if task != nil {
@@ -948,9 +956,16 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	}
 	w.mu.Lock()
 	switch w.combinerStates[combineKey] {
-	case combinerWriting, combinerCommitted, combinerError:
+	case combinerWriting:
+		w.mu.Unlock()
+		return fmt.Errorf("combine key %s still writing", combineKey)
+	case combinerCommitted:
 		w.mu.Unlock()
 		return fmt.Errorf("combine key %s already committed", combineKey)
+	case combinerError:
+		err := w.combinerErrors[combineKey]
+		w.mu.Unlock()
+		return fmt.Errorf("combine key %s already failed: %v", combineKey, err)
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
@@ -1087,7 +1102,13 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 		case combinerCommitted:
 			return nil
 		case combinerError:
-			return errors.E("error while writing combiner")
+			err := w.combinerErrors[key]
+			if strings.HasPrefix(err.Error(), "gob:") {
+				// No point in retrying any error to do with gob encoding/decoding.
+				// Mark the error as invalid to prevent it from being revised.
+				return errors.E(errors.Fatal, errors.Invalid, fmt.Errorf("fatal error while writing combiner: %w", err))
+			}
+			return errors.E("error while writing combiner", err)
 		case combinerIdle:
 			w.combinerStates[key] = combinerWriting
 			go w.writeCombiner(key)
@@ -1133,6 +1154,7 @@ func (w *worker) writeCombiner(key TaskName) {
 	} else {
 		log.Error.Printf("failed to write combine buffer %s: %v", key, err)
 		w.combinerStates[key] = combinerError
+		w.combinerErrors[key] = err
 	}
 	w.cond.Broadcast()
 }
