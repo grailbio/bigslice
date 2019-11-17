@@ -59,7 +59,7 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 			f = f.Ensure(targetRows)
 		}
 	}
-	readers, err := spill.Readers()
+	readers, err := spill.ClosingReaders()
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +193,8 @@ func (m *mergeReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 		m.heap.Buffers[0].Index++
 		if m.heap.Buffers[0].Index == m.heap.Buffers[0].Len {
 			if err := m.heap.Buffers[0].Fill(ctx); err != nil && err != sliceio.EOF {
+				// TODO(jcharumilind): Close other buffer readers that have not
+				// yet returned an error; otherwise they leak.
 				m.err = err
 				return 0, err
 			} else if err == sliceio.EOF {

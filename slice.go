@@ -970,7 +970,7 @@ type scanReader struct {
 }
 
 func (s *scanReader) Read(ctx context.Context, out frame.Frame) (n int, err error) {
-	err = s.slice.scan(s.shard, &sliceio.Scanner{Type: s.slice.Slice, Reader: s.reader})
+	err = s.slice.scan(s.shard, sliceio.NewScanner(s.slice.Slice, sliceio.NopCloser(s.reader)))
 	if err == nil {
 		err = sliceio.EOF
 	}

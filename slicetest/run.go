@@ -30,7 +30,7 @@ func Run(t *testing.T, slice bigslice.Slice) *sliceio.Scanner {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return res.Scan(ctx)
+	return res.Scanner()
 }
 
 // RunErr evaluates the provided slice in local execution mode
@@ -87,5 +87,7 @@ func ScanAll(t *testing.T, scan *sliceio.Scanner, cols ...interface{}) {
 // t instance.
 func RunAndScan(t *testing.T, slice bigslice.Slice, cols ...interface{}) {
 	t.Helper()
-	ScanAll(t, Run(t, slice), cols...)
+	scanner := Run(t, slice)
+	defer scanner.Close()
+	ScanAll(t, scanner, cols...)
 }

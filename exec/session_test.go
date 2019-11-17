@@ -16,6 +16,8 @@ import (
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/testutil/assert"
+	"github.com/grailbio/testutil/h"
 )
 
 func init() {
@@ -74,10 +76,11 @@ func TestSessionIterative(t *testing.T) {
 			}
 		}
 		var (
-			scan = res.Scan(ctx)
+			scan = res.Scanner()
 			ints []int
 			x    int
 		)
+		defer scan.Close()
 		for scan.Scan(ctx, &x) {
 			ints = append(ints, x)
 		}
@@ -159,6 +162,25 @@ func TestSessionReuse(t *testing.T) {
 	})
 }
 
+// TestSessionFuncPanic verifies that the session survives a Func that panics
+// on invocation.
+func TestSessionFuncPanic(t *testing.T) {
+	panicker := bigslice.Func(func() bigslice.Slice {
+		panic("panic")
+	})
+	nonPanicker := bigslice.Func(func() bigslice.Slice {
+		return bigslice.Const(1, []int{})
+	})
+	ctx := context.Background()
+	testSession(t, func(t *testing.T, sess *Session) {
+		assert.That(t, func() { _, _ = sess.Run(ctx, panicker) }, h.Panics(h.NotNil()))
+		_, err := sess.Run(ctx, nonPanicker)
+		if err != nil {
+			t.Errorf("session did not survive panic")
+		}
+	})
+}
+
 var executors = map[string]Option{
 	"Local":           Local,
 	"Bigmachine.Test": Bigmachine(testsystem.New()),
@@ -193,7 +215,9 @@ func readFrame(t *testing.T, res *Result, n int) frame.Frame {
 	t.Helper()
 	f := frame.Make(res, n+1, n+1)
 	ctx := context.Background()
-	m, err := sliceio.ReadFull(ctx, res.Scan(ctx).Reader, f)
+	reader := res.open()
+	defer reader.Close()
+	m, err := sliceio.ReadFull(ctx, reader, f)
 	if err != sliceio.EOF {
 		t.Fatal(err)
 	}

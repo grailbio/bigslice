@@ -8,6 +8,7 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
@@ -24,13 +25,22 @@ import (
 //
 // Callers should not mix calls to Scan and Scanv.
 type Scanner struct {
-	Reader Reader
-	Type   slicetype.Type
+	typ    slicetype.Type
+	reader ReadCloser
 
 	err      error
 	started  bool
 	in       frame.Frame
 	beg, end int
+	atEOF    bool
+}
+
+// NewScanner returns a new scanner of records of type typ from reader r.
+func NewScanner(typ slicetype.Type, r ReadCloser) *Scanner {
+	return &Scanner{
+		typ:    typ,
+		reader: r,
+	}
 }
 
 // Scan the next record into the provided columns. Scanning fails if
@@ -41,35 +51,35 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	if s.err != nil {
 		return false
 	}
-	if len(out) != s.Type.NumOut() {
-		s.err = typecheck.Errorf(1, "wrong arity: expected %d columns, got %d", s.Type.NumOut(), len(out))
+	if len(out) != s.typ.NumOut() {
+		s.err = typecheck.Errorf(1, "wrong arity: expected %d columns, got %d", s.typ.NumOut(), len(out))
 		return false
 	}
 	for i := range out {
-		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.Type.Out(i)); got != want {
+		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.typ.Out(i)); got != want {
 			s.err = typecheck.Errorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
 			return false
 		}
 	}
 	if !s.started {
 		s.started = true
-		s.in = frame.Make(s.Type, defaultChunksize, defaultChunksize)
+		s.in = frame.Make(s.typ, defaultChunksize, defaultChunksize)
 		s.beg, s.end = 0, 0
 	}
 	// Read the next batch of input.
 	for s.beg == s.end {
-		if s.Reader == nil {
+		if s.atEOF {
 			s.err = EOF
 			return false
 		}
-		n, err := s.Reader.Read(ctx, s.in)
+		n, err := s.reader.Read(ctx, s.in)
 		if err != nil && err != EOF {
 			s.err = err
 			return false
 		}
 		s.beg, s.end = 0, n
 		if err == EOF {
-			s.Reader = nil
+			s.atEOF = true
 		}
 	}
 	// TODO(marius): this can be made faster
@@ -78,6 +88,15 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	}
 	s.beg++
 	return true
+}
+
+// Close releases resources used by the scanner. This must be called exactly
+// once on the scanner returned by NewScanner.
+func (s *Scanner) Close() error {
+	if err := s.reader.Close(); err != nil {
+		return errors.E("error closing scanner", err)
+	}
+	return nil
 }
 
 // Scanv scans a batch of elements into the provided column vectors.

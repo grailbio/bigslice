@@ -309,7 +309,7 @@ func (c *combiner) Discard() error {
 // A call to Reader invalidates the combiner.
 func (c *combiner) Reader() (sliceio.Reader, error) {
 	defer c.spiller.Cleanup()
-	readers, err := c.spiller.Readers()
+	readers, err := c.spiller.ClosingReaders()
 	if err != nil {
 		return nil, err
 	}

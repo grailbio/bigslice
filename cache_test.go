@@ -53,6 +53,7 @@ func TestCache(t *testing.T) {
 	}
 	computeAllowed = true
 	scan1 := run(ctx, t, slice)["Local"]
+	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -62,6 +63,7 @@ func TestCache(t *testing.T) {
 	slice = makeSlice()
 
 	scan2 := run(ctx, t, slice)["Local"]
+	defer scan2.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
