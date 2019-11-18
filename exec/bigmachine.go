@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -969,7 +968,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	case combinerError:
 		err := w.combinerErrors[combineKey]
 		w.mu.Unlock()
-		return fmt.Errorf("combine key %s already failed: %v", combineKey, err)
+		return maybeTaskFatalErr{err}
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
@@ -1106,13 +1105,7 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 		case combinerCommitted:
 			return nil
 		case combinerError:
-			err := w.combinerErrors[key]
-			if strings.HasPrefix(err.Error(), "gob:") {
-				// No point in retrying any error to do with gob encoding/decoding.
-				// Mark the error as invalid to prevent it from being revised.
-				return errors.E(errors.Fatal, errors.Invalid, fmt.Errorf("fatal error while writing combiner: %w", err))
-			}
-			return errors.E("error while writing combiner", err)
+			return errors.E("error while writing combiner", w.combinerErrors[key])
 		case combinerIdle:
 			w.combinerStates[key] = combinerWriting
 			go w.writeCombiner(key)
@@ -1157,8 +1150,8 @@ func (w *worker) writeCombiner(key TaskName) {
 		w.combinerStates[key] = combinerCommitted
 	} else {
 		log.Error.Printf("failed to write combine buffer %s: %v", key, err)
-		w.combinerStates[key] = combinerError
 		w.combinerErrors[key] = err
+		w.combinerStates[key] = combinerError
 	}
 	w.cond.Broadcast()
 }
