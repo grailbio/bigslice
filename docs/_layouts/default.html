@@ -17,9 +17,11 @@
 
 <style>
 @import url('https://rsms.me/inter/inter.css');
-html { font-family: 'Inter', sans-serif; }
+html { 
+  font-family: -apple-system, 'Inter', sans-serif; 
+}
 @supports (font-variation-settings: normal) {
-  html { font-family: 'Inter var', sans-serif; }
+  html { font-family: -apple-system, 'Inter var', sans-serif; }
 }
 
 *,
@@ -54,9 +56,6 @@ h1, h2, h3 {
   font-size: 20px;
 }
 
-/* h1, h2, h3 {
-  font-family: 'Roboto Slab', serif;
-} */
 .container {
   margin: 0 auto;
   max-width: 50em;
