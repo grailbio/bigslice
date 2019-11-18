@@ -11,12 +11,25 @@ import (
 )
 
 func TestCounter(t *testing.T) {
-	var scope metrics.Scope
+	var (
+		a, b metrics.Scope
+		c    = metrics.NewCounter()
+	)
+	c.Incr(&a, 2)
+	if got, want := c.Value(&a), int64(2); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 
-	c := metrics.NewCounter()
-	c.Incr(&scope, 2)
+	c.Incr(&b, 123)
+	if got, want := c.Value(&a), int64(2); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := c.Value(&b), int64(123); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 
-	if got, want := c.Value(&scope), uint64(2); got != want {
+	a.Merge(&b)
+	if got, want := c.Value(&a), int64(125); got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
