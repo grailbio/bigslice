@@ -20,6 +20,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -321,9 +322,11 @@ func (s *Session) HandleDebug(handler *http.ServeMux) {
 // bigslice.Func.
 type Result struct {
 	bigslice.Slice
-	inv   bigslice.Invocation
-	sess  *Session
-	tasks []*Task
+	inv       bigslice.Invocation
+	sess      *Session
+	tasks     []*Task
+	initScope sync.Once
+	scope     metrics.Scope
 }
 
 // Scanner returns a scanner that scans the output. If the output contains
@@ -333,6 +336,21 @@ type Result struct {
 func (r *Result) Scanner() *sliceio.Scanner {
 	reader := r.open()
 	return sliceio.NewScanner(r, reader)
+}
+
+// Scope returns the merged metrics scope for the entire task graph represented
+// by the result r. Scope relies on the local values in the scopes of the task
+// graph, and thus are not precise.
+//
+// TODO(marius): flow and merge scopes along with data to provide precise
+// metrics.
+func (r *Result) Scope() *metrics.Scope {
+	r.initScope.Do(func() {
+		iterTasks(r.tasks, func(task *Task) {
+			r.scope.Merge(&task.Scope)
+		})
+	})
+	return &r.scope
 }
 
 func (r *Result) open() sliceio.ReadCloser {

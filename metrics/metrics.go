@@ -17,7 +17,10 @@
 // Metrics cannot be declared concurrently.
 package metrics
 
-import "sync/atomic"
+import (
+	"encoding/gob"
+	"sync/atomic"
+)
 
 // metrics maps all registered metrics by id. We reserve index 0 to minimize
 // the chances of zero-valued metrics instances begin used uninitialized.
@@ -67,12 +70,12 @@ func NewCounter() Counter {
 
 // Value retrieves the current value of this metric in the provided scope.
 func (c Counter) Value(scope *Scope) int64 {
-	return atomic.LoadInt64(scope.instance(c).(*int64))
+	return scope.instance(c).(*counterValue).load()
 }
 
 // Incr increments this counter's value in the provided scope by n.
 func (c Counter) Incr(scope *Scope, n int64) {
-	atomic.AddInt64(scope.instance(c).(*int64), n)
+	scope.instance(c).(*counterValue).incr(n)
 }
 
 // metricID implements Metric.
@@ -80,10 +83,35 @@ func (c Counter) metricID() int { return c.id }
 
 // newInstance implements Metric.
 func (c Counter) newInstance() interface{} {
-	return new(int64)
+	return new(counterValue)
 }
 
 // Merge implements Metric.
 func (c Counter) merge(x, y interface{}) {
-	atomic.AddInt64(x.(*int64), atomic.LoadInt64(y.(*int64)))
+	x.(*counterValue).merge(y.(*counterValue))
+}
+
+func init() {
+	gob.Register(&counterValue{})
+}
+
+// counterValue holds a single counter value. This is abstracted as its own
+// struct only to control how gob encodes these values. If given an
+// interface{}-int64, gob will happily flatten the pointers, so that they are
+// decoded as the wrong value (int64, not *int64). This is a workaround to avoid
+// this fate.
+type counterValue struct {
+	Value int64
+}
+
+func (c *counterValue) incr(n int64) {
+	atomic.AddInt64(&c.Value, n)
+}
+
+func (c *counterValue) load() int64 {
+	return atomic.LoadInt64(&c.Value)
+}
+
+func (c *counterValue) merge(d *counterValue) {
+	atomic.AddInt64(&c.Value, d.load())
 }

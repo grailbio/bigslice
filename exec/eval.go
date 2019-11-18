@@ -46,6 +46,8 @@ type Executor interface {
 	// Reader returns a locally accessible ReadCloser for the requested task.
 	Reader(*Task, int) sliceio.ReadCloser
 
+	// Scope(*Task) *metrics.Scope
+
 	// HandleDebug adds executor-specific debug handlers to the provided
 	// http.ServeMux. This is used to serve diagnostic information relating
 	// to the executor.

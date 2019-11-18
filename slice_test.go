@@ -23,6 +23,7 @@ import (
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/exec"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -853,4 +854,27 @@ func TestPanic(t *testing.T) {
 			t.Errorf("wrong error message %q", msg)
 		}
 	}
+}
+
+func TestMetrics(t *testing.T) {
+	counter := metrics.NewCounter()
+	slice := bigslice.Const(1, []int{1, 2, 3})
+	slice = bigslice.Map(slice, func(ctx context.Context, i int) int {
+		counter.Incr(metrics.ContextScope(ctx), int64(i))
+		return i
+	})
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	ctx := context.Background()
+	for name, opt := range executors {
+		sess := exec.Start(opt)
+		res, err := sess.Run(ctx, fn)
+		if err != nil {
+			t.Errorf("executor %s: %v", name, err)
+			continue
+		}
+		if got, want := counter.Value(res.Scope()), int64(6); got != want {
+			t.Errorf("executor %s: got %v, want %v", name, got, want)
+		}
+	}
+
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/grailbio/base/retry"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -379,6 +380,31 @@ func TestReadRetries(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if got, want := data, bs; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestBigmachineMetrics(t *testing.T) {
+	counter := metrics.NewCounter()
+
+	x, stop := bigmachineTestExecutor(1)
+	defer stop()
+
+	tasks, _, _ := compileFunc(func() (slice bigslice.Slice) {
+		slice = bigslice.Const(1, []int{1, 2, 3})
+		slice = bigslice.Map(slice, func(ctx context.Context, i int) int {
+			scope := metrics.ContextScope(ctx)
+			counter.Incr(scope, int64(i))
+			return i
+		})
+		return
+	})
+	task := tasks[0]
+	go x.Run(task)
+	if _, err := task.WaitState(context.Background(), TaskOk); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := counter.Value(&task.Scope), int64(6); got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }

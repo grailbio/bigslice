@@ -30,6 +30,7 @@ import (
 	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/stats"
 	"golang.org/x/sync/errgroup"
@@ -355,6 +356,8 @@ compile:
 		b.sess.tracer.Event(m, task, "E")
 		b.setLocation(task, m)
 		task.Status.Printf("done: %s", reply.Vals)
+		task.Scope.Reset()
+		task.Scope.Merge(&reply.Scope)
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
@@ -582,6 +585,10 @@ func (r *taskRunRequest) location(taskIndex int) string {
 type taskRunReply struct {
 	// Vals are the stat values for the run of the task.
 	Vals stats.Values
+
+	// Scope is the scope of the task at completion time.
+	// TODO(marius): unify scopes with values, above.
+	Scope metrics.Scope
 }
 
 // maybeTaskFatalErr wraps errors in (*worker).Run that can cause fatal task
@@ -651,10 +658,12 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		return maybeTaskFatalErr{errors.E(errors.Fatal, fmt.Errorf("task %s not found", req.Name))}
 	}
 	taskStats := namedStats[req.Name]
+	ctx = metrics.ScopedContext(ctx, &task.Scope)
 
 	defer func() {
 		reply.Vals = make(stats.Values)
 		taskStats.AddAll(reply.Vals)
+		reply.Scope.Merge(&task.Scope)
 	}()
 
 	task.Lock()

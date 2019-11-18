@@ -5,38 +5,100 @@
 package metrics
 
 import (
+	"bytes"
 	"context"
-	"sync"
+	"encoding/gob"
+	"sync/atomic"
+	"unsafe"
 )
 
 // Scope is a collection of metric instances.
-type Scope sync.Map
+type Scope struct {
+	storage *[]interface{}
+}
+
+// GobEncode implements a custom gob encoder for scopes.
+func (s *Scope) GobEncode() ([]byte, error) {
+	var b bytes.Buffer
+	list := s.list()
+	if list == nil {
+		list = new([]interface{})
+	}
+	err := gob.NewEncoder(&b).Encode(list)
+	return b.Bytes(), err
+}
+
+// GobDecode implements a custom gob decoder for scopes.
+func (s *Scope) GobDecode(p []byte) error {
+	s.storage = new([]interface{})
+	dec := gob.NewDecoder(bytes.NewReader(p))
+	return dec.Decode(s.storage)
+}
 
 // Merge merges instances from Scope u into Scope s.
 func (s *Scope) Merge(u *Scope) {
-	for _, m := range all() {
-		inst, ok := u.load(m)
-		if !ok {
+	ulist := u.list()
+	if ulist == nil {
+		return
+	}
+	for i, inst := range *ulist {
+		if inst == nil {
 			continue
 		}
+		m := metrics[i]
 		m.merge(s.instance(m), inst)
 	}
+}
+
+// Reset removes all recorded metric instances in this scope.
+func (s *Scope) Reset() {
+	atomic.StorePointer(s.pointer(), unsafe.Pointer((*[]interface{})(nil)))
 }
 
 // instance returns the instance associated with metrics m in the scope s. A new
 // instance is created if none exists yet.
 func (s *Scope) instance(m Metric) interface{} {
-	inst, ok := s.load(m)
-	if !ok {
-		inst, _ = (*sync.Map)(s).LoadOrStore(m.metricID(), m.newInstance())
+	if inst := s.load(m); inst != nil {
+		return inst
 	}
-	return inst
+	for {
+		ptr := atomic.LoadPointer(s.pointer())
+		list := (*[]interface{})(ptr)
+		if list == nil {
+			list = new([]interface{})
+		}
+		for len(*list) <= m.metricID() {
+			*list = append(*list, nil)
+		}
+		inst := m.newInstance()
+		if inst == nil {
+			panic("metric: metric returned nil instance")
+		}
+		(*list)[m.metricID()] = inst
+		if ok := atomic.CompareAndSwapPointer(s.pointer(), ptr, unsafe.Pointer(list)); ok {
+			return inst
+		}
+	}
 }
 
 // load loads the metric m from the Scope s, returning the value and whether it
 // was found.
-func (s *Scope) load(m Metric) (interface{}, bool) {
-	return (*sync.Map)(s).Load(m.metricID())
+func (s *Scope) load(m Metric) interface{} {
+	list := s.list()
+	if list == nil || len(*list) <= m.metricID() {
+		return nil
+	}
+	return (*list)[m.metricID()]
+}
+
+// list returns the slice of instances in this scope.
+func (s *Scope) list() *[]interface{} {
+	return (*[]interface{})(atomic.LoadPointer(s.pointer()))
+}
+
+// pointer returns an unsafe.Pointer to the instance list in this scope.
+func (s *Scope) pointer() *unsafe.Pointer {
+	return (*unsafe.Pointer)(unsafe.Pointer(&s.storage))
 }
 
 // contextKeyType is used to create unique context key for scopes,
