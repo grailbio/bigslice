@@ -465,6 +465,7 @@ type worker struct {
 	// CombinerStates and combiners are used to manage shared combine
 	// buffers.
 	combinerStates map[TaskName]combinerState
+	combinerErrors map[TaskName]error
 	combiners      map[TaskName][]chan *combiner
 
 	commitLimiter *limiter.Limiter
@@ -477,6 +478,7 @@ func (w *worker) Init(b *bigmachine.B) error {
 	w.slices = make(map[uint64]bigslice.Slice)
 	w.combiners = make(map[TaskName][]chan *combiner)
 	w.combinerStates = make(map[TaskName]combinerState)
+	w.combinerErrors = make(map[TaskName]error)
 	w.b = b
 	dir, err := ioutil.TempDir("", "bigslice")
 	if err != nil {
@@ -952,9 +954,13 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	}
 	w.mu.Lock()
 	switch w.combinerStates[combineKey] {
-	case combinerWriting, combinerCommitted, combinerError:
+	case combinerWriting, combinerCommitted:
 		w.mu.Unlock()
 		return fmt.Errorf("combine key %s already committed", combineKey)
+	case combinerError:
+		err := w.combinerErrors[combineKey]
+		w.mu.Unlock()
+		return maybeTaskFatalErr{err}
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
@@ -1091,7 +1097,7 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 		case combinerCommitted:
 			return nil
 		case combinerError:
-			return errors.E("error while writing combiner")
+			return errors.E("error while writing combiner", w.combinerErrors[key])
 		case combinerIdle:
 			w.combinerStates[key] = combinerWriting
 			go w.writeCombiner(key)
@@ -1136,6 +1142,7 @@ func (w *worker) writeCombiner(key TaskName) {
 		w.combinerStates[key] = combinerCommitted
 	} else {
 		log.Error.Printf("failed to write combine buffer %s: %v", key, err)
+		w.combinerErrors[key] = err
 		w.combinerStates[key] = combinerError
 	}
 	w.cond.Broadcast()
