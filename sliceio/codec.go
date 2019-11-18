@@ -105,6 +105,7 @@ func (e *Encoder) Encode(f frame.Frame) error {
 			if strings.HasPrefix(err.Error(), "gob: ") {
 				err = errors.E(errors.Fatal, err)
 			}
+			return err
 		}
 	}
 	return e.enc.Encode(e.crc.Sum32())

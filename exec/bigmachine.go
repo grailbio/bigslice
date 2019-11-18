@@ -1104,6 +1104,9 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 		case combinerCommitted:
 			return nil
 		case combinerError:
+			if err := errors.Recover(w.combinerErrors[key]); err.Severity == errors.Fatal {
+				return maybeTaskFatalErr{errors.E("error while writing combiner", err)}
+			}
 			return errors.E("error while writing combiner", w.combinerErrors[key])
 		case combinerIdle:
 			w.combinerStates[key] = combinerWriting
@@ -1144,6 +1147,7 @@ func (w *worker) writeCombiner(key TaskName) {
 	w.mu.Unlock()
 	err := g.Wait()
 	w.mu.Lock()
+	time.Sleep(time.Second)
 	w.combiners[key] = nil
 	if err == nil {
 		w.combinerStates[key] = combinerCommitted
