@@ -234,7 +234,7 @@ type Task struct {
 	NumPartition int
 
 	// Combiner specifies an (optional) combiner to use for this task's output.
-	// If a Combiner is not Nil(), CombineKey names the combine buffer used:
+	// If a Combiner is not Nil, CombineKey names the combine buffer used:
 	// each combine buffer contains combiner outputs from multiple tasks.
 	// If CombineKey is not set, then per-task buffers are used instead.
 	Combiner   slicefunc.Func
