@@ -90,7 +90,7 @@ type Slice interface {
 
 	// Combiner is an optional function that is used to combine multiple
 	// values with the same key from the slice's output. No combination
-	// is performed if empty.
+	// is performed if Nil.
 	Combiner() slicefunc.Func
 
 	// Reader returns a Reader for a shard of this Slice. The reader
