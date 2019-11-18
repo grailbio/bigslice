@@ -606,12 +606,11 @@ func reviseSeverity(err error) error {
 	if e, ok := err.(maybeTaskFatalErr); ok {
 		return e.error
 	}
-	if e, ok := err.(*errors.Error); ok && e != nil && e.Severity == errors.Fatal && e.Kind != errors.Invalid {
+	if e, ok := err.(*errors.Error); ok && e != nil && e.Severity == errors.Fatal {
 		// The error is fatal to this attempt to run the task but not fatal to
 		// the task overall, e.g. a fatal unavailable error when trying to read
 		// dependencies from other machines. We downgrade the error, so that the
-		// evaluator will retry. Do not revise the severity for 'invalid'
-		// errors since there's no way to recover from them without recompiling.
+		// evaluator will retry.
 		e.Severity = errors.Unknown
 		return e
 	}
