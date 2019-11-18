@@ -33,7 +33,7 @@ var typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
 // per-call typechecking overhead that is incurred by reflection. For example,
 // we could allow Funcs to mint a new re-usable call frame that we can write
 // values directly into. This might get us most of the former but with more
-// generality and arguably less complexity. We could even pre-generate generate
+// generality and arguably less complexity. We could even pre-generate
 // call frames for each row in a frame, since that is re-used also.
 //
 // TODO(marius): consider using this package to allow user-defined funcs to
