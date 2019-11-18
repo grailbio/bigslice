@@ -13,20 +13,22 @@
 // runtime. For example, each Bigslice task is assigned a Scope. These scopes of
 // all tasks comprising a Bigslice operation are merged before being presented
 // to the user.
+//
+// Metrics cannot be declared concurrently.
 package metrics
 
-import (
-	"sync/atomic"
-)
+import "sync/atomic"
 
 // metrics maps all registered metrics by id. We reserve index 0 to minimize
 // the chances of zero-valued metrics instances begin used uninitialized.
 var metrics = []Metric{nil}
 
+// newMetric defines a new metric.
 func newMetric(makeMetric func(id int) Metric) {
 	metrics = append(metrics, makeMetric(len(metrics)))
 }
 
+// all returns all currently defined metrics.
 func all() []Metric {
 	return metrics[1:]
 }
