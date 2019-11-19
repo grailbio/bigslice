@@ -6,8 +6,8 @@ package bigslice
 
 import (
 	"fmt"
-	"reflect"
 
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/typecheck"
 )
@@ -35,7 +35,7 @@ func (r *reshardSlice) Name() Name             { return r.name }
 func (*reshardSlice) NumDep() int              { return 1 }
 func (r *reshardSlice) NumShard() int          { return r.nshard }
 func (r *reshardSlice) Dep(i int) Dep          { return Dep{r.Slice, true, false} }
-func (*reshardSlice) Combiner() *reflect.Value { return nil }
+func (*reshardSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 func (r *reshardSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 	if len(deps) != 1 {

@@ -12,6 +12,7 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 )
@@ -236,7 +237,7 @@ func TestReduceReader(t *testing.T) {
 	for i := range readers {
 		readers[i] = sliceio.FrameReader(f)
 	}
-	reducer := Reduce(f, "testreduce", readers, reflect.ValueOf(func(x, y int) int { return x + y }))
+	reducer := Reduce(f, "testreduce", readers, slicefunc.Of(func(x, y int) int { return x + y }))
 	var (
 		outIntsKey []int
 		outStrsKey []string

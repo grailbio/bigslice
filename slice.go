@@ -16,6 +16,7 @@ import (
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/internal/defaultsize"
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
@@ -89,8 +90,8 @@ type Slice interface {
 
 	// Combiner is an optional function that is used to combine multiple
 	// values with the same key from the slice's output. No combination
-	// is performed if nil.
-	Combiner() *reflect.Value
+	// is performed if Nil.
+	Combiner() slicefunc.Func
 
 	// Reader returns a Reader for a shard of this Slice. The reader
 	// itself computes the shard's values on demand. The caller must
@@ -196,7 +197,7 @@ func (s *constSlice) NumShard() int          { return s.nshard }
 func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
-func (*constSlice) Combiner() *reflect.Value { return nil }
+func (*constSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type constReader struct {
 	op    *constSlice
@@ -246,7 +247,7 @@ type readerFuncSlice struct {
 	Pragma
 	slicetype.Type
 	nshard    int
-	read      reflect.Value
+	read      slicefunc.Func
 	stateType reflect.Type
 }
 
@@ -274,11 +275,11 @@ func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	s := new(readerFuncSlice)
 	s.name = makeName("reader")
 	s.nshard = nshard
-	s.read = reflect.ValueOf(read)
 	arg, ret, ok := typecheck.Func(read)
 	if !ok || arg.NumOut() < 3 || arg.Out(0).Kind() != reflect.Int {
 		typecheck.Panicf(1, "readerfunc: invalid reader function type %T", read)
 	}
+	s.read = slicefunc.Of(read)
 	if ret.Out(0).Kind() != reflect.Int || ret.Out(1) != typeOfError {
 		typecheck.Panicf(1, "readerfunc: function %T does not return (int, error)", read)
 	}
@@ -297,7 +298,7 @@ func (r *readerFuncSlice) NumShard() int          { return r.nshard }
 func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
-func (*readerFuncSlice) Combiner() *reflect.Value { return nil }
+func (*readerFuncSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type readerFuncSliceReader struct {
 	op    *readerFuncSlice
@@ -327,7 +328,7 @@ func (r *readerFuncSliceReader) Read(ctx context.Context, out frame.Frame) (n in
 	}
 	// out is passed to a user, zero it.
 	out.Zero()
-	rvs := r.op.read.Call(append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out.Values()...))
+	rvs := r.op.read.Call(ctx, append([]reflect.Value{reflect.ValueOf(r.shard), r.state}, out.Values()...))
 	n = int(rvs[0].Int())
 	if n == 0 {
 		r.consecutiveEmptyCalls++
@@ -357,7 +358,7 @@ type writerFuncSlice struct {
 	name Name
 	Slice
 	stateType reflect.Type
-	write     reflect.Value
+	write     slicefunc.Func
 }
 
 // WriterFunc returns a Slice that is functionally equivalent to the input
@@ -422,25 +423,25 @@ func WriterFunc(slice Slice, write interface{}) Slice {
 	if ret.NumOut() != 1 || ret.Out(0) != typeOfError {
 		die("must return error")
 	}
-	s.write = reflect.ValueOf(write)
+	s.write = slicefunc.Of(write)
 	return s
 }
 
 func (s *writerFuncSlice) Name() Name             { return s.name }
 func (*writerFuncSlice) NumDep() int              { return 1 }
 func (s *writerFuncSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
-func (*writerFuncSlice) Combiner() *reflect.Value { return nil }
+func (*writerFuncSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type writerFuncReader struct {
 	shard     int
-	write     reflect.Value
+	write     slicefunc.Func
 	reader    sliceio.Reader
 	stateType reflect.Type
 	state     reflect.Value
 	err       error
 }
 
-func (r *writerFuncReader) callWrite(err error, frame frame.Frame) error {
+func (r *writerFuncReader) callWrite(ctx context.Context, err error, frame frame.Frame) error {
 	args := []reflect.Value{reflect.ValueOf(r.shard), r.state}
 
 	// TODO(jcharumilind): Cache error and column arguments, as they will
@@ -454,7 +455,7 @@ func (r *writerFuncReader) callWrite(err error, frame frame.Frame) error {
 	args = append(args, errArg)
 
 	args = append(args, frame.Values()...)
-	rvs := r.write.Call(args)
+	rvs := r.write.Call(ctx, args)
 	if e := rvs[0].Interface(); e != nil {
 		return e.(error)
 	}
@@ -474,7 +475,7 @@ func (r *writerFuncReader) Read(ctx context.Context, out frame.Frame) (int, erro
 	}
 
 	n, err := r.reader.Read(ctx, out)
-	werr := r.callWrite(err, out.Slice(0, n))
+	werr := r.callWrite(ctx, err, out.Slice(0, n))
 	if werr != nil && (err == nil || err == sliceio.EOF) {
 		if errors.IsTemporary(werr) {
 			err = werr
@@ -499,7 +500,7 @@ type mapSlice struct {
 	name Name
 	Pragma
 	Slice
-	fval reflect.Value
+	fval slicefunc.Func
 	out  slicetype.Type
 }
 
@@ -516,7 +517,6 @@ func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	m := new(mapSlice)
 	m.name = makeName("map")
 	m.Slice = slice
-	m.fval = reflect.ValueOf(fn)
 	arg, ret, ok := typecheck.Func(fn)
 	if !ok {
 		typecheck.Panicf(1, "map: invalid map function %T", fn)
@@ -527,6 +527,7 @@ func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	if ret.NumOut() == 0 {
 		typecheck.Panicf(1, "map: need at least one output column")
 	}
+	m.fval = slicefunc.Of(fn)
 	m.out = ret
 	m.Pragma = Pragmas(prags)
 	return m
@@ -538,7 +539,7 @@ func (m *mapSlice) Out(c int) reflect.Type { return m.out.Out(c) }
 func (*mapSlice) ShardType() ShardType     { return HashShard }
 func (*mapSlice) NumDep() int              { return 1 }
 func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
-func (*mapSlice) Combiner() *reflect.Value { return nil }
+func (*mapSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type mapReader struct {
 	op     *mapSlice
@@ -575,7 +576,7 @@ func (m *mapReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 			args[j] = m.in.Index(j, i)
 		}
 		// TODO(marius): consider using an unsafe copy here
-		result := m.op.fval.Call(args)
+		result := m.op.fval.Call(ctx, args)
 		for j := range result {
 			out.Index(j, i).Set(result[j])
 		}
@@ -591,7 +592,7 @@ type filterSlice struct {
 	name Name
 	Pragma
 	Slice
-	pred reflect.Value
+	pred slicefunc.Func
 }
 
 // Filter returns a slice where the provided predicate is applied to
@@ -608,7 +609,6 @@ func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	f := new(filterSlice)
 	f.name = makeName("filter")
 	f.Slice = slice
-	f.pred = reflect.ValueOf(pred)
 	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(pred)
 	if !ok {
@@ -620,13 +620,14 @@ func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	if ret.NumOut() != 1 || ret.Out(0).Kind() != reflect.Bool {
 		typecheck.Panic(1, "filter: predicate must return a single boolean value")
 	}
+	f.pred = slicefunc.Of(pred)
 	return f
 }
 
 func (f *filterSlice) Name() Name             { return f.name }
 func (*filterSlice) NumDep() int              { return 1 }
 func (f *filterSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*filterSlice) Combiner() *reflect.Value { return nil }
+func (*filterSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type filterReader struct {
 	op     *filterSlice
@@ -662,7 +663,7 @@ func (f *filterReader) Read(ctx context.Context, out frame.Frame) (n int, err er
 			for j := range args {
 				args[j] = f.in.Value(j).Index(i)
 			}
-			if f.op.pred.Call(args)[0].Bool() {
+			if f.op.pred.Call(ctx, args)[0].Bool() {
 				frame.Copy(out.Slice(m, m+1), f.in.Slice(i, i+1))
 				m++
 			}
@@ -679,7 +680,7 @@ type flatmapSlice struct {
 	name Name
 	Pragma
 	Slice
-	fval reflect.Value
+	fval slicefunc.Func
 	out  slicetype.Type
 }
 
@@ -696,7 +697,6 @@ func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	f := new(flatmapSlice)
 	f.name = makeName("flatmap")
 	f.Slice = slice
-	f.fval = reflect.ValueOf(fn)
 	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(fn)
 	if !ok {
@@ -709,6 +709,7 @@ func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	if !ok {
 		typecheck.Panicf(1, "flatmap: flatmap function %T is not vectorized", fn)
 	}
+	f.fval = slicefunc.Of(fn)
 	return f
 }
 
@@ -718,7 +719,7 @@ func (f *flatmapSlice) Out(c int) reflect.Type { return f.out.Out(c) }
 func (*flatmapSlice) ShardType() ShardType     { return HashShard }
 func (*flatmapSlice) NumDep() int              { return 1 }
 func (f *flatmapSlice) Dep(i int) Dep          { return singleDep(i, f.Slice, false) }
-func (*flatmapSlice) Combiner() *reflect.Value { return nil }
+func (*flatmapSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type flatmapReader struct {
 	op     *flatmapSlice
@@ -767,7 +768,7 @@ func (f *flatmapReader) Read(ctx context.Context, out frame.Frame) (int, error) 
 			for j := range args {
 				args[j] = f.in.Index(j, f.begIn)
 			}
-			result := frame.Values(f.op.fval.Call(args))
+			result := frame.Values(f.op.fval.Call(ctx, args))
 			n := frame.Copy(out.Slice(begOut, endOut), result)
 			begOut += n
 			// We've run out of output space. In this case, stash the rest of
@@ -793,7 +794,7 @@ func (f *flatmapSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 type foldSlice struct {
 	name Name
 	Slice
-	fval reflect.Value
+	fval slicefunc.Func
 	out  slicetype.Type
 	dep  Dep
 }
@@ -833,7 +834,6 @@ func Fold(slice Slice, fold interface{}) Slice {
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
 	f.dep = Dep{slice, true, false}
-	f.fval = reflect.ValueOf(fold)
 
 	arg, ret, ok := typecheck.Func(fold)
 	if !ok {
@@ -846,6 +846,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 	if got, want := arg, slicetype.Append(ret, slicetype.Slice(slice, 1, slice.NumOut())); !typecheck.Equal(got, want) {
 		typecheck.Panicf(1, "fold: expected func(acc, t2, t3, ..., tn), got %T", fold)
 	}
+	f.fval = slicefunc.Of(fold)
 	// output: key, accumulator
 	f.out = slicetype.New(slice.Out(0), ret.Out(0))
 	return f
@@ -856,7 +857,7 @@ func (f *foldSlice) NumOut() int            { return f.out.NumOut() }
 func (f *foldSlice) Out(c int) reflect.Type { return f.out.Out(c) }
 func (*foldSlice) NumDep() int              { return 1 }
 func (f *foldSlice) Dep(i int) Dep          { return f.dep }
-func (*foldSlice) Combiner() *reflect.Value { return nil }
+func (*foldSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type foldReader struct {
 	op     *foldSlice
@@ -920,7 +921,7 @@ func Head(slice Slice, n int) Slice {
 func (h *headSlice) Name() Name             { return h.name }
 func (*headSlice) NumDep() int              { return 1 }
 func (h *headSlice) Dep(i int) Dep          { return singleDep(i, h.Slice, false) }
-func (*headSlice) Combiner() *reflect.Value { return nil }
+func (*headSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type headReader struct {
 	reader sliceio.Reader
@@ -961,7 +962,7 @@ func (*scanSlice) NumOut() int              { return 0 }
 func (*scanSlice) Out(c int) reflect.Type   { panic(c) }
 func (*scanSlice) NumDep() int              { return 1 }
 func (s *scanSlice) Dep(i int) Dep          { return singleDep(i, s.Slice, false) }
-func (*scanSlice) Combiner() *reflect.Value { return nil }
+func (*scanSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 type scanReader struct {
 	slice  scanSlice
