@@ -635,9 +635,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if task != nil {
 				task.Error(errors.Recover(err))
 			}
-			// Allow log/printf output to flush to journalctl, without this,
-			// it appears that some log output is lost.
-			time.Sleep(time.Second)
 			return
 		}
 		if task != nil {
@@ -1147,7 +1144,6 @@ func (w *worker) writeCombiner(key TaskName) {
 	w.mu.Unlock()
 	err := g.Wait()
 	w.mu.Lock()
-	time.Sleep(time.Second)
 	w.combiners[key] = nil
 	if err == nil {
 		w.combinerStates[key] = combinerCommitted
