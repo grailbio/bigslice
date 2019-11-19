@@ -1101,10 +1101,7 @@ func (w *worker) CommitCombiner(ctx context.Context, key TaskName, _ *struct{}) 
 		case combinerCommitted:
 			return nil
 		case combinerError:
-			if err := errors.Recover(w.combinerErrors[key]); err.Severity == errors.Fatal {
-				return maybeTaskFatalErr{errors.E("error while writing combiner", err)}
-			}
-			return errors.E("error while writing combiner", w.combinerErrors[key])
+			return maybeTaskFatalErr{errors.E("error while writing combiner", w.combinerErrors[key])}
 		case combinerIdle:
 			w.combinerStates[key] = combinerWriting
 			go w.writeCombiner(key)
