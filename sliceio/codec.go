@@ -13,6 +13,7 @@ import (
 	"hash/crc32"
 	"io"
 	"reflect"
+	"strings"
 	"unsafe"
 
 	"github.com/grailbio/base/errors"
@@ -98,6 +99,12 @@ func (e *Encoder) Encode(f frame.Frame) error {
 			err = e.enc.EncodeValue(f.Value(col))
 		}
 		if err != nil {
+			// Here we're encoding a user-defined type. We pessimistically
+			// attribute any errors that appear to come from gob as being
+			// related to the inability to encode this user-defined type.
+			if strings.HasPrefix(err.Error(), "gob: ") {
+				err = errors.E(errors.Fatal, err)
+			}
 			return err
 		}
 	}
