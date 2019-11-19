@@ -892,8 +892,8 @@ func TestEncodingError(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s: expected error", name)
 			continue
-		expected := errors.E(errors.Remote, errors.Fatal)
 		}
+		expected := errors.E(errors.Remote, errors.Fatal)
 		if !errors.Match(expected, err) {
 			t.Errorf("error %s: expected Remote, Fatal", err)
 		}
