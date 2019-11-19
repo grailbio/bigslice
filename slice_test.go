@@ -7,7 +7,6 @@ package bigslice_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -18,6 +17,7 @@ import (
 	"text/tabwriter"
 
 	fuzz "github.com/google/gofuzz"
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/rpc"
 	"github.com/grailbio/bigmachine/testsystem"
@@ -67,9 +67,28 @@ var executors = map[string]exec.Option{
 }
 
 func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sliceio.Scanner {
-	results := make(map[string]*sliceio.Scanner)
-	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	t.Helper()
+	scannerErrs := runError(ctx, t, slice)
+	scanners := make(map[string]*sliceio.Scanner, len(scannerErrs))
+	for name, scannerErr := range scannerErrs {
+		if err := scannerErr.Err; err != nil {
+			t.Errorf("executor %s error %v", name, err)
+		} else {
+			scanners[name] = scannerErr.Scanner
+		}
+	}
+	return scanners
+}
 
+type scannerErr struct {
+	*sliceio.Scanner
+	Err error
+}
+
+func runError(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]scannerErr {
+	t.Helper()
+	results := make(map[string]scannerErr)
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
 	for name, opt := range executors {
 		if testing.Short() && name != "Local" {
 			continue
@@ -78,11 +97,7 @@ func run(ctx context.Context, t *testing.T, slice bigslice.Slice) map[string]*sl
 		// TODO(marius): faster teardown in bigmachine so that we can call this here.
 		// defer sess.Shutdown()
 		res, err := sess.Run(ctx, fn)
-		if err != nil {
-			t.Errorf("executor %s error %v", name, err)
-			continue
-		}
-		results[name] = res.Scanner()
+		results[name] = scannerErr{res.Scanner(), err}
 	}
 	return results
 }
@@ -852,6 +867,38 @@ func TestPanic(t *testing.T) {
 		}
 		if msg := err.Error(); !strings.Contains(msg, "panic while evaluating slice") {
 			t.Errorf("wrong error message %q", msg)
+		}
+	}
+}
+
+func TestEncodingError(t *testing.T) {
+	type ungobable struct {
+		x int
+	}
+	slice := bigslice.Const(1, []int{1, 2, 3})
+	slice = bigslice.Map(slice, func(x int) (int, ungobable) { return x, ungobable{x} })
+	slice = bigslice.Reduce(slice, func(a, e ungobable) ungobable { return ungobable{a.x + e.x} })
+
+	scannerErrs := runError(context.Background(), t, slice)
+	for name, scannerErr := range scannerErrs {
+		// The local executor keeps things in memory by default.
+		// Note thaht while, currently the Bigmachine executors will by default
+		// run everything through gob, this is not at all a requirement. So this
+		// test may begin failing in the presence of future optimizatons.
+		if name == "Local" {
+			continue
+		}
+		err := scannerErr.Err
+		if err == nil {
+			t.Errorf("%s: expected error", name)
+			continue
+		expected := errors.E(errors.Remote, errors.Fatal)
+		}
+		if !errors.Match(expected, err) {
+			t.Errorf("error %s: expected Remote, Fatal", err)
+		}
+		if !strings.Contains(err.Error(), "gob: type bigslice_test.ungobable has no exported fields") {
+			t.Errorf("error %s: expected gob error", err)
 		}
 	}
 }
