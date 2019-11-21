@@ -31,8 +31,7 @@ func TestScopeMerge(t *testing.T) {
 		if got, want := c.Value(&a), test.incrA+test.incrB; got != want {
 			t.Errorf("%v: got %v, want %v", test, got, want)
 		}
-		a.Reset()
-		a.Merge(&b)
+		a.Reset(&b)
 		if got, want := c.Value(&a), test.incrB; got != want {
 			t.Errorf("%v: got %v, want %v", test, got, want)
 		}
@@ -53,7 +52,7 @@ func TestScopeGob(t *testing.T) {
 	if err := gob.NewEncoder(&b).Encode(&scope); err != nil {
 		t.Fatal(err)
 	}
-	scope.Reset()
+	scope.Reset(nil)
 	if got, want := c.Value(&scope), int64(0); got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}

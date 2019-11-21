@@ -356,8 +356,7 @@ compile:
 		b.sess.tracer.Event(m, task, "E")
 		b.setLocation(task, m)
 		task.Status.Printf("done: %s", reply.Vals)
-		task.Scope.Reset()
-		task.Scope.Merge(&reply.Scope)
+		task.Scope.Reset(&reply.Scope)
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
@@ -666,7 +665,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	defer func() {
 		reply.Vals = make(stats.Values)
 		taskStats.AddAll(reply.Vals)
-		reply.Scope.Merge(&task.Scope)
+		reply.Scope.Reset(&task.Scope)
 	}()
 
 	task.Lock()

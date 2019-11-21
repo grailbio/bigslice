@@ -108,7 +108,7 @@ func (l *localExecutor) Run(task *Task) {
 
 	// Start execution, then place output in a task buffer. We also plumb a
 	// metrics scope in here so we can store and aggregate metrics.
-	task.Scope.Reset()
+	task.Scope.Reset(nil)
 	out := task.Do(in)
 	buf, err := bufferOutput(metrics.ScopedContext(ctx, &task.Scope), task, out)
 	task.Lock()

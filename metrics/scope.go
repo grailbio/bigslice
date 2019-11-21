@@ -50,9 +50,14 @@ func (s *Scope) Merge(u *Scope) {
 	}
 }
 
-// Reset removes all recorded metric instances in this scope.
-func (s *Scope) Reset() {
-	atomic.StorePointer(&s.storage, unsafe.Pointer((uintptr)(0)))
+// Reset resets the scope s to u. It is reset to its initial (zero) state
+// if u is nil.
+func (s *Scope) Reset(u *Scope) {
+	if u == nil {
+		atomic.StorePointer(&s.storage, unsafe.Pointer((uintptr)(0)))
+	} else {
+		atomic.StorePointer(&s.storage, u.storage)
+	}
 }
 
 // instance returns the instance associated with metrics m in the scope s. A new
