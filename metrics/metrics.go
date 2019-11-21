@@ -23,7 +23,7 @@ import (
 )
 
 // metrics maps all registered metrics by id. We reserve index 0 to minimize
-// the chances of zero-valued metrics instances begin used uninitialized.
+// the chances of zero-valued metrics instances being used uninitialized.
 var metrics = []Metric{nil}
 
 // newMetric defines a new metric.
@@ -36,7 +36,7 @@ func all() []Metric {
 	return metrics[1:]
 }
 
-// Metric is the abstract type of a metrics. Each metric type must implement a
+// Metric is the abstract type of a metric. Each metric type must implement a
 // set of generic operations; the metric-specific operations are provided by the
 // metric types themselves.
 //
