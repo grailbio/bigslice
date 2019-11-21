@@ -14,25 +14,25 @@ import (
 
 // Scope is a collection of metric instances.
 type Scope struct {
-	storage *[]interface{}
+	storage unsafe.Pointer // stores *[]interface{}
 }
 
 // GobEncode implements a custom gob encoder for scopes.
 func (s *Scope) GobEncode() ([]byte, error) {
 	var b bytes.Buffer
-	list := s.list()
-	if list == nil {
-		list = new([]interface{})
-	}
-	err := gob.NewEncoder(&b).Encode(list)
+	err := gob.NewEncoder(&b).Encode(s.list())
 	return b.Bytes(), err
 }
 
 // GobDecode implements a custom gob decoder for scopes.
 func (s *Scope) GobDecode(p []byte) error {
-	s.storage = new([]interface{})
+	list := new([]interface{})
 	dec := gob.NewDecoder(bytes.NewReader(p))
-	return dec.Decode(s.storage)
+	if err := dec.Decode(list); err != nil {
+		return err
+	}
+	atomic.StorePointer(&s.storage, unsafe.Pointer(list))
+	return nil
 }
 
 // Merge merges instances from Scope u into Scope s.
@@ -41,7 +41,7 @@ func (s *Scope) Merge(u *Scope) {
 	if ulist == nil {
 		return
 	}
-	for i, inst := range *ulist {
+	for i, inst := range ulist {
 		if inst == nil {
 			continue
 		}
@@ -52,7 +52,7 @@ func (s *Scope) Merge(u *Scope) {
 
 // Reset removes all recorded metric instances in this scope.
 func (s *Scope) Reset() {
-	atomic.StorePointer(s.pointer(), unsafe.Pointer((*[]interface{})(nil)))
+	atomic.StorePointer(&s.storage, unsafe.Pointer((uintptr)(0)))
 }
 
 // instance returns the instance associated with metrics m in the scope s. A new
@@ -62,20 +62,20 @@ func (s *Scope) instance(m Metric) interface{} {
 		return inst
 	}
 	for {
-		ptr := atomic.LoadPointer(s.pointer())
-		list := (*[]interface{})(ptr)
-		if list == nil {
-			list = new([]interface{})
+		ptr := atomic.LoadPointer(&s.storage)
+		var list []interface{}
+		if ptr != unsafe.Pointer((uintptr)(0)) {
+			list = *(*[]interface{})(ptr)
 		}
-		for len(*list) <= m.metricID() {
-			*list = append(*list, nil)
+		for len(list) <= m.metricID() {
+			list = append(list, nil)
 		}
 		inst := m.newInstance()
 		if inst == nil {
 			panic("metric: metric returned nil instance")
 		}
-		(*list)[m.metricID()] = inst
-		if ok := atomic.CompareAndSwapPointer(s.pointer(), ptr, unsafe.Pointer(list)); ok {
+		list[m.metricID()] = inst
+		if ok := atomic.CompareAndSwapPointer(&s.storage, ptr, unsafe.Pointer(&list)); ok {
 			return inst
 		}
 	}
@@ -85,20 +85,19 @@ func (s *Scope) instance(m Metric) interface{} {
 // was found.
 func (s *Scope) load(m Metric) interface{} {
 	list := s.list()
-	if list == nil || len(*list) <= m.metricID() {
+	if len(list) <= m.metricID() {
 		return nil
 	}
-	return (*list)[m.metricID()]
+	return list[m.metricID()]
 }
 
 // list returns the slice of instances in this scope.
-func (s *Scope) list() *[]interface{} {
-	return (*[]interface{})(atomic.LoadPointer(s.pointer()))
-}
-
-// pointer returns an unsafe.Pointer to the instance list in this scope.
-func (s *Scope) pointer() *unsafe.Pointer {
-	return (*unsafe.Pointer)(unsafe.Pointer(&s.storage))
+func (s *Scope) list() []interface{} {
+	list := atomic.LoadPointer(&s.storage)
+	if list == nil {
+		return nil
+	}
+	return *(*[]interface{})(list)
 }
 
 // contextKeyType is used to create unique context key for scopes,
