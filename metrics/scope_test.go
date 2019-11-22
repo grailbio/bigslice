@@ -13,6 +13,16 @@ import (
 	"github.com/grailbio/bigslice/metrics"
 )
 
+func TestScopeEmpty(t *testing.T) {
+	var (
+		s metrics.Scope
+		c = metrics.NewCounter()
+	)
+	if got, want := c.Value(&s), int64(0); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestScopeMerge(t *testing.T) {
 	c := metrics.NewCounter()
 
@@ -45,21 +55,25 @@ func TestScopeMerge(t *testing.T) {
 func TestScopeGob(t *testing.T) {
 	var (
 		scope metrics.Scope
-		c     = metrics.NewCounter()
+		c0    = metrics.NewCounter()
+		c1    = metrics.NewCounter()
 		b     bytes.Buffer
 	)
-	c.Incr(&scope, 123)
+	c0.Incr(&scope, 123)
 	if err := gob.NewEncoder(&b).Encode(&scope); err != nil {
 		t.Fatal(err)
 	}
 	scope.Reset(nil)
-	if got, want := c.Value(&scope), int64(0); got != want {
+	if got, want := c0.Value(&scope), int64(0); got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 	if err := gob.NewDecoder(&b).Decode(&scope); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := c.Value(&scope), int64(123); got != want {
+	if got, want := c0.Value(&scope), int64(123); got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got, want := c1.Value(&scope), int64(0); got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }

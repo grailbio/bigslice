@@ -106,8 +106,14 @@ func (s *Scope) load(m Metric) interface{} {
 }
 
 func (s *Scope) store(m Metric, v interface{}) {
-	list := s.list()
-	atomic.StorePointer(&list[m.metricID()], unsafe.Pointer(&v))
+	var (
+		list = s.list()
+		ptr  unsafe.Pointer
+	)
+	if v != nil {
+		ptr = unsafe.Pointer(&v)
+	}
+	atomic.StorePointer(&list[m.metricID()], ptr)
 }
 
 // list returns the slice of instances in this scope. It is created
