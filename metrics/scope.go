@@ -62,7 +62,7 @@ func (s *Scope) Merge(u *Scope) {
 // if u is nil.
 func (s *Scope) Reset(u *Scope) {
 	if u == nil {
-		atomic.StorePointer(&s.storage, unsafe.Pointer((uintptr)(0)))
+		atomic.StorePointer(&s.storage, unsafe.Pointer(nil))
 	} else {
 		for _, m := range metrics {
 			s.store(m, u.load(m))
