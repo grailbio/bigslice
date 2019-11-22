@@ -92,7 +92,7 @@ func (c Counter) newInstance() interface{} {
 	return new(counterValue)
 }
 
-// Merge implements Metric.
+// merge implements Metric.
 func (c Counter) merge(x, y interface{}) {
 	x.(*counterValue).merge(y.(*counterValue))
 }
