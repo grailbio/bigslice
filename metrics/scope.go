@@ -38,7 +38,7 @@ func (s *Scope) GobDecode(p []byte) error {
 	if err := dec.Decode(&list); err != nil {
 		return err
 	}
-	if len(list) > len(metrics) {
+	if len(list) != len(metrics) {
 		return fmt.Errorf("incompatible metric set: remote: %d, local: %d", len(list), len(metrics))
 	}
 	for i, v := range list {
