@@ -5,8 +5,13 @@
 package metrics_test
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"testing"
 
+	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/metrics"
 )
 
@@ -32,4 +37,29 @@ func TestCounter(t *testing.T) {
 	if got, want := c.Value(&a), int64(125); got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
+}
+
+func ExampleCounter() {
+	filterCount := metrics.NewCounter()
+	filterFunc := bigslice.Func(func() (slice bigslice.Slice) {
+		slice = bigslice.Const(1, []int{1, 2, 3, 4, 5, 6})
+		slice = bigslice.Filter(slice, func(ctx context.Context, i int) bool {
+			scope := metrics.ContextScope(ctx)
+			if i%2 == 0 {
+				filterCount.Incr(scope, 1)
+				return false
+			}
+			return true
+		})
+		return
+	})
+
+	sess := exec.Start(exec.Local)
+	res, err := sess.Run(context.Background(), filterFunc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("filtered:", filterCount.Value(res.Scope()))
+	// Output: filtered: 3
 }

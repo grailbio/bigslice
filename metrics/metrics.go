@@ -2,17 +2,23 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-// Package metrics defines a set of primitives for expressing and managing
-// metrics within Bigslice. A metric (such as a counter) is declared by a
-// toplevel registration mechanism (e.g., NewCounter()). All metrics must be
-// declared before a Bigslice session is started.
+// Package metrics defines a set of primitives for declaring and
+// managing metrics within Bigslice. Users declare metrics (such as a
+// counter) using the registration mechanisms provided by this
+// package (e.g., NewCounter). These return handles that are used for
+// metric operations (e.g., incrementing a counter).
 //
-// Each metric defines a set of operations (e.g., incrementing a counter).
-// Operations in turn must be provided with a Scope. A Scope is a collection of
-// metrics instances that can be merged. Scopes are managed by the Bigslice
-// runtime. For example, each Bigslice task is assigned a Scope. These scopes of
-// all tasks comprising a Bigslice operation are merged before being presented
-// to the user.
+// Every operation on a metric is performed in a Scope. Scopes are
+// provided by the Bigslice runtime and represent an operational
+// scope in which the metric is aggregated. For example, Bigslice
+// defines a Scope that is attached to each task scheduled by the
+// system. Scopes are merged by the Bigslice runtime to provide
+// aggregated metrics across larger operations (e.g., a single
+// session.Run).
+//
+// User functions called by Bigslice are supplied a scope through the
+// optional context.Context argument. The user must retrieve this
+// Scope using the ContextScope func.
 //
 // Metrics cannot be declared concurrently.
 package metrics
@@ -24,7 +30,7 @@ import (
 
 // metrics maps all registered metrics by id. We reserve index 0 to minimize
 // the chances of zero-valued metrics instances being used uninitialized.
-var metrics = []Metric{nil}
+var metrics = []Metric{zeroMetric{}}
 
 // newMetric defines a new metric.
 func newMetric(makeMetric func(id int) Metric) {
@@ -52,8 +58,8 @@ type Metric interface {
 	merge(interface{}, interface{})
 }
 
-// Counter is a simple counter metric. Counters implement atomic addition on top
-// of an int64.
+// Counter is a simple counter metric. Counters implement atomic
+// addition and subtraction on top of an int64.
 type Counter struct {
 	id int
 }
@@ -115,3 +121,11 @@ func (c *counterValue) load() int64 {
 func (c *counterValue) merge(d *counterValue) {
 	atomic.AddInt64(&c.Value, d.load())
 }
+
+// zeroMetric is used to occupy the 0th metric,
+// in order to help catch zero initialization bugs.
+type zeroMetric struct{}
+
+func (zeroMetric) metricID() int                  { return 0 }
+func (zeroMetric) newInstance() interface{}       { return nil }
+func (zeroMetric) merge(interface{}, interface{}) {}
