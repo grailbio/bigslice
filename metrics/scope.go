@@ -105,6 +105,8 @@ func (s *Scope) load(m Metric) interface{} {
 	return *(*interface{})(ptr)
 }
 
+// store stores the instance value v for metric m into this scope. If v is nil,
+// the metrics is reset.
 func (s *Scope) store(m Metric, v interface{}) {
 	var (
 		list = s.list()
