@@ -18,6 +18,7 @@ import (
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/base/sync/ctxsync"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetype"
@@ -253,6 +254,10 @@ type Task struct {
 	// the evaluator to perform optimizations while tracking such
 	// dependencies.
 	Group []*Task
+
+	// Scopes is the metrics scope for this task. It is populated with the
+	// metrics produced during execution of this task.
+	Scope metrics.Scope
 
 	// subs is the set of subscribers to which this task will be sent whenever
 	// its state changes.

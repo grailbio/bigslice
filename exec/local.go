@@ -16,6 +16,7 @@ import (
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
+	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
@@ -105,9 +106,11 @@ func (l *localExecutor) Run(task *Task) {
 	}
 	task.Set(TaskRunning)
 
-	// Start execution, then place output in a task buffer.
+	// Start execution, then place output in a task buffer. We also plumb a
+	// metrics scope in here so we can store and aggregate metrics.
+	task.Scope.Reset(nil)
 	out := task.Do(in)
-	buf, err := bufferOutput(ctx, task, out)
+	buf, err := bufferOutput(metrics.ScopedContext(ctx, &task.Scope), task, out)
 	task.Lock()
 	if err == nil {
 		l.mu.Lock()
