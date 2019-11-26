@@ -94,8 +94,7 @@ func (s *Scope) instance(m Metric) interface{} {
 	}
 }
 
-// load loads the metric m from the Scope s, returning the value and whether it
-// was found.
+// load loads the metric m from the Scope s, returning nil if it was not found.
 func (s *Scope) load(m Metric) interface{} {
 	list := s.list()
 	ptr := atomic.LoadPointer(&list[m.metricID()])
