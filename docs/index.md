@@ -340,7 +340,7 @@ Bigslice is free to partition, distribute, and retry bits of
 the operations in ways not specified by the user.
 
 In our example,
-we define a wordcount operation as a function of a URL.
+we define a word count operation as a function of a URL.
 The first operation is a [ScanReader](https://godoc.org/github.com/grailbio/bigslice#ScanReader) (1),
 which takes an io.Reader and returns a `bigslice.Slice`
 that represents the scanned lines from that io.Reader.
@@ -364,7 +364,7 @@ the first column is the token itself,
 and the second column is the integer value 1,
 representing the count of that token.
 `bigslice.Slice` values may contain multiple columns of values;
-they are analagous to tuples in other programming languages.
+they are analogous to tuples in other programming languages.
 The type of the returned `bigslice.Slice` is schematically
 `bigslice.Slice<string, int>`.
 
@@ -436,12 +436,12 @@ The returned value represents the results of the computation.
 We can scan the result to extract the rows,
 each of which consists of two columns:
 the token and
-the number of times that token occured in the corpus.
+the number of times that token occurred in the corpus.
 Scanning in Bigslice follows the general pattern for scanning in Go:
 First, we extract a scanner (3)
 which has a `Scan` (4) that returns a boolean indicating whether to continue scanning
 (and also populates the value for each column in the scanned row),
-while the `Err` method (5) returns any error that occured while scanning.'
+while the `Err` method (5) returns any error that occurred while scanning.'
 
 # Some more details to keep you going
 
