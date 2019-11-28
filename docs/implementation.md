@@ -78,7 +78,7 @@ The Bigslice runtime provides materialized
 for each of the slice's dependencies;
 the returned reader is the output of the operation.
 
-`sliceio.Reader` is analagous to `io.Reader`,
+`sliceio.Reader` is analogous to `io.Reader`,
 but operating on a
 [`frame.Frame`](https://godoc.org/github.com/grailbio/bigslice/frame#Frame),
 which is typed according to the slice.
@@ -108,7 +108,7 @@ type Reader interface {
 ```
 
 Frames are pre-allocated and managed by the Bigslice runtime.
-They are layed out in a columnar fashion,
+They are laid out in a columnar fashion,
 so the underlying data layout can be exploited for locality.
 
 # Frames
