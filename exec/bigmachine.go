@@ -865,6 +865,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		var (
 			partitionv = make([]frame.Frame, task.NumPartition)
 			lens       = make([]int, task.NumPartition)
+			shards     = make([]int, *defaultChunksize)
 		)
 		for i := range partitionv {
 			partitionv[i] = frame.Make(task, psize, psize)
@@ -875,8 +876,9 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
+			task.Partitioner(in, task.NumPartition, shards[:n])
 			for i := 0; i < n; i++ {
-				p := int(in.Hash(i)) % task.NumPartition
+				p := shards[i]
 				j := lens[p]
 				frame.Copy(partitionv[p].Slice(j, j+1), in.Slice(i, i+1))
 				lens[p]++
@@ -1019,6 +1021,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	var (
 		partitionCombiner = make([]*combiningFrame, task.NumPartition)
 		out               = frame.Make(task, *defaultChunksize, *defaultChunksize)
+		shards            = make([]int, *defaultChunksize)
 	)
 	for i := range partitionCombiner {
 		partitionCombiner[i] = makeCombiningFrame(task, task.Combiner, 8, 1)
@@ -1028,8 +1031,9 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		if err != nil && err != sliceio.EOF {
 			return err
 		}
+		task.Partitioner(out, task.NumPartition, shards[:n])
 		for i := 0; i < n; i++ {
-			p := int(out.Hash(i)) % task.NumPartition
+			p := shards[i]
 			pcomb := partitionCombiner[p]
 			pcomb.Combine(out.Slice(i, i+1))
 

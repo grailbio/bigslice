@@ -154,6 +154,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 			err = errors.E(err, errors.Fatal)
 		}
 	}()
+	shards := make([]int, *defaultChunksize)
 	for {
 		if in.IsZero() {
 			in = frame.Make(task, *defaultChunksize, *defaultChunksize)
@@ -167,8 +168,9 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 		// elements in their respective partitions. In this case, we just
 		// maintain buffer slices of defaultChunksize each.
 		if task.NumPartition > 1 {
+			task.Partitioner(in, task.NumPartition, shards[:n])
 			for i := 0; i < n; i++ {
-				p := int(in.Hash(i)) % task.NumPartition
+				p := shards[i]
 				// If we don't yet have a buffer or the current one is at capacity,
 				// create a new one.
 				m := len(buf[p])

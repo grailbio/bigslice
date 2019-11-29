@@ -34,7 +34,7 @@ func Reshard(slice Slice, nshard int) Slice {
 func (r *reshardSlice) Name() Name             { return r.name }
 func (*reshardSlice) NumDep() int              { return 1 }
 func (r *reshardSlice) NumShard() int          { return r.nshard }
-func (r *reshardSlice) Dep(i int) Dep          { return Dep{r.Slice, true, false} }
+func (r *reshardSlice) Dep(i int) Dep          { return Dep{r.Slice, true, nil, false} }
 func (*reshardSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 func (r *reshardSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {

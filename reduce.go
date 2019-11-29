@@ -66,7 +66,7 @@ type reduceSlice struct {
 
 func (r *reduceSlice) Name() Name               { return r.name }
 func (*reduceSlice) NumDep() int                { return 1 }
-func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, true} }
+func (r *reduceSlice) Dep(i int) Dep            { return Dep{r.Slice, true, nil, true} }
 func (r *reduceSlice) Combiner() slicefunc.Func { return r.combiner }
 
 func (r *reduceSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {

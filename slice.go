@@ -29,16 +29,18 @@ var defaultChunksize = defaultsize.Chunk
 
 var errTypeError = errors.New("type error")
 
-// A Dep is a Slice dependency. Deps comprise a slice and a boolean
-// flag determining whether this is represents a shuffle dependency.
-// Shuffle dependencies must perform a data shuffle step: the
-// dependency must partition its output according to the Slice's
-// partitioner, and, when the dependent Slice is computed, the
-// evaluator must pass in Readers that read a single partition from
-// all dependent shards.
+// A Dep is a Slice dependency. Deps comprise a slice and a boolean flag
+// determining whether this is represents a shuffle dependency. Shuffle
+// dependencies must perform a data shuffle step: the dependency must partition
+// its output according to the Slice's partitioner, and, when the dependent
+// Slice is computed, the evaluator must pass in Readers that read a single
+// partition from all dependent shards. If Shuffle is true, then the provided
+// partitioner determines how the output is partitioned. If it is nil, the
+// default (hash by first column) partitioner is used.
 type Dep struct {
 	Slice
-	Shuffle bool
+	Shuffle     bool
+	Partitioner Partitioner
 	// Expand indicates that each shard of a shuffle dependency (i.e.,
 	// all the shards of a given partition) should be expanded (i.e.,
 	// not merged) when handed to the slice implementation. This is to
@@ -59,16 +61,18 @@ const (
 	RangeShard
 )
 
-// A Slice is a shardable, ordered dataset. Each slice consists of
-// zero or more columns of data distributed over one or  more shards.
-// Slices may declare dependencies on other slices from which it is
-// computed. In order to compute a slice, its dependencies must first
-// be computed, and their resulting Readers are passed to a Slice's
-// Reader method.
+// A Partitioner is used to assign partitions to rows in a frame.
+type Partitioner func(frame frame.Frame, nshard int, shards []int)
+
+// A Slice is a shardable, ordered dataset. Each slice consists of zero or more
+// columns of data distributed over one or  more shards. Slices may declare
+// dependencies on other slices from which it is computed. In order to compute
+// a slice, its dependencies must first be computed, and their resulting
+// Readers are passed to a Slice's Reader method.
 //
-// Since Go does not support generic typing, Slice combinators
-// perform their own dynamic type checking. Schematically we write
-// the n-ary slice with types t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
+// Since Go does not support generic typing, Slice combinators perform their
+// own dynamic type checking. Schematically we write the n-ary slice with types
+// t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
 //
 // Types that implement the Slice interface must be comparable.
 type Slice interface {
@@ -88,15 +92,15 @@ type Slice interface {
 	// Dep returns the i'th dependency for this Slice.
 	Dep(i int) Dep
 
-	// Combiner is an optional function that is used to combine multiple
-	// values with the same key from the slice's output. No combination
-	// is performed if Nil.
+	// Combiner is an optional function that is used to combine multiple values
+	// with the same key from the slice's output. No combination is performed
+	// if Nil.
 	Combiner() slicefunc.Func
 
-	// Reader returns a Reader for a shard of this Slice. The reader
-	// itself computes the shard's values on demand. The caller must
-	// provide Readers for all of this shard's dependencies, constructed
-	// according to the dependency type (see Dep).
+	// Reader returns a Reader for a shard of this Slice. The reader itself
+	// computes the shard's values on demand. The caller must provide Readers
+	// for all of this shard's dependencies, constructed according to the
+	// dependency type (see Dep).
 	Reader(shard int, deps []sliceio.Reader) sliceio.Reader
 }
 
@@ -833,7 +837,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 	f.Slice = slice
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
-	f.dep = Dep{slice, true, false}
+	f.dep = Dep{slice, true, nil, false}
 
 	arg, ret, ok := typecheck.Func(fold)
 	if !ok {
@@ -1028,7 +1032,7 @@ func singleDep(i int, slice Slice, shuffle bool) Dep {
 	if i != 0 {
 		panic(fmt.Sprintf("invalid dependency %d", i))
 	}
-	return Dep{slice, shuffle, false}
+	return Dep{slice, shuffle, nil, false}
 }
 
 var (
