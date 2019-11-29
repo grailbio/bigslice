@@ -38,13 +38,14 @@ func Reshuffle(slice Slice) Slice {
 	return &reshuffleSlice{makeName("reshuffle"), nil, slice}
 }
 
-// Repartition (re-)partitions the slice according to the provided
-// function fn. Fn has the schematic type
+// Repartition (re-)partitions the slice according to the provided function
+// fn, which is invoked for each record in the slice to assign that record's
+// shard. The function is is supplied with the number of shards to partition
+// over as well as the column values; the assigned shard is returned.
 //
-//	func(nshard int, col1 type1, col2 type2, ..., colN typeN) int
+// Schematically:
 //
-// It is invoked for each record in the slice, and returns the
-// shard assignment for that row.
+//	Repartition(Slice<t1, t2, ..., tn> func(nshard int, v1 t1, ..., vn tn) int)  Slice<t1, t2, ..., tn>
 func Repartition(slice Slice, fn interface{}) Slice {
 	arg, ret, ok := typecheck.Func(fn)
 	if !ok ||
