@@ -245,7 +245,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 			combineKey = opName
 		}
 		depPart := partitioner{
-			slice.NumShard(), lastSlice.Partitioner(),
+			slice.NumShard(), dep.Partitioner,
 			lastSlice.Combiner(), combineKey,
 		}
 		depTasks, err := c.compile(dep.Slice, depPart)

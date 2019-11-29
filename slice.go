@@ -29,16 +29,18 @@ var defaultChunksize = defaultsize.Chunk
 
 var errTypeError = errors.New("type error")
 
-// A Dep is a Slice dependency. Deps comprise a slice and a boolean
-// flag determining whether this is represents a shuffle dependency.
-// Shuffle dependencies must perform a data shuffle step: the
-// dependency must partition its output according to the Slice's
-// partitioner, and, when the dependent Slice is computed, the
-// evaluator must pass in Readers that read a single partition from
-// all dependent shards.
+// A Dep is a Slice dependency. Deps comprise a slice and a boolean flag
+// determining whether this is represents a shuffle dependency. Shuffle
+// dependencies must perform a data shuffle step: the dependency must partition
+// its output according to the Slice's partitioner, and, when the dependent
+// Slice is computed, the evaluator must pass in Readers that read a single
+// partition from all dependent shards. If Shuffle is true, then the provided
+// partitioner determines how the output is partitioned. If it is nil, the
+// default (hash by first column) partitioner is used.
 type Dep struct {
 	Slice
-	Shuffle bool
+	Shuffle     bool
+	Partitioner Partitioner
 	// Expand indicates that each shard of a shuffle dependency (i.e.,
 	// all the shards of a given partition) should be expanded (i.e.,
 	// not merged) when handed to the slice implementation. This is to
@@ -95,11 +97,6 @@ type Slice interface {
 	// values with the same key from the slice's output. No combination
 	// is performed if Nil.
 	Combiner() slicefunc.Func
-
-	// Partitioner returns the partitioner to be used for this slice. If the
-	// partitioner is nil, then the default (i.e., hash-based) partitioner
-	// will be used.
-	Partitioner() Partitioner
 
 	// Reader returns a Reader for a shard of this Slice. The reader
 	// itself computes the shard's values on demand. The caller must
@@ -206,7 +203,6 @@ func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
 func (*constSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
-func (*constSlice) Partitioner() Partitioner { return nil }
 
 type constReader struct {
 	op    *constSlice
@@ -308,7 +304,6 @@ func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
 func (*readerFuncSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
-func (*readerFuncSlice) Partitioner() Partitioner { return nil }
 
 type readerFuncSliceReader struct {
 	op    *readerFuncSlice
@@ -843,7 +838,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 	f.Slice = slice
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
-	f.dep = Dep{slice, true, false}
+	f.dep = Dep{slice, true, nil, false}
 
 	arg, ret, ok := typecheck.Func(fold)
 	if !ok {
@@ -1038,7 +1033,7 @@ func singleDep(i int, slice Slice, shuffle bool) Dep {
 	if i != 0 {
 		panic(fmt.Sprintf("invalid dependency %d", i))
 	}
-	return Dep{slice, shuffle, false}
+	return Dep{slice, shuffle, nil, false}
 }
 
 var (

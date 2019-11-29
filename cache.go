@@ -22,7 +22,7 @@ var _ slicecache.Cacheable = (*cacheSlice)(nil)
 
 func (c *cacheSlice) Name() Name                                             { return c.name }
 func (c *cacheSlice) NumDep() int                                            { return 1 }
-func (c *cacheSlice) Dep(i int) Dep                                          { return Dep{c.Slice, false, false} }
+func (c *cacheSlice) Dep(i int) Dep                                          { return Dep{c.Slice, false, nil, false} }
 func (*cacheSlice) Combiner() slicefunc.Func                                 { return slicefunc.Nil }
 func (c *cacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 

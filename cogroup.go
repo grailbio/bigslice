@@ -108,9 +108,8 @@ func (c *cogroupSlice) NumOut() int            { return len(c.out) }
 func (c *cogroupSlice) Out(i int) reflect.Type { return c.out[i] }
 func (c *cogroupSlice) Prefix() int            { return c.prefix }
 func (c *cogroupSlice) NumDep() int            { return len(c.slices) }
-func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, false} }
+func (c *cogroupSlice) Dep(i int) Dep          { return Dep{c.slices[i], true, nil, false} }
 func (*cogroupSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
-func (*cogroupSlice) Partitioner() Partitioner { return nil }
 
 type cogroupReader struct {
 	err error

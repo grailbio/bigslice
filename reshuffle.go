@@ -33,7 +33,7 @@ func Reshuffle(slice Slice) Slice {
 
 func (r *reshuffleSlice) Name() Name             { return r.name }
 func (*reshuffleSlice) NumDep() int              { return 1 }
-func (r *reshuffleSlice) Dep(i int) Dep          { return Dep{r.Slice, true, false} }
+func (r *reshuffleSlice) Dep(i int) Dep          { return Dep{r.Slice, true, nil, false} }
 func (*reshuffleSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 func (r *reshuffleSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
