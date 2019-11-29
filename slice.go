@@ -59,6 +59,9 @@ const (
 	RangeShard
 )
 
+// A Partitioner is used to assign partitions to rows in a frame.
+type Partitioner func(frame frame.Frame, nshard int, shards []int)
+
 // A Slice is a shardable, ordered dataset. Each slice consists of
 // zero or more columns of data distributed over one or  more shards.
 // Slices may declare dependencies on other slices from which it is
@@ -92,6 +95,11 @@ type Slice interface {
 	// values with the same key from the slice's output. No combination
 	// is performed if Nil.
 	Combiner() slicefunc.Func
+
+	// Partitioner returns the partitioner to be used for this slice. If the
+	// partitioner is nil, then the default (i.e., hash-based) partitioner
+	// will be used.
+	Partitioner() Partitioner
 
 	// Reader returns a Reader for a shard of this Slice. The reader
 	// itself computes the shard's values on demand. The caller must
@@ -198,6 +206,7 @@ func (*constSlice) ShardType() ShardType     { return HashShard }
 func (*constSlice) NumDep() int              { return 0 }
 func (*constSlice) Dep(i int) Dep            { panic("no deps") }
 func (*constSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
+func (*constSlice) Partitioner() Partitioner { return nil }
 
 type constReader struct {
 	op    *constSlice
@@ -299,6 +308,7 @@ func (*readerFuncSlice) ShardType() ShardType     { return HashShard }
 func (*readerFuncSlice) NumDep() int              { return 0 }
 func (*readerFuncSlice) Dep(i int) Dep            { panic("no deps") }
 func (*readerFuncSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
+func (*readerFuncSlice) Partitioner() Partitioner { return nil }
 
 type readerFuncSliceReader struct {
 	op    *readerFuncSlice

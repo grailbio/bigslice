@@ -10,10 +10,17 @@ import (
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/internal/slicecache"
 	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
 )
+
+func defaultPartitioner(frame frame.Frame, nshard int, shards []int) {
+	for i := range shards {
+		shards[i] = int(frame.Hash(i) % uint32(nshard))
+	}
+}
 
 // Pipeline returns the sequence of slices that may be pipelined
 // starting from slice. Slices that do not have shuffle dependencies
@@ -54,6 +61,7 @@ type partitioner struct {
 	// numPartition is the number of partitions in the output for a shuffle
 	// dependency, if >1. If 0, the output is not used by a shuffle.
 	numPartition int
+	partitioner  bigslice.Partitioner
 	Combiner     slicefunc.Func
 	CombineKey   string
 }
@@ -61,6 +69,15 @@ type partitioner struct {
 // IsShuffle returns whether the task output is used by a shuffle dependency.
 func (p partitioner) IsShuffle() bool {
 	return p.numPartition != 0
+}
+
+// Partitioner returns the partitioner to be used to partition the output of
+// this task.
+func (p partitioner) Partitioner() bigslice.Partitioner {
+	if p.partitioner == nil {
+		return defaultPartitioner
+	}
+	return p.partitioner
 }
 
 // NumPartition returns the number of partitions that the task output should
@@ -199,6 +216,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 			Invocation:   c.inv,
 			Pragma:       pragmas,
 			NumPartition: part.NumPartition(),
+			Partitioner:  part.Partitioner(),
 			Combiner:     part.Combiner,
 			CombineKey:   part.CombineKey,
 		}
@@ -226,7 +244,10 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 		if !lastSlice.Combiner().IsNil() && c.machineCombiners {
 			combineKey = opName
 		}
-		depPart := partitioner{slice.NumShard(), lastSlice.Combiner(), combineKey}
+		depPart := partitioner{
+			slice.NumShard(), lastSlice.Partitioner(),
+			lastSlice.Combiner(), combineKey,
+		}
 		depTasks, err := c.compile(dep.Slice, depPart)
 		if err != nil {
 			return nil, err

@@ -230,6 +230,10 @@ type Task struct {
 	Do func([]sliceio.Reader) sliceio.Reader
 	// Deps are the task's dependencies. See TaskDep for details.
 	Deps []TaskDep
+
+	// Partitioner is used to partition the task's output. It will only
+	// be called when NumPartition > 1.
+	Partitioner bigslice.Partitioner
 	// NumPartition is the number of partitions that are output by this task.
 	// If NumPartition > 1, then the task must also define a partitioner.
 	NumPartition int
