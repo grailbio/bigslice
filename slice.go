@@ -64,16 +64,15 @@ const (
 // A Partitioner is used to assign partitions to rows in a frame.
 type Partitioner func(frame frame.Frame, nshard int, shards []int)
 
-// A Slice is a shardable, ordered dataset. Each slice consists of
-// zero or more columns of data distributed over one or  more shards.
-// Slices may declare dependencies on other slices from which it is
-// computed. In order to compute a slice, its dependencies must first
-// be computed, and their resulting Readers are passed to a Slice's
-// Reader method.
+// A Slice is a shardable, ordered dataset. Each slice consists of zero or more
+// columns of data distributed over one or  more shards. Slices may declare
+// dependencies on other slices from which it is computed. In order to compute
+// a slice, its dependencies must first be computed, and their resulting
+// Readers are passed to a Slice's Reader method.
 //
-// Since Go does not support generic typing, Slice combinators
-// perform their own dynamic type checking. Schematically we write
-// the n-ary slice with types t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
+// Since Go does not support generic typing, Slice combinators perform their
+// own dynamic type checking. Schematically we write the n-ary slice with types
+// t1, t2, ..., tn as Slice<t1, t2, ..., tn>.
 //
 // Types that implement the Slice interface must be comparable.
 type Slice interface {
@@ -93,15 +92,15 @@ type Slice interface {
 	// Dep returns the i'th dependency for this Slice.
 	Dep(i int) Dep
 
-	// Combiner is an optional function that is used to combine multiple
-	// values with the same key from the slice's output. No combination
-	// is performed if Nil.
+	// Combiner is an optional function that is used to combine multiple values
+	// with the same key from the slice's output. No combination is performed
+	// if Nil.
 	Combiner() slicefunc.Func
 
-	// Reader returns a Reader for a shard of this Slice. The reader
-	// itself computes the shard's values on demand. The caller must
-	// provide Readers for all of this shard's dependencies, constructed
-	// according to the dependency type (see Dep).
+	// Reader returns a Reader for a shard of this Slice. The reader itself
+	// computes the shard's values on demand. The caller must provide Readers
+	// for all of this shard's dependencies, constructed according to the
+	// dependency type (see Dep).
 	Reader(shard int, deps []sliceio.Reader) sliceio.Reader
 }
 

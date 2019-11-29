@@ -127,8 +127,9 @@ type compiler struct {
 // compilation so that tasks can be reused within the invocation.
 func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Task, err error) {
 	// We never reuse combiner tasks, as we currently don't have a way of
-	// identifying equivalent combiner functions.
-	if part.Combiner.IsNil() {
+	// identifying equivalent combiner functions. Ditto with custom
+	// partitioners.
+	if part.Combiner.IsNil() && part.partitioner == nil {
 		// TODO(jcharumilind): Repartition already-computed data instead of
 		// forcing recomputation of the slice if we get a different
 		// numPartition.
