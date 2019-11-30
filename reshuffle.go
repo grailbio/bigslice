@@ -16,7 +16,10 @@ import (
 	"github.com/grailbio/bigslice/typecheck"
 )
 
-var typeOfInt = reflect.TypeOf(int(0))
+var (
+	typeOfInt    = reflect.TypeOf(int(0))
+	sliceTypeInt = slicetype.New(typeOfInt)
+)
 
 type reshuffleSlice struct {
 	name        Name
@@ -47,17 +50,16 @@ func Reshuffle(slice Slice) Slice {
 //
 //	Repartition(Slice<t1, t2, ..., tn> func(nshard int, v1 t1, ..., vn tn) int)  Slice<t1, t2, ..., tn>
 func Repartition(slice Slice, fn interface{}) Slice {
+	var (
+		expectArg = slicetype.Append(sliceTypeInt, slice)
+		expectRet = sliceTypeInt
+	)
 	arg, ret, ok := typecheck.Func(fn)
-	if !ok ||
-		arg.NumOut() < 1 || arg.Out(0) != typeOfInt ||
-		ret.NumOut() != 1 || ret.Out(0) != typeOfInt {
-		typecheck.Panicf(1, "repartition: invalid partitioning function %T", fn)
+	if !ok {
+		typecheck.Panicf(1, "repartition: not a function: %T", fn)
 	}
-	// The first argument is the number of shards to partition over, so we
-	// drop this.
-	arg = slicetype.Slice(arg, 1, arg.NumOut())
-	if !typecheck.Equal(slice, arg) {
-		typecheck.Panicf(1, "repartition: function %T does not match input slice type %s", fn, slicetype.String(slice))
+	if !typecheck.Equal(arg, expectArg) || !typecheck.Equal(ret, expectRet) {
+		typecheck.Panicf(1, "repartiton: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
 	}
 	fval := slicefunc.Of(fn)
 	part := func(frame frame.Frame, nshard int, shards []int) {

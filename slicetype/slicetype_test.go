@@ -24,3 +24,19 @@ func TestType(t *testing.T) {
 		t.Error("types should be assignable to themselves")
 	}
 }
+
+func TestSignature(t *testing.T) {
+	arg := New(typeOfString, typeOfInt)
+	ret := New()
+	if got, want := Signature(arg, ret), "func(string, int)"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	ret = New(typeOfInt)
+	if got, want := Signature(arg, ret), "func(string, int) int"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	ret = New(typeOfInt, typeOfString)
+	if got, want := Signature(arg, ret), "func(string, int) (int, string)"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
