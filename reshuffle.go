@@ -62,14 +62,14 @@ func Repartition(slice Slice, fn interface{}) Slice {
 		typecheck.Panicf(1, "repartiton: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
 	}
 	fval := slicefunc.Of(fn)
-	part := func(frame frame.Frame, nshard int, shards []int) {
+	part := func(ctx context.Context, frame frame.Frame, nshard int, shards []int) {
 		args := make([]reflect.Value, slice.NumOut()+1)
 		args[0] = reflect.ValueOf(nshard)
 		for i := range shards {
 			for j := 0; j < slice.NumOut(); j++ {
 				args[j+1] = frame.Index(j, i)
 			}
-			result := fval.Call(context.TODO(), args)
+			result := fval.Call(ctx, args)
 			shards[i] = int(result[0].Int())
 		}
 	}
