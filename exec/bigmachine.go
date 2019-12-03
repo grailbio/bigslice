@@ -876,7 +876,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
-			task.Partitioner(in, task.NumPartition, shards[:n])
+			task.Partitioner(ctx, in, task.NumPartition, shards[:n])
 			for i := 0; i < n; i++ {
 				p := shards[i]
 				j := lens[p]
@@ -1031,7 +1031,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		if err != nil && err != sliceio.EOF {
 			return err
 		}
-		task.Partitioner(out, task.NumPartition, shards[:n])
+		task.Partitioner(ctx, out, task.NumPartition, shards[:n])
 		for i := 0; i < n; i++ {
 			p := shards[i]
 			pcomb := partitionCombiner[p]

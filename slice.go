@@ -62,7 +62,7 @@ const (
 )
 
 // A Partitioner is used to assign partitions to rows in a frame.
-type Partitioner func(frame frame.Frame, nshard int, shards []int)
+type Partitioner func(ctx context.Context, frame frame.Frame, nshard int, shards []int)
 
 // A Slice is a shardable, ordered dataset. Each slice consists of zero or more
 // columns of data distributed over one or  more shards. Slices may declare

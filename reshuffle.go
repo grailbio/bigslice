@@ -5,15 +5,25 @@
 package bigslice
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 
+	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
+var (
+	typeOfInt    = reflect.TypeOf(int(0))
+	sliceTypeInt = slicetype.New(typeOfInt)
+)
+
 type reshuffleSlice struct {
-	name Name
+	name        Name
+	partitioner Partitioner
 	Slice
 }
 
@@ -28,12 +38,47 @@ func Reshuffle(slice Slice) Slice {
 	if err := canMakeCombiningFrame(slice); err != nil {
 		typecheck.Panic(1, err.Error())
 	}
-	return &reshuffleSlice{makeName("reshuffle"), slice}
+	return &reshuffleSlice{makeName("reshuffle"), nil, slice}
+}
+
+// Repartition (re-)partitions the slice according to the provided function
+// fn, which is invoked for each record in the slice to assign that record's
+// shard. The function is supplied with the number of shards to partition
+// over as well as the column values; the assigned shard is returned.
+//
+// Schematically:
+//
+//	Repartition(Slice<t1, t2, ..., tn> func(nshard int, v1 t1, ..., vn tn) int)  Slice<t1, t2, ..., tn>
+func Repartition(slice Slice, fn interface{}) Slice {
+	var (
+		expectArg = slicetype.Append(sliceTypeInt, slice)
+		expectRet = sliceTypeInt
+	)
+	arg, ret, ok := typecheck.Func(fn)
+	if !ok {
+		typecheck.Panicf(1, "repartition: not a function: %T", fn)
+	}
+	if !typecheck.Equal(arg, expectArg) || !typecheck.Equal(ret, expectRet) {
+		typecheck.Panicf(1, "repartiton: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
+	}
+	fval := slicefunc.Of(fn)
+	part := func(ctx context.Context, frame frame.Frame, nshard int, shards []int) {
+		args := make([]reflect.Value, slice.NumOut()+1)
+		args[0] = reflect.ValueOf(nshard)
+		for i := range shards {
+			for j := 0; j < slice.NumOut(); j++ {
+				args[j+1] = frame.Index(j, i)
+			}
+			result := fval.Call(ctx, args)
+			shards[i] = int(result[0].Int())
+		}
+	}
+	return &reshuffleSlice{makeName("repartition"), part, slice}
 }
 
 func (r *reshuffleSlice) Name() Name             { return r.name }
 func (*reshuffleSlice) NumDep() int              { return 1 }
-func (r *reshuffleSlice) Dep(i int) Dep          { return Dep{r.Slice, true, nil, false} }
+func (r *reshuffleSlice) Dep(i int) Dep          { return Dep{r.Slice, true, r.partitioner, false} }
 func (*reshuffleSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
 
 func (r *reshuffleSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {

@@ -131,3 +131,31 @@ func Slice(t Type, i, j int) Type {
 	}
 	return sliceType{t, i, j}
 }
+
+// Signature returns a Go function signature for a function that takes the
+// provided arguments and returns the provided values.
+func Signature(arg, ret Type) string {
+	args := make([]string, arg.NumOut())
+	for i := range args {
+		args[i] = arg.Out(i).String()
+	}
+	rets := make([]string, ret.NumOut())
+	for i := range rets {
+		rets[i] = ret.Out(i).String()
+	}
+	var b strings.Builder
+	b.WriteString("func(")
+	b.WriteString(strings.Join(args, ", "))
+	b.WriteString(")")
+	switch len(rets) {
+	case 0:
+	case 1:
+		b.WriteString(" ")
+		b.WriteString(rets[0])
+	default:
+		b.WriteString(" (")
+		b.WriteString(strings.Join(rets, ", "))
+		b.WriteString(")")
+	}
+	return b.String()
+}

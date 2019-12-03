@@ -19,7 +19,8 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-func TestReshuffle(t *testing.T) {
+func reshuffleTest(t *testing.T, transform func(bigslice.Slice) bigslice.Slice) {
+	t.Helper()
 	const N = 100
 	col1 := make([]lengthHashKey, N)
 	col2 := make([]int, N)
@@ -37,7 +38,7 @@ func TestReshuffle(t *testing.T) {
 	for m := 1; m < 10; m++ {
 		t.Run(fmt.Sprint(m), func(t *testing.T) {
 			slice := bigslice.Const(m, append([]lengthHashKey{}, col1...), append([]int{}, col2...))
-			slice = bigslice.Reshuffle(slice)
+			slice = transform(slice)
 
 			// map of col1 length -> set of shards that had keys of that length.
 			lengthShards := map[int]map[int]struct{}{}
@@ -88,5 +89,27 @@ func init() {
 			Less:         func(i, j int) bool { return slice[i] < slice[j] },
 			HashWithSeed: func(i int, _ uint32) uint32 { return uint32(len(slice[i])) },
 		}
+	})
+}
+
+func TestReshuffle(t *testing.T) {
+	reshuffleTest(t, bigslice.Reshuffle)
+}
+
+func TestRepartition(t *testing.T) {
+	reshuffleTest(t, func(slice bigslice.Slice) bigslice.Slice {
+		return bigslice.Repartition(slice, func(nshard int, key lengthHashKey, value int) int {
+			return len(key) % nshard
+		})
+	})
+}
+
+func TestRepartitionType(t *testing.T) {
+	slice := bigslice.Const(1, []int{}, []string{})
+	expectTypeError(t, "repartiton: expected func(int, int, string) int, got func() int", func() {
+		bigslice.Repartition(slice, func() int { return 0 })
+	})
+	expectTypeError(t, "repartiton: expected func(int, int, string) int, got func(int, int, string)", func() {
+		bigslice.Repartition(slice, func(_ int, _ int, _ string) {})
 	})
 }

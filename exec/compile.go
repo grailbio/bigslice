@@ -5,6 +5,7 @@
 package exec
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-func defaultPartitioner(frame frame.Frame, nshard int, shards []int) {
+func defaultPartitioner(_ context.Context, frame frame.Frame, nshard int, shards []int) {
 	for i := range shards {
 		shards[i] = int(frame.Hash(i) % uint32(nshard))
 	}

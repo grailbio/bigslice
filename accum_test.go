@@ -14,10 +14,7 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-var (
-	typeOfInt   = reflect.TypeOf(0)
-	typeOfInt64 = reflect.TypeOf(int64(0))
-)
+var typeOfInt64 = reflect.TypeOf(int64(0))
 
 var accumulableTypes = []reflect.Type{typeOfString, typeOfInt, typeOfInt64}
 

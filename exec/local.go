@@ -168,7 +168,7 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 		// elements in their respective partitions. In this case, we just
 		// maintain buffer slices of defaultChunksize each.
 		if task.NumPartition > 1 {
-			task.Partitioner(in, task.NumPartition, shards[:n])
+			task.Partitioner(ctx, in, task.NumPartition, shards[:n])
 			for i := 0; i < n; i++ {
 				p := shards[i]
 				// If we don't yet have a buffer or the current one is at capacity,
