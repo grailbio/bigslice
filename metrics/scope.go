@@ -15,7 +15,7 @@ import (
 
 // Scope is a collection of metric instances.
 type Scope struct {
-	// storage is an unsafe pointer to a *[]unsafe.Pointer. It is used to
+	// storage is an unsafe pointer to a []unsafe.Pointer. It is used to
 	// implement scopes as a thread-safe, persistent data structure.
 	storage unsafe.Pointer
 }
