@@ -43,7 +43,7 @@ func Reshuffle(slice Slice) Slice {
 
 // Repartition (re-)partitions the slice according to the provided function
 // fn, which is invoked for each record in the slice to assign that record's
-// shard. The function is is supplied with the number of shards to partition
+// shard. The function is supplied with the number of shards to partition
 // over as well as the column values; the assigned shard is returned.
 //
 // Schematically:
