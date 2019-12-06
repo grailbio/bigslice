@@ -353,7 +353,7 @@ func TestReadRetries(t *testing.T) {
 	var (
 		errorReader = newErrorReader(bytes.NewReader(bs))
 		openerAt    = readSeekerOpenerAt{r: errorReader}
-		r           = newRetryReader(ctx, "test", openerAt)
+		r           = newRetryReader(ctx, openerAt)
 		// p is our per-read buffer.
 		p     = make([]byte, 1)
 		total int
