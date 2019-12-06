@@ -186,6 +186,9 @@ func TestSessionFuncPanic(t *testing.T) {
 // TestScanFaultTolerance verifies that result scanning is tolerant to machine
 // failure.
 func TestScanFaultTolerance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
 	const Nshard = 100
 	const N = Nshard * 10 * 1000
 	const Kills = 5
