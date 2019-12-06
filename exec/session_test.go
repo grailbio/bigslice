@@ -224,6 +224,9 @@ func TestScanFaultTolerance(t *testing.T) {
 			sys.Kill(nil)
 		}
 	}
+	if err = scanner.Err(); err != nil {
+		t.Fatalf("scanner error:%v", err)
+	}
 	if got, want := len(vs), N; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
