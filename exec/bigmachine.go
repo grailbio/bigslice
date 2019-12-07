@@ -1257,7 +1257,7 @@ func (r *retryReader) Close() error {
 }
 
 // openerAtReader is a sliceio.Reader that is backed by an OpenerAt used to
-// open a reader and retry on error. For example, we may reopening a connection
+// open a reader and retry on error. For example, we may reopen a connection
 // to a machine that experienced a temporary network error, synced to where we
 // have successfully read so far.
 type openerAtReader struct {
