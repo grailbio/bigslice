@@ -1303,10 +1303,11 @@ type machineTaskPartition struct {
 }
 
 // OpenAt implements openerAt.
-func (m machineTaskPartition) OpenAt(ctx context.Context, offset int64) (reader io.ReadCloser, err error) {
-	err = m.Machine.RetryCall(ctx, "Worker.Read",
-		readRequest{m.TaskPartition.Name, m.TaskPartition.Partition, offset}, &reader)
-	return
+func (m machineTaskPartition) OpenAt(ctx context.Context, offset int64) (io.ReadCloser, error) {
+	var r io.ReadCloser
+	err := m.Machine.RetryCall(ctx, "Worker.Read",
+		readRequest{m.TaskPartition.Name, m.TaskPartition.Partition, offset}, &r)
+	return r, err
 }
 
 func (m machineTaskPartition) String() string {
@@ -1348,26 +1349,27 @@ type evalOpenerAt struct {
 }
 
 // OpenAt implements openerAt.
-func (r *evalOpenerAt) OpenAt(ctx context.Context, offset int64) (reader io.ReadCloser, err error) {
+func (e *evalOpenerAt) OpenAt(ctx context.Context, offset int64) (io.ReadCloser, error) {
 	// Evaluate the task, so that results are available for reading. This
 	// provides some fault tolerance when machines are lost after evaluation
 	// is complete (e.g. during final result scanning).
-	err = Eval(ctx, r.Executor, []*Task{r.Task}, nil)
+	err := Eval(ctx, e.Executor, []*Task{e.Task}, nil)
 	if err != nil {
-		return
+		return nil, err
 	}
-	r.machine = r.Executor.location(r.Task).Machine
-	err = r.machine.RetryCall(ctx,
-		"Worker.Read", readRequest{r.Task.Name, r.Partition, offset}, &reader)
-	return
+	e.machine = e.Executor.location(e.Task).Machine
+	var r io.ReadCloser
+	err = e.machine.RetryCall(ctx,
+		"Worker.Read", readRequest{e.Task.Name, e.Partition, offset}, &r)
+	return r, err
 }
 
-func (r evalOpenerAt) String() string {
+func (e evalOpenerAt) String() string {
 	addr := "<no machine yet>"
-	if r.machine != nil {
-		addr = r.machine.Addr
+	if e.machine != nil {
+		addr = e.machine.Addr
 	}
-	return fmt.Sprintf("Worker.Read %s:%s:%d", addr, r.Task.Name, r.Partition)
+	return fmt.Sprintf("Worker.Read %s:%s:%d", addr, e.Task.Name, e.Partition)
 }
 
 // newEvalReader returns a reader that reads the data of the given task and
