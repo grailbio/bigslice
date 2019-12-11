@@ -44,7 +44,6 @@ func (testExecutor) HandleDebug(handler *http.ServeMux) {
 // SimpleEvalTest sets up a simple, 2-node task graph.
 type simpleEvalTest struct {
 	Tasks []*Task
-	Inv   bigslice.Invocation
 
 	ConstTask, CogroupTask *Task
 
@@ -54,7 +53,7 @@ type simpleEvalTest struct {
 
 func (s *simpleEvalTest) Go(t *testing.T) {
 	t.Helper()
-	s.Tasks, _, s.Inv = compileFunc(func() bigslice.Slice {
+	s.Tasks, _, _ = compileFunc(func() bigslice.Slice {
 		slice := bigslice.Const(1, []int{1, 2, 3})
 		slice = bigslice.Cogroup(slice)
 		return slice
@@ -64,7 +63,7 @@ func (s *simpleEvalTest) Go(t *testing.T) {
 	ctx := context.Background()
 	s.wg.Add(1)
 	go func() {
-		s.evalErr = Eval(ctx, testExecutor{t}, s.Inv, s.Tasks, nil)
+		s.evalErr = Eval(ctx, testExecutor{t}, s.Tasks, nil)
 		s.wg.Done()
 	}()
 }
@@ -197,7 +196,7 @@ func TestResubmitLostInteriorTask(t *testing.T) {
 		t.Run(fmt.Sprintf("parallel=%v", parallel), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			tasks, _, inv := compileFunc(func() (slice bigslice.Slice) {
+			tasks, _, _ := compileFunc(func() (slice bigslice.Slice) {
 				slice = bigslice.Const(2, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 				slice = bigslice.Cogroup(slice)
 				return
@@ -205,7 +204,7 @@ func TestResubmitLostInteriorTask(t *testing.T) {
 
 			var g errgroup.Group
 			for i := 0; i < parallel; i++ {
-				g.Go(func() error { return Eval(ctx, testExecutor{t}, inv, tasks, nil) })
+				g.Go(func() error { return Eval(ctx, testExecutor{t}, tasks, nil) })
 			}
 
 			var (
@@ -282,8 +281,8 @@ func TestPersistentTaskLoss(t *testing.T) {
 	}
 }
 
-func multiPhaseCompile(nshard, nstage int) ([]*Task, bigslice.Invocation) {
-	tasks, _, inv := compileFunc(func() bigslice.Slice {
+func multiPhaseCompile(nshard, nstage int) []*Task {
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
 		keys := make([]string, nshard*2)
 		for i := range keys {
 			keys[i] = fmt.Sprint(i)
@@ -299,7 +298,7 @@ func multiPhaseCompile(nshard, nstage int) ([]*Task, bigslice.Invocation) {
 		}
 		return slice
 	})
-	return tasks, inv
+	return tasks
 }
 
 func TestMultiPhaseEval(t *testing.T) {
@@ -307,7 +306,7 @@ func TestMultiPhaseEval(t *testing.T) {
 		S = 1000
 		P = 10
 	)
-	tasks, inv := multiPhaseCompile(S, P)
+	tasks := multiPhaseCompile(S, P)
 	if got, want := len(tasks), S; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -334,7 +333,7 @@ func TestMultiPhaseEval(t *testing.T) {
 		go func() {
 			t.Helper()
 			defer wg.Done()
-			if err := Eval(context.Background(), testExecutor{t}, inv, tasks, nil); err != nil {
+			if err := Eval(context.Background(), testExecutor{t}, tasks, nil); err != nil {
 				t.Fatal(err)
 			}
 		}()
@@ -474,12 +473,12 @@ func BenchmarkEval(b *testing.B) {
 			ctx := context.Background()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tasks, inv := multiPhaseCompile(nshard, *evalStages)
+				tasks := multiPhaseCompile(nshard, *evalStages)
 				if i == 0 {
 					b.Log("ntask=", len(tasks))
 				}
 				b.StartTimer()
-				if err := Eval(ctx, benchExecutor{b}, inv, tasks, nil); err != nil {
+				if err := Eval(ctx, benchExecutor{b}, tasks, nil); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -492,7 +491,7 @@ func BenchmarkEnqueue(b *testing.B) {
 		b.Run(fmt.Sprintf("enqueue.%d", nshard), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tasks, _ := multiPhaseCompile(nshard, *evalStages)
+				tasks := multiPhaseCompile(nshard, *evalStages)
 				if i == 0 {
 					b.Log("ntask=", len(tasks))
 				}

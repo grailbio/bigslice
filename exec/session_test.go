@@ -7,9 +7,11 @@ package exec
 import (
 	"context"
 	"reflect"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigmachine/testsystem"
@@ -179,6 +181,68 @@ func TestSessionFuncPanic(t *testing.T) {
 			t.Errorf("session did not survive panic")
 		}
 	})
+}
+
+// TestScanFaultTolerance verifies that result scanning is tolerant to machine
+// failure.
+func TestScanFaultTolerance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+	const Nshard = 100
+	const N = Nshard * 10 * 1000
+	const Kills = 5
+	const KillInterval = N / (Kills + 1)
+	f := bigslice.Func(func() bigslice.Slice {
+		vs := make([]int, N)
+		for i := range vs {
+			vs[i] = i
+		}
+		return bigslice.Const(Nshard, vs)
+	})
+	sys := testsystem.New()
+	sys.Machineprocs = 3
+	// Use short periods/timeouts so that this test runs in reasonable time.
+	sys.KeepalivePeriod = 1 * time.Second
+	sys.KeepaliveTimeout = 1 * time.Second
+	sys.KeepaliveRpcTimeout = 1 * time.Second
+	var (
+		sess = Start(Bigmachine(sys), Parallelism(10))
+		ctx  = context.Background()
+	)
+	result, err := sess.Run(ctx, f)
+	if err != nil {
+		t.Fatalf("run failed")
+	}
+	scanner := result.Scanner()
+	var (
+		v  int
+		vs []int
+		i  int
+	)
+	for scanner.Scan(ctx, &v) {
+		vs = append(vs, v)
+		i++
+		if i%KillInterval == KillInterval-1 {
+			log.Printf("killing random machine")
+			sys.Kill(nil)
+		}
+	}
+	if err = scanner.Err(); err != nil {
+		t.Fatalf("scanner error:%v", err)
+	}
+	if got, want := len(vs), N; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	sort.Ints(vs)
+	for i := range vs {
+		if got, want := vs[i], i; got != want {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if err = scanner.Err(); err != nil {
+		t.Fatalf("scanner error:%v", err)
+	}
 }
 
 var executors = map[string]Option{

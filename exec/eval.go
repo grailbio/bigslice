@@ -14,7 +14,6 @@ import (
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
-	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -57,12 +56,9 @@ type Executor interface {
 // tasks when their dependencies have been satisfied. Eval returns on
 // evaluation error or else when all roots are fully evaluated.
 //
-// TODO(marius): consider including the invocation in the task definitions
-// themselves. This way, a task's name is entirely self contained and can
-// be interpreted without an accompanying invocation.
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
-func Eval(ctx context.Context, executor Executor, inv bigslice.Invocation, roots []*Task, group *status.Group) error {
+func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.Group) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

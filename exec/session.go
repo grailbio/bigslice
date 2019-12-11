@@ -276,7 +276,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		sess:  s,
 		inv:   inv,
 		tasks: tasks,
-	}, Eval(ctx, s.executor, inv, tasks, taskGroup)
+	}, Eval(ctx, s.executor, tasks, taskGroup)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.
