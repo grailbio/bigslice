@@ -57,7 +57,7 @@ func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	}
 	for i := range out {
 		if got, want := reflect.TypeOf(out[i]), reflect.PtrTo(s.typ.Out(i)); got != want {
-			s.err = typecheck.Errorf(1, "wrong type for argument %d: expected *%s, got %s", i, want, got)
+			s.err = typecheck.Errorf(1, "wrong type for argument %d: expected %s, got %s", i, want, got)
 			return false
 		}
 	}
