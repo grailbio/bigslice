@@ -81,6 +81,8 @@ github.com/gorilla/websocket v1.4.1/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/ad
 github.com/grailbio/base v0.0.1/go.mod h1:wVM2Cq2/HT0rt6WYGQhXJ3CCLkNnGjeAAOPHCZ2IsN0=
 github.com/grailbio/base v0.0.5 h1:9LoafGwmMR4QPEOZ5Kz0posu/pbGhDleT7Owqj8l7Yg=
 github.com/grailbio/base v0.0.5/go.mod h1:OFVz7zmqb1D+Jbew0B4DCIpl4ozzVFxf+JKQZBBIQzE=
+github.com/grailbio/base v0.0.6 h1:Hr1OHe16+sQEf4CytYlTu2bR+Sq5VENKA/sZoDBGo+k=
+github.com/grailbio/base v0.0.6/go.mod h1:OFVz7zmqb1D+Jbew0B4DCIpl4ozzVFxf+JKQZBBIQzE=
 github.com/grailbio/bigmachine v0.5.5 h1:uHdPrVTKw9BQmcfE70b7q126LJac8TiCnqOvS+UmvOo=
 github.com/grailbio/bigmachine v0.5.5/go.mod h1:8cYMHQBaSMyR9Gy9vh6YDE6uo+SgbEsnBXIGVp3gKGE=
 github.com/grailbio/v23/factories/grail v0.0.0-20190904050408-8a555d238e9a h1:kAl1x1ErQgs55bcm/WdoKCPny/kIF7COmC+UGQ9GKcM=
