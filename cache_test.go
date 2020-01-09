@@ -18,20 +18,12 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
-	ctx := context.Background()
-
-	var computeAllowed bool
-	const (
-		N      = 10000
-		Nshard = 10
-	)
+	const N = 10000
 	input := make([]int, N)
 	for i := range input {
 		input[i] = i
 	}
-	makeSlice := func() bigslice.Slice {
+	makeSlice := func(Nshard int, dir string, computeAllowed bool) bigslice.Slice {
 		slice := bigslice.Const(Nshard, input)
 		slice = bigslice.Map(slice, func(i int) int {
 			if !computeAllowed {
@@ -40,18 +32,68 @@ func TestCache(t *testing.T) {
 			return i * 2
 		})
 		var err error
+		ctx := context.Background()
 		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return slice
 	}
+	runTestCache(t, makeSlice)
+}
 
-	slice := makeSlice()
+// TestCacheDeps verifies that caching works when pipelined tasks have non-empty
+// dependencies. When the cache is valid, we do not need to read from these
+// dependencies. Verify that this does not break compilation or execution (e.g.
+// empty dependencies given to tasks that expect non-empty dependencies).
+func TestCacheDeps(t *testing.T) {
+	t.Skip("does not work yet")
+	const N = 10000
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	makeSlice := func(Nshard int, dir string, computeAllowed bool) bigslice.Slice {
+		slice := bigslice.Const(Nshard, input)
+		slice = bigslice.Reshuffle(slice)
+		slice = bigslice.Map(slice, func(i int) int {
+			if !computeAllowed {
+				panic("compute not allowed")
+			}
+			return i * 2
+		})
+		var err error
+		ctx := context.Background()
+		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slice
+	}
+	runTestCache(t, makeSlice)
+}
+
+// runTestCache verifies that the caching in the slice returned by makeSlice
+// behaves as expected. See usage in TestCache.
+func runTestCache(t *testing.T, makeSlice func(Nshard int, dir string, computeAllowed bool) bigslice.Slice) {
+	t.Helper()
+
+	dir, cleanup := testutil.TempDir(t, "", "")
+	defer cleanup()
+	ctx := context.Background()
+
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	slice := makeSlice(Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	computeAllowed = true
 	scan1 := run(ctx, t, slice)["Local"]
 	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
@@ -59,8 +101,7 @@ func TestCache(t *testing.T) {
 	}
 
 	// Recompute the slice to pick up the cached results.
-	computeAllowed = false
-	slice = makeSlice()
+	slice = makeSlice(Nshard, dir, false)
 
 	scan2 := run(ctx, t, slice)["Local"]
 	defer scan2.Close()
