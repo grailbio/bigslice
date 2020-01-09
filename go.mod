@@ -11,5 +11,3 @@ require (
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 )
-
-replace github.com/grailbio/bigmachine => /data/forks/bigmachine
