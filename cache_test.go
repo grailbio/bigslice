@@ -357,7 +357,7 @@ func runLocal(ctx context.Context, t *testing.T, slice bigslice.Slice) *sliceio.
 	defer sess.Shutdown()
 	res, err := sess.Run(ctx, fn)
 	if err != nil {
-		t.Fatalf("error running func:%v", err)
+		t.Fatalf("error running func: %v", err)
 	}
 	return res.Scanner()
 }
