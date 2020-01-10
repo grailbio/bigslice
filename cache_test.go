@@ -20,12 +20,12 @@ import (
 )
 
 func TestCache(t *testing.T) {
-	makeSlice := func(N, Nshard int, dir string, computeAllowed bool) bigslice.Slice {
-		input := make([]int, N)
+	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+		input := make([]int, n)
 		for i := range input {
 			input[i] = i
 		}
-		slice := bigslice.Const(Nshard, input)
+		slice := bigslice.Const(nShard, input)
 		slice = bigslice.Map(slice, func(i int) int {
 			if !computeAllowed {
 				panic("compute not allowed")
@@ -49,12 +49,12 @@ func TestCache(t *testing.T) {
 // empty dependencies given to tasks that expect non-empty dependencies).
 func TestCacheDeps(t *testing.T) {
 	exec.DoShuffleReaders = false
-	makeSlice := func(N, Nshard int, dir string, computeAllowed bool) bigslice.Slice {
-		input := make([]int, N)
+	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+		input := make([]int, n)
 		for i := range input {
 			input[i] = i
 		}
-		slice := bigslice.Const(Nshard, input)
+		slice := bigslice.Const(nShard, input)
 		// This shuffle causes a break in the pipeline, so the pipelined task
 		// will have a dependency on the Const slice tasks. Caching should cause
 		// compilation/execution to eliminate these dependencies safely.
@@ -78,7 +78,7 @@ func TestCacheDeps(t *testing.T) {
 
 // runTestCache verifies that the caching in the slice returned by makeSlice
 // behaves as expected. See usage in TestCache.
-func runTestCache(t *testing.T, makeSlice func(N, Nshard int, dir string, computeAllowed bool) bigslice.Slice) {
+func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
 	ctx := context.Background()
