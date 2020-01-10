@@ -13,26 +13,19 @@ import (
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/exec"
+	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetest"
 	"github.com/grailbio/testutil"
 )
 
 func TestCache(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
-	ctx := context.Background()
-
-	var computeAllowed bool
-	const (
-		N      = 10000
-		Nshard = 10
-	)
-	input := make([]int, N)
-	for i := range input {
-		input[i] = i
-	}
-	makeSlice := func() bigslice.Slice {
-		slice := bigslice.Const(Nshard, input)
+	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+		input := make([]int, n)
+		for i := range input {
+			input[i] = i
+		}
+		slice := bigslice.Const(nShard, input)
 		slice = bigslice.Map(slice, func(i int) int {
 			if !computeAllowed {
 				panic("compute not allowed")
@@ -40,29 +33,74 @@ func TestCache(t *testing.T) {
 			return i * 2
 		})
 		var err error
+		ctx := context.Background()
 		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return slice
 	}
+	runTestCache(t, makeSlice)
+}
 
-	slice := makeSlice()
+// TestCacheDeps verifies that caching works when pipelined tasks have non-empty
+// dependencies. When the cache is valid, we do not need to read from these
+// dependencies. Verify that this does not break compilation or execution (e.g.
+// empty dependencies given to tasks that expect non-empty dependencies).
+func TestCacheDeps(t *testing.T) {
+	exec.DoShuffleReaders = false
+	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+		input := make([]int, n)
+		for i := range input {
+			input[i] = i
+		}
+		slice := bigslice.Const(nShard, input)
+		// This shuffle causes a break in the pipeline, so the pipelined task
+		// will have a dependency on the Const slice tasks. Caching should cause
+		// compilation/execution to eliminate these dependencies safely.
+		slice = bigslice.Reshuffle(slice)
+		slice = bigslice.Map(slice, func(i int) int {
+			if !computeAllowed {
+				panic("compute not allowed")
+			}
+			return i * 2
+		})
+		var err error
+		ctx := context.Background()
+		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return slice
+	}
+	runTestCache(t, makeSlice)
+}
+
+// runTestCache verifies that the caching in the slice returned by makeSlice
+// behaves as expected. See usage in TestCache.
+func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice) {
+	dir, cleanup := testutil.TempDir(t, "", "")
+	defer cleanup()
+	ctx := context.Background()
+
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+	slice := makeSlice(N, Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	computeAllowed = true
-	scan1 := run(ctx, t, slice)["Local"]
+	scan1 := runLocal(ctx, t, slice)
 	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
 	// Recompute the slice to pick up the cached results.
-	computeAllowed = false
-	slice = makeSlice()
+	slice = makeSlice(N, Nshard, dir, false)
 
-	scan2 := run(ctx, t, slice)["Local"]
+	scan2 := runLocal(ctx, t, slice)
 	defer scan2.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
@@ -126,7 +164,7 @@ func TestCacheIncremental(t *testing.T) {
 	}
 
 	// Run and populate the cache.
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -135,7 +173,7 @@ func TestCacheIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -157,7 +195,7 @@ func TestCacheIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -203,7 +241,7 @@ func TestCachePartialIncremental(t *testing.T) {
 	}
 
 	// Run and populate the cache.
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -212,7 +250,7 @@ func TestCachePartialIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -234,7 +272,7 @@ func TestCachePartialIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = run(ctx, t, makeSlice())["Local"]
+	_ = runLocal(ctx, t, makeSlice())
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -306,4 +344,16 @@ func ls1(t *testing.T, dir string) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+func runLocal(ctx context.Context, t *testing.T, slice bigslice.Slice) *sliceio.Scanner {
+	t.Helper()
+	fn := bigslice.Func(func() bigslice.Slice { return slice })
+	sess := exec.Start(exec.Local)
+	defer sess.Shutdown()
+	res, err := sess.Run(ctx, fn)
+	if err != nil {
+		t.Fatalf("error running func: %v", err)
+	}
+	return res.Scanner()
 }

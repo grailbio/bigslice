@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/grailbio/base/file"
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/traverse"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -63,14 +64,19 @@ func (c *ShardCache) RequireAllCached() {
 	}
 }
 
-// Reader returns a reader that uses the cache, or populates it.
-// reader should read computed data
-func (c *ShardCache) Reader(shard int, reader sliceio.Reader) sliceio.Reader {
+// WritethroughReader returns a reader that populates the cache. reader should
+// read computed data.
+func (c *ShardCache) WritethroughReader(shard int, reader sliceio.Reader) sliceio.Reader {
 	if c == nil {
 		return reader
 	}
-	if c.shardIsCached[shard] {
-		return newFileReader(c.path(shard))
-	}
 	return newWritethroughReader(reader, c.path(shard))
+}
+
+// CacheReader returns a reader that reads from the cache.
+func (c *ShardCache) CacheReader(shard int) sliceio.Reader {
+	if !c.shardIsCached[shard] {
+		log.Panicf("shard %d is not cached", shard)
+	}
+	return newFileReader(c.path(shard))
 }
