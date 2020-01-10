@@ -87,10 +87,6 @@ func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, comput
 		N      = 10000
 		Nshard = 10
 	)
-	input := make([]int, N)
-	for i := range input {
-		input[i] = i
-	}
 	slice := makeSlice(N, Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
