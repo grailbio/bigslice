@@ -1030,7 +1030,8 @@ type prefixSlice struct {
 
 // Prefixed returns a slice with the provided prefix. A prefix determines
 // the number of columns (starting at 0) in the slice that compose the
-// key values for that slice for operations like reduce.
+// key values for that slice for operations like reduce. For example, prefix of 2
+// means that columns 0 and 1 are the key.
 func Prefixed(slice Slice, prefix int) Slice {
 	if prefix < 1 {
 		typecheck.Panic(1, "prefixed: prefix must include at least one column")
