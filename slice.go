@@ -22,6 +22,8 @@ import (
 	"github.com/grailbio/bigslice/typecheck"
 )
 
+var unused int
+
 var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
 
 // DefaultChunkSize is the default size used for IO vectors throughout bigslice.
