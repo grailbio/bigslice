@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -74,6 +75,10 @@ func setupEc2Cmd(args []string) {
 		must.True(os.IsNotExist(err), err)
 	}
 
+	if region, ok := profile.Get("aws/env.region"); ok && len(region) > 0 {
+		must.Nil(profile.Set("bigmachine/ec2system.default-region", strings.Trim(region, `"`)))
+	}
+
 	if v, ok := profile.Get("bigmachine/ec2system.security-group"); ok && v != `""` {
 		log.Print("ec2 security group ", v, " already configured")
 	} else {
@@ -106,6 +111,9 @@ func setupEC2SecurityGroup(svc *ec2.EC2, name string) (string, error) {
 		},
 	})
 	if err != nil {
+		if len(name) > 0 {
+			return "", fmt.Errorf("unable to query existing security group: %v: %v", name, err)
+		}
 		return "", fmt.Errorf("no security group configured, and unable to query existing security groups: %v", err)
 	}
 	if len(describeResp.SecurityGroups) > 0 {
