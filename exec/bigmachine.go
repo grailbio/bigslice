@@ -242,8 +242,8 @@ func (b *bigmachineExecutor) Run(task *Task) {
 		cluster = int(task.Invocation.Index)
 	}
 	mgr := b.manager(cluster)
-	procs := 1
-	if task.Pragma.Exclusive() {
+	procs := task.Pragma.Procs()
+	if task.Pragma.Exclusive() || procs > mgr.machprocs {
 		procs = mgr.machprocs
 	}
 	var (
