@@ -218,6 +218,9 @@ func (s *TaskSubscriber) Tasks() []*Task {
 // conditional variable to coordinate runtime state changes.
 type Task struct {
 	slicetype.Type
+	// CompileEnv is the compilation environment used/constructed for
+	// compilation of this task.
+	CompileEnv CompileEnv
 	// Invocation is the task's invocation, i.e. the Func invocation
 	// from which this task was compiled.
 	Invocation bigslice.Invocation

@@ -239,11 +239,13 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		defer statusMu.Unlock()
 		inv = funcv.Invocation(location, args...)
 		slice = inv.Invoke()
+		env := makeCompileEnv()
 		var err error
-		tasks, err = compile(slice, inv, s.machineCombiners)
+		tasks, err = compile(env, slice, inv, s.machineCombiners)
 		if err != nil {
 			return err
 		}
+		env.Freeze()
 		// TODO(marius): give a way to provide names for these groups
 		if s.status != nil {
 			// Make the slice status group come before the more granular task
