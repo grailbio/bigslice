@@ -190,16 +190,16 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 	defer shutdown()
 	defer cancel()
 
-	// We use the wait group to block completion of tasks, controlling execution
-	// for our test.
-	var wg sync.WaitGroup
+	// We use blockc to block completion of tasks, controlling execution for our
+	// test. All tasks block until we close blockc.
+	blockc := make(chan struct{})
 	fn := bigslice.Func(func() bigslice.Slice {
 		is := make([]int, 100)
 		for i := range is {
 			is[i] = i
 		}
 		slice := bigslice.ReaderFunc(8, func(shard int, x *int, xs []int) (int, error) {
-			wg.Wait()
+			<-blockc
 			const N = 10
 			var i int
 			for *x < N && i < len(xs) {
@@ -234,8 +234,6 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
-	// Don't let anything run to completion yet.
-	wg.Add(1)
 	// Run three tasks (needing 6 procs), and verify that two machines have been
 	// started on which to run them.
 	for _, task := range tasks[:3] {
@@ -285,7 +283,7 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	// Verify that everything runs to completion.
-	wg.Done()
+	close(blockc)
 	for _, task := range tasks {
 		state, err := task.WaitState(ctx, TaskOk)
 		if err != nil || state != TaskOk {
