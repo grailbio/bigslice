@@ -107,6 +107,10 @@ type Slice interface {
 // Pragma comprises runtime directives used during bigslice
 // execution.
 type Pragma interface {
+	// Procs returns the number of procs a slice task needs to run. It is
+	// superceded by Exclusive and clamped to the maximum number of procs per
+	// machine.
+	Procs() int
 	// Exclusive indicates that a slice task should be given
 	// exclusive access to the underlying machine.
 	Exclusive() bool
@@ -117,6 +121,19 @@ type Pragma interface {
 
 // Pragmas composes multiple underlying Pragmas.
 type Pragmas []Pragma
+
+// Procs implements Pragma. If multiple tasks with Procs pragmas are pipelined,
+// we allocate the maximum to the composed pipeline.
+func (p Pragmas) Procs() int {
+	need := 1
+	for _, q := range p {
+		n := q.Procs()
+		if n > need {
+			need = n
+		}
+	}
+	return need
+}
 
 // Exclusive implements Pragma.
 func (p Pragmas) Exclusive() bool {
@@ -140,16 +157,18 @@ func (p Pragmas) Materialize() bool {
 
 type exclusive struct{}
 
+func (exclusive) Procs() int        { return 1 }
 func (exclusive) Exclusive() bool   { return true }
 func (exclusive) Materialize() bool { return false }
 
-// Exclusive is a Pragma that indicates the slice task
-// should be given exclusive access to the machine
-// that runs it.
+// Exclusive is a Pragma that indicates the slice task should be given
+// exclusive access to the machine that runs it. Exclusive takes precedence
+// over Procs.
 var Exclusive Pragma = exclusive{}
 
 type materialize struct{}
 
+func (materialize) Procs() int        { return 1 }
 func (materialize) Exclusive() bool   { return false }
 func (materialize) Materialize() bool { return true }
 
@@ -164,6 +183,21 @@ func (materialize) Materialize() bool { return true }
 // TODO(jcharumilind): Consider doing this automatically for slices on which
 // multiple slices depend.
 var ExperimentalMaterialize Pragma = materialize{}
+
+type procs struct {
+	n int
+}
+
+func (p procs) Procs() int      { return p.n }
+func (procs) Exclusive() bool   { return false }
+func (procs) Materialize() bool { return false }
+
+// Procs returns a pragma that sets the number of procs a slice task needs to
+// run to n. It is superceded by Exclusive and clamped to the maximum number of
+// procs per machine.
+func Procs(n int) Pragma {
+	return procs{n: n}
+}
 
 type constSlice struct {
 	name Name

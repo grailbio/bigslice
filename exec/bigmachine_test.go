@@ -171,6 +171,127 @@ func TestBigmachineExecutorPanicCompile(t *testing.T) {
 	run(t, x, tasks, TaskErr)
 }
 
+// TestBigmachineExecutorProcs verifies that using the Procs pragma properly
+// affects machine/proc allocation.
+func TestBigmachineExecutorProcs(t *testing.T) {
+	// Set up the test with:
+	// - a slice with 8 tasks
+	// - Procs(2) so that two procs are allocated for each task
+	// - a system with 12 procs, 4 procs per machine
+	system := testsystem.New()
+	system.Machineprocs = 4
+	ctx, cancel := context.WithCancel(context.Background())
+	x := newBigmachineExecutor(system)
+	shutdown := x.Start(&Session{
+		Context: ctx,
+		p:       12, // 3 machines
+		maxLoad: 1,
+	})
+	defer shutdown()
+	defer cancel()
+
+	// We use blockc to block completion of tasks, controlling execution for our
+	// test. All tasks block until we close blockc.
+	blockc := make(chan struct{})
+	fn := bigslice.Func(func() bigslice.Slice {
+		is := make([]int, 100)
+		for i := range is {
+			is[i] = i
+		}
+		slice := bigslice.ReaderFunc(8, func(shard int, x *int, xs []int) (int, error) {
+			<-blockc
+			const N = 10
+			var i int
+			for *x < N && i < len(xs) {
+				xs[i] = (shard * N) + *x
+				i++
+				*x++
+			}
+			if *x == N {
+				return i, sliceio.EOF
+			}
+			return i, nil
+		}, bigslice.Procs(1)) // Exercise Procs composition.
+		// Add an identity mapping to exercise pipelining.
+		slice = bigslice.Map(slice, func(i int) int {
+			return i
+		}, bigslice.Procs(2))
+		return slice
+	})
+	inv := fn.Invocation("<test>")
+	slice := inv.Invoke()
+	tasks, err := compile(slice, inv, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify that there is one task per shard.
+	if got, want := len(tasks), 8; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	// Verify that the proc need is propagated through the pipeline.
+	for _, task := range tasks {
+		if got, want := task.Pragma.Procs(), 2; got != want {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	// Run three tasks (needing 6 procs), and verify that two machines have been
+	// started on which to run them.
+	for _, task := range tasks[:3] {
+		go x.Run(task)
+		state, err := task.WaitState(ctx, TaskRunning)
+		if err != nil || state != TaskRunning {
+			t.Fatal(state, err)
+		}
+	}
+	if got, want := system.N(), 2; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// Run the rest of the tasks, and verify that the remaining machines have
+	// been started on which to run them.
+	//
+	// Note: this is racy, as we don't have a way of knowing that the executor
+	// has blocked because it cannot acquire a machine on which to run a task.
+	// If this is a problem, we'll need a better solution.
+	for _, task := range tasks[3:] {
+		go x.Run(task)
+		func() {
+			ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			defer cancel()
+			state, err := task.WaitState(ctx, TaskRunning)
+			if ctx.Err() != nil {
+				// We expect some tasks to not reach TaskRunning, as there are
+				// not enough procs to service them.
+				return
+			}
+			if err != nil || state != TaskRunning {
+				t.Fatal(state, err)
+			}
+		}()
+	}
+	if got, want := system.N(), 3; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// Only 6 of the 8 shards should be running at this point, occupying all
+	// procs.
+	var running int
+	for _, task := range tasks {
+		if task.State() == TaskRunning {
+			running++
+		}
+	}
+	if got, want := running, 6; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// Verify that everything runs to completion.
+	close(blockc)
+	for _, task := range tasks {
+		state, err := task.WaitState(ctx, TaskOk)
+		if err != nil || state != TaskOk {
+			t.Fatal(state, err)
+		}
+	}
+}
+
 func TestBigmachineExecutorPanicRun(t *testing.T) {
 	x, stop := bigmachineTestExecutor(1)
 	defer stop()
