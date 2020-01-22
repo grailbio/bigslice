@@ -122,7 +122,8 @@ type Pragma interface {
 // Pragmas composes multiple underlying Pragmas.
 type Pragmas []Pragma
 
-// Procs implements Pragma.
+// Procs implements Pragma. If multiple tasks with Procs pragmas are pipelined,
+// we allocate the maximum to the composed pipeline.
 func (p Pragmas) Procs() int {
 	need := 1
 	for _, q := range p {
