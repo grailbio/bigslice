@@ -211,7 +211,7 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 				return i, sliceio.EOF
 			}
 			return i, nil
-		})
+		}, bigslice.Procs(1)) // Exercise Procs composition.
 		// Add an identity mapping to exercise pipelining.
 		slice = bigslice.Map(slice, func(i int) int {
 			return i
