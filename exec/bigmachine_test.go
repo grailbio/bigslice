@@ -257,7 +257,7 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 	for _, task := range tasks[3:] {
 		go x.Run(task)
 		func() {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Millisecond)
+			ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 			defer cancel()
 			state, err := task.WaitState(ctx, TaskRunning)
 			if ctx.Err() != nil {
