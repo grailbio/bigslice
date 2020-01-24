@@ -245,6 +245,8 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		if err != nil {
 			return err
 		}
+		// Freeze the environment to ensure that compilations are consistent
+		// (e.g. across workers).
 		env.Freeze()
 		// TODO(marius): give a way to provide names for these groups
 		if s.status != nil {
