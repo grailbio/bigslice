@@ -123,7 +123,7 @@ func compile(env CompileEnv, slice bigslice.Slice, inv bigslice.Invocation, mach
 	return
 }
 
-// compileEnv is the environment for compilation. This environment should
+// CompileEnv is the environment for compilation. This environment should
 // capture all external state that can affect compilation of an invocation. It
 // is shared across compilations of the same invocation (e.g. on worker nodes)
 // to guarantee consistent compilation results. This is a requirement of
