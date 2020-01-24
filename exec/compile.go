@@ -130,12 +130,17 @@ func compile(env CompileEnv, slice bigslice.Slice, inv bigslice.Invocation, mach
 // bigslice's computation model, as we assume that all nodes share the same view
 // of the task graph.
 type CompileEnv struct {
+	// Writable is true if this environment is writable. It is only exported so
+	// that it can be gob-{en,dec}oded.
 	Writable bool
 
-	// TaskCached indicates whether a task's results can be read from cache.
+	// TaskCached indicates whether a task's results can be read from cache. It
+	// is only exported so that it can be gob-{en,dec}oded.
 	TaskCached map[TaskName]bool
 }
 
+// makeCompileEnv returns an empty and writable CompileEnv that can be passed to
+// compile.
 func makeCompileEnv() CompileEnv {
 	return CompileEnv{
 		Writable:   true,
@@ -156,9 +161,14 @@ func (e CompileEnv) IsCached(n TaskName) bool {
 	return e.TaskCached[n]
 }
 
-// Freeze freezes the state, marking e no longer Writable.
+// Freeze freezes the state, marking e no longer writable.
 func (e *CompileEnv) Freeze() {
 	e.Writable = false
+}
+
+// IsWritable returns whether this environment is writable.
+func (e CompileEnv) IsWritable() bool {
+	return e.Writable
 }
 
 type compiler struct {
@@ -310,14 +320,14 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	// Use cache when configured.
 	for i := len(slices) - 1; i >= 0; i-- {
 		var (
-			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
-			reader     = slices[i].Reader
-			shardCache *slicecache.ShardCache
+			pprofLabel                       = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
+			reader                           = slices[i].Reader
+			shardCache slicecache.ShardCache = slicecache.Empty
 		)
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
-		if c.env.Writable {
+		if c.env.IsWritable() {
 			for shard := range tasks {
 				if shardCache.IsCached(shard) {
 					c.env.MarkCached(tasks[shard].Name)

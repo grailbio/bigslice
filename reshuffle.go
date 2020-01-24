@@ -38,7 +38,7 @@ func Reshuffle(slice Slice) Slice {
 	if err := canMakeCombiningFrame(slice); err != nil {
 		typecheck.Panic(1, err.Error())
 	}
-	return &reshuffleSlice{makeName("reshuffle"), nil, slice}
+	return &reshuffleSlice{MakeName("reshuffle"), nil, slice}
 }
 
 // Repartition (re-)partitions the slice according to the provided function
@@ -73,7 +73,7 @@ func Repartition(slice Slice, fn interface{}) Slice {
 			shards[i] = int(result[0].Int())
 		}
 	}
-	return &reshuffleSlice{makeName("repartition"), part, slice}
+	return &reshuffleSlice{MakeName("repartition"), part, slice}
 }
 
 func (r *reshuffleSlice) Name() Name             { return r.name }

@@ -28,7 +28,7 @@ func Reshard(slice Slice, nshard int) Slice {
 	if slice.NumShard() == nshard {
 		return slice
 	}
-	return &reshardSlice{makeName("reshard"), nshard, slice}
+	return &reshardSlice{MakeName("reshard"), nshard, slice}
 }
 
 func (r *reshardSlice) Name() Name             { return r.name }
