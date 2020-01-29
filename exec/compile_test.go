@@ -6,13 +6,13 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"sort"
 	"strings"
 	"testing"
 
-	"context"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/internal/slicecache"
