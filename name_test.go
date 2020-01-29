@@ -10,7 +10,7 @@ import (
 )
 
 func sliceOperation(helper bool) Name {
-	return makeName("test") // line 16
+	return MakeName("test") // line 16
 }
 
 func callSliceOp(helper bool) Name {
