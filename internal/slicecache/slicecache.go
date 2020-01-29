@@ -23,6 +23,7 @@ type ShardCache interface {
 	CacheReader(shard int) sliceio.Reader
 }
 
+// Empty is an empty cache.
 var Empty = empty{}
 
 type empty struct{}
