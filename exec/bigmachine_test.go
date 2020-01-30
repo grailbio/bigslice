@@ -220,7 +220,7 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 	})
 	inv := fn.Invocation("<test>")
 	slice := inv.Invoke()
-	tasks, err := compile(slice, inv, false)
+	tasks, err := compile(makeCompileEnv(), slice, inv, false)
 	if err != nil {
 		t.Fatal(err)
 	}
