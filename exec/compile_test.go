@@ -391,9 +391,16 @@ type fakeCacheSlice struct {
 	cache slicecache.ShardCache
 }
 
-func (c *fakeCacheSlice) Name() bigslice.Name                                    { return c.name }
-func (c *fakeCacheSlice) NumDep() int                                            { return 1 }
-func (c *fakeCacheSlice) Dep(i int) bigslice.Dep                                 { return bigslice.Dep{c.Slice, false, nil, false} }
+func (c *fakeCacheSlice) Name() bigslice.Name { return c.name }
+func (c *fakeCacheSlice) NumDep() int         { return 1 }
+func (c *fakeCacheSlice) Dep(i int) bigslice.Dep {
+	return bigslice.Dep{
+		Slice:       c.Slice,
+		Shuffle:     false,
+		Partitioner: nil,
+		Expand:      false,
+	}
+}
 func (*fakeCacheSlice) Combiner() slicefunc.Func                                 { return slicefunc.Nil }
 func (c *fakeCacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 func (c *fakeCacheSlice) Cache() slicecache.ShardCache                           { return c.cache }
