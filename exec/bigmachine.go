@@ -195,11 +195,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	var (
 		todo        = []uint64{inv.Index}
 		invocations []bigslice.Invocation
+		compileEnvs []CompileEnv
 	)
 	for len(todo) > 0 {
 		var i uint64
 		i, todo = todo[0], todo[1:]
 		invocations = append(invocations, b.invocations[i])
+		compileEnvs = append(compileEnvs, b.compileEnvs[i])
 		for j := range b.invocationDeps[i] {
 			todo = append(todo, j)
 		}
@@ -209,7 +211,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	for i := len(invocations) - 1; i >= 0; i-- {
 		err := m.Compiles.Do(invocations[i].Index, func() error {
 			inv := invocations[i]
-			env := b.compileEnvs[inv.Index]
+			env := compileEnvs[i]
 			// Flatten these into lists so that we don't capture further
 			// structure by JSON encoding down the line. We also truncate them
 			// so that, e.g., huge lists of arguments don't make it into the trace.
