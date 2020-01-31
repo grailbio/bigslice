@@ -24,7 +24,7 @@ type ShardCache interface {
 }
 
 // Empty is an empty cache.
-var Empty = empty{}
+var Empty ShardCache = empty{}
 
 type empty struct{}
 

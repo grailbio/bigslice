@@ -320,9 +320,9 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	// Use cache when configured.
 	for i := len(slices) - 1; i >= 0; i-- {
 		var (
-			pprofLabel                       = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
-			reader                           = slices[i].Reader
-			shardCache slicecache.ShardCache = slicecache.Empty
+			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
+			reader     = slices[i].Reader
+			shardCache = slicecache.Empty
 		)
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
