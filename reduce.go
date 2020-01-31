@@ -54,7 +54,7 @@ func Reduce(slice Slice, reduce interface{}) Slice {
 	if arg.NumOut() != 2 || arg.Out(0) != outputType || arg.Out(1) != outputType || ret.NumOut() != 1 || ret.Out(0) != outputType {
 		typecheck.Panicf(1, "reduce: invalid reduce function %T, expected func(%s, %s) %s", reduce, outputType, outputType, outputType)
 	}
-	return &reduceSlice{slice, makeName("reduce"), slicefunc.Of(reduce)}
+	return &reduceSlice{slice, MakeName("reduce"), slicefunc.Of(reduce)}
 }
 
 // ReduceSlice implements "post shuffle" combining merge sort.

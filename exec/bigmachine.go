@@ -97,6 +97,10 @@ type bigmachineExecutor struct {
 	invocations    map[uint64]bigslice.Invocation
 	invocationDeps map[uint64]map[uint64]bool
 
+	// compileEnvs maintains the compilation environment used to compile tasks
+	// (for a particular invocation index).
+	compileEnvs map[uint64]CompileEnv
+
 	// Worker is the (configured) worker service to instantiate on
 	// allocated machines.
 	worker *worker
@@ -132,6 +136,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.invocations = make(map[uint64]bigslice.Invocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
+	b.compileEnvs = make(map[uint64]CompileEnv)
 	b.worker = &worker{
 		MachineCombiners: sess.machineCombiners,
 	}
@@ -160,7 +165,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 
 type invocationRef struct{ Index uint64 }
 
-func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv bigslice.Invocation) error {
+func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv bigslice.Invocation, env CompileEnv) error {
 	// Substitute Result arguments for an invocation ref and record the
 	// dependency.
 	b.mu.Lock()
@@ -180,6 +185,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 		b.invocationDeps[inv.Index][result.inv.Index] = true
 	}
 	b.invocations[inv.Index] = inv
+	b.compileEnvs[inv.Index] = env
 
 	// Now traverse the invocation graph bottom-up, making sure
 	// everything on the machine is compiled. We produce a valid order,
@@ -189,11 +195,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	var (
 		todo        = []uint64{inv.Index}
 		invocations []bigslice.Invocation
+		compileEnvs []CompileEnv
 	)
 	for len(todo) > 0 {
 		var i uint64
 		i, todo = todo[0], todo[1:]
 		invocations = append(invocations, b.invocations[i])
+		compileEnvs = append(compileEnvs, b.compileEnvs[i])
 		for j := range b.invocationDeps[i] {
 			todo = append(todo, j)
 		}
@@ -203,6 +211,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 	for i := len(invocations) - 1; i >= 0; i-- {
 		err := m.Compiles.Do(invocations[i].Index, func() error {
 			inv := invocations[i]
+			env := compileEnvs[i]
 			// Flatten these into lists so that we don't capture further
 			// structure by JSON encoding down the line. We also truncate them
 			// so that, e.g., huge lists of arguments don't make it into the trace.
@@ -211,7 +220,8 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 				args[i] = truncatef(inv.Args[i])
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
-			err := m.RetryCall(ctx, "Worker.Compile", inv, nil)
+			req := compileRequest{inv, env}
+			err := m.RetryCall(ctx, "Worker.Compile", req, nil)
 			if err != nil {
 				b.sess.tracer.Event(m, inv, "E", "error", err)
 			} else {
@@ -270,7 +280,7 @@ func (b *bigmachineExecutor) Run(task *Task) {
 	// machine.
 compile:
 	for {
-		err := b.compile(ctx, m, task.Invocation)
+		err := b.compile(ctx, m, task.Invocation, task.CompileEnv)
 		switch {
 		case err == nil:
 			break compile
@@ -508,33 +518,38 @@ func (w *worker) FuncLocations(ctx context.Context, _ struct{}, locs *[]string) 
 	return nil
 }
 
+type compileRequest struct {
+	Inv bigslice.Invocation
+	Env CompileEnv
+}
+
 // Compile compiles an invocation on the worker and stores the
 // resulting tasks. Compile is idempotent: it will compile each
 // invocation at most once.
-func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct{}) (err error) {
+func (w *worker) Compile(ctx context.Context, req compileRequest, _ *struct{}) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("invocation panic! %v", e)
 			err = errors.E(errors.Fatal, err)
 		}
 	}()
-	return w.compiles.Do(inv.Index, func() error {
+	return w.compiles.Do(req.Inv.Index, func() error {
 		// Substitute invocation refs for the results of the invocation.
 		// The executor must ensure that all references have been compiled.
-		for i, arg := range inv.Args {
+		for i, arg := range req.Inv.Args {
 			ref, ok := arg.(invocationRef)
 			if !ok {
 				continue
 			}
 			w.mu.Lock()
-			inv.Args[i], ok = w.slices[ref.Index]
+			req.Inv.Args[i], ok = w.slices[ref.Index]
 			w.mu.Unlock()
 			if !ok {
 				return fmt.Errorf("worker.Compile: invalid invocation reference %x", ref.Index)
 			}
 		}
-		slice := inv.Invoke()
-		tasks, err := compile(slice, inv, w.MachineCombiners)
+		slice := req.Inv.Invoke()
+		tasks, err := compile(req.Env, slice, req.Inv, w.MachineCombiners)
 		if err != nil {
 			return err
 		}
@@ -551,9 +566,9 @@ func (w *worker) Compile(ctx context.Context, inv bigslice.Invocation, _ *struct
 			namedStats[task.Name] = stats.NewMap()
 		}
 		w.mu.Lock()
-		w.tasks[inv.Index] = named
-		w.taskStats[inv.Index] = namedStats
-		w.slices[inv.Index] = &Result{Slice: slice, tasks: tasks}
+		w.tasks[req.Inv.Index] = named
+		w.taskStats[req.Inv.Index] = namedStats
+		w.slices[req.Inv.Index] = &Result{Slice: slice, tasks: tasks}
 		w.mu.Unlock()
 		return nil
 	})

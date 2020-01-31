@@ -214,7 +214,7 @@ func Const(nshard int, columns ...interface{}) Slice {
 		typecheck.Panic(1, "const: must have at least one column")
 	}
 	s := new(constSlice)
-	s.name = makeName("const")
+	s.name = MakeName("const")
 	s.nshard = nshard
 	if s.nshard < 1 {
 		typecheck.Panic(1, "const: shard must be >= 1")
@@ -311,7 +311,7 @@ type readerFuncSlice struct {
 // reader to maintain local state across the read of a whole shard.
 func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	s := new(readerFuncSlice)
-	s.name = makeName("reader")
+	s.name = MakeName("reader")
 	s.nshard = nshard
 	arg, ret, ok := typecheck.Func(read)
 	if !ok || arg.NumOut() < 3 || arg.Out(0).Kind() != reflect.Int {
@@ -429,7 +429,7 @@ type writerFuncSlice struct {
 // across the write of the whole shard.
 func WriterFunc(slice Slice, write interface{}) Slice {
 	s := new(writerFuncSlice)
-	s.name = makeName("writer")
+	s.name = MakeName("writer")
 	s.Slice = slice
 
 	// Our error messages for wrongly-typed write functions include a
@@ -553,7 +553,7 @@ type mapSlice struct {
 //	Map(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) (r1, r2, ..., rn)) Slice<r1, r2, ..., rn>
 func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	m := new(mapSlice)
-	m.name = makeName("map")
+	m.name = MakeName("map")
 	m.Slice = slice
 	arg, ret, ok := typecheck.Func(fn)
 	if !ok {
@@ -645,7 +645,7 @@ type filterSlice struct {
 //	Filter(Slice<t1, t2, ..., tn>, func(t1, t2, ..., tn) bool) Slice<t1, t2, ..., tn>
 func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	f := new(filterSlice)
-	f.name = makeName("filter")
+	f.name = MakeName("filter")
 	f.Slice = slice
 	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(pred)
@@ -733,7 +733,7 @@ type flatmapSlice struct {
 //	Flatmap(Slice<t1, t2, ..., tn>, func(v1 t1, v2 t2, ..., vn tn) ([]r1, []r2, ..., []rn)) Slice<r1, r2, ..., rn>
 func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	f := new(flatmapSlice)
-	f.name = makeName("flatmap")
+	f.name = MakeName("flatmap")
 	f.Slice = slice
 	f.Pragma = Pragmas(prags)
 	arg, ret, ok := typecheck.Func(fn)
@@ -867,7 +867,7 @@ func Fold(slice Slice, fold interface{}) Slice {
 		typecheck.Panicf(1, "fold: key type %s cannot be accumulated", slice.Out(0))
 	}
 	f := new(foldSlice)
-	f.name = makeName("fold")
+	f.name = MakeName("fold")
 	f.Slice = slice
 	// Fold requires shuffle by the first column.
 	// TODO(marius): allow deps to express shuffling by other columns.
@@ -953,7 +953,7 @@ type headSlice struct {
 // each shard of the underlying slice. Its type is the same as the
 // provided slice.
 func Head(slice Slice, n int) Slice {
-	return &headSlice{makeName(fmt.Sprintf("head(%d)", n)), slice, n}
+	return &headSlice{MakeName(fmt.Sprintf("head(%d)", n)), slice, n}
 }
 
 func (h *headSlice) Name() Name             { return h.name }
@@ -992,7 +992,7 @@ type scanSlice struct {
 // It returns a unit Slice: Scan is inteded to be used for its side
 // effects.
 func Scan(slice Slice, scan func(shard int, scanner *sliceio.Scanner) error) Slice {
-	return &scanSlice{makeName("scan"), slice, scan}
+	return &scanSlice{MakeName("scan"), slice, scan}
 }
 
 func (s *scanSlice) Name() Name             { return s.name }
@@ -1111,7 +1111,7 @@ func (n Name) String() string {
 	return fmt.Sprintf("%s@%s:%d", n.Op, n.File, n.Line)
 }
 
-func makeName(op string) Name {
+func MakeName(op string) Name {
 	// Presume the correct frame is the caller of makeName,
 	// but skip to the frame before the last helper, if any.
 	var pc [50]uintptr             // consider at most 50 frames

@@ -15,7 +15,7 @@ import (
 type cacheSlice struct {
 	name Name
 	Slice
-	cache *slicecache.ShardCache
+	cache *slicecache.FileShardCache
 }
 
 var _ slicecache.Cacheable = (*cacheSlice)(nil)
@@ -26,7 +26,7 @@ func (c *cacheSlice) Dep(i int) Dep                                          { r
 func (*cacheSlice) Combiner() slicefunc.Func                                 { return slicefunc.Nil }
 func (c *cacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 
-func (c *cacheSlice) Cache() *slicecache.ShardCache { return c.cache }
+func (c *cacheSlice) Cache() slicecache.ShardCache { return c.cache }
 
 // Cache caches the output of a slice to the given file prefix.
 // Cached data are stored as "prefix-nnnn-of-mmmm" for shards nnnn of
@@ -42,12 +42,12 @@ func (c *cacheSlice) Cache() *slicecache.ShardCache { return c.cache }
 // Cache uses GRAIL's file library, so prefix may refer to URLs to a
 // distributed object store such as S3.
 func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
-	shardCache, err := slicecache.NewShardCache(ctx, prefix, slice.NumShard())
+	shardCache, err := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
 	if err != nil {
 		return nil, err
 	}
 	shardCache.RequireAllCached()
-	return &cacheSlice{makeName("cache"), slice, shardCache}, nil
+	return &cacheSlice{MakeName("cache"), slice, shardCache}, nil
 }
 
 // CachePartial caches the output of the slice to the given file
@@ -63,9 +63,9 @@ func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
 //
 // As with Cache, the user must guarantee cache consistency.
 func CachePartial(ctx context.Context, slice Slice, prefix string) (Slice, error) {
-	shardCache, err := slicecache.NewShardCache(ctx, prefix, slice.NumShard())
+	shardCache, err := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
 	if err != nil {
 		return nil, err
 	}
-	return &cacheSlice{makeName("cachepartial"), slice, shardCache}, nil
+	return &cacheSlice{MakeName("cachepartial"), slice, shardCache}, nil
 }

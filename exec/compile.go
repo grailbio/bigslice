@@ -108,8 +108,14 @@ func (p partitioner) NumPartition() int {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(slice bigslice.Slice, inv bigslice.Invocation, machineCombiners bool) (tasks []*Task, err error) {
-	c := compiler{make(taskNamer), inv, machineCombiners, make(map[memoKey][]*Task)}
+func compile(env CompileEnv, slice bigslice.Slice, inv bigslice.Invocation, machineCombiners bool) (tasks []*Task, err error) {
+	c := compiler{
+		env:              env,
+		namer:            make(taskNamer),
+		inv:              inv,
+		machineCombiners: machineCombiners,
+		memo:             make(map[memoKey][]*Task),
+	}
 	// Top-level compilation always produces tasks that write single partitions,
 	// as they are materialized and will not be used as direct shuffle
 	// dependencies.
@@ -117,7 +123,56 @@ func compile(slice bigslice.Slice, inv bigslice.Invocation, machineCombiners boo
 	return
 }
 
+// CompileEnv is the environment for compilation. This environment should
+// capture all external state that can affect compilation of an invocation. It
+// is shared across compilations of the same invocation (e.g. on worker nodes)
+// to guarantee consistent compilation results. This is a requirement of
+// bigslice's computation model, as we assume that all nodes share the same view
+// of the task graph.
+type CompileEnv struct {
+	// Writable is true if this environment is writable. It is only exported so
+	// that it can be gob-{en,dec}oded.
+	Writable bool
+
+	// TaskCached indicates whether a task's results can be read from cache. It
+	// is only exported so that it can be gob-{en,dec}oded.
+	TaskCached map[TaskName]bool
+}
+
+// makeCompileEnv returns an empty and writable CompileEnv that can be passed to
+// compile.
+func makeCompileEnv() CompileEnv {
+	return CompileEnv{
+		Writable:   true,
+		TaskCached: make(map[TaskName]bool),
+	}
+}
+
+// MarkCached marks the task named n as cached.
+func (e CompileEnv) MarkCached(n TaskName) {
+	if !e.Writable {
+		panic("env not writable")
+	}
+	e.TaskCached[n] = true
+}
+
+// IsCached returns whether the task named n is cached.
+func (e CompileEnv) IsCached(n TaskName) bool {
+	return e.TaskCached[n]
+}
+
+// Freeze freezes the state, marking e no longer writable.
+func (e *CompileEnv) Freeze() {
+	e.Writable = false
+}
+
+// IsWritable returns whether this environment is writable.
+func (e CompileEnv) IsWritable() bool {
+	return e.Writable
+}
+
 type compiler struct {
+	env              CompileEnv
 	namer            taskNamer
 	inv              bigslice.Invocation
 	machineCombiners bool
@@ -267,17 +322,24 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 		var (
 			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
 			reader     = slices[i].Reader
-			shardCache *slicecache.ShardCache
+			shardCache = slicecache.Empty
 		)
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
+		}
+		if c.env.IsWritable() {
+			for shard := range tasks {
+				if shardCache.IsCached(shard) {
+					c.env.MarkCached(tasks[shard].Name)
+				}
+			}
 		}
 		for shard := range tasks {
 			var (
 				shard = shard
 				prev  = tasks[shard].Do
 			)
-			if shardCache.IsCached(shard) {
+			if c.env.IsCached(tasks[shard].Name) {
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := shardCache.CacheReader(shard)
 					return &sliceio.PprofReader{r, pprofLabel}

@@ -93,7 +93,7 @@ func Cogroup(slices ...Slice) Slice {
 	}
 
 	return &cogroupSlice{
-		name:     makeName("cogroup"),
+		name:     MakeName("cogroup"),
 		numShard: numShard,
 		slices:   slices,
 		out:      out,
