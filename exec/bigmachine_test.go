@@ -438,6 +438,30 @@ func TestBigmachineExecutorFatalErrorRun(t *testing.T) {
 	}
 }
 
+// TestBigmachineExecutorFatalCombinerErrorRun verifies that fatal errors in
+// execution of tasks that have combiners are propagated and put the task in
+// TaskErr state.
+func TestBigmachineExecutorFatalCombinerErrorRun(t *testing.T) {
+	x, stop := bigmachineTestExecutor(1)
+	defer stop()
+
+	err := errors.E(errors.Fatal, "a fatal error")
+	tasks, _, _ := compileFunc(func() bigslice.Slice {
+		var slice bigslice.Slice
+		slice = &errorSlice{bigslice.Const(1, []int{123}, []int{456}), err}
+		// This Reduce causes the tasks compiled from the error slice to use a
+		// combiner.
+		slice = bigslice.Reduce(slice, func(i, j int) int { return i + j })
+		return slice
+	})
+	// depTask will be a task of the errorSlice, which has a combiner.
+	depTask := tasks[0].Deps[0].Head
+	run(t, x, []*Task{depTask}, TaskErr)
+	if got, want := errors.Recover(depTask.Err()).Severity, errors.Fatal; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestBigmachineCompiler(t *testing.T) {
 	x, stop := bigmachineTestExecutor(1)
 	defer stop()

@@ -1008,7 +1008,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		w.mu.Lock()
 		w.combinerStates[combineKey]--
 		w.mu.Unlock()
-		if task.CombineKey == "" {
+		if err == nil && task.CombineKey == "" {
 			err = w.CommitCombiner(ctx, combineKey, nil)
 		}
 	}()
@@ -1035,7 +1035,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 	for {
 		n, err := in.Read(ctx, out)
 		if err != nil && err != sliceio.EOF {
-			return err
+			return maybeTaskFatalErr{err}
 		}
 		task.Partitioner(ctx, out, task.NumPartition, shards[:n])
 		for i := 0; i < n; i++ {
