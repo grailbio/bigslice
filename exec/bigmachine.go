@@ -1008,7 +1008,7 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		w.mu.Lock()
 		w.combinerStates[combineKey]--
 		w.mu.Unlock()
-		if task.CombineKey == "" {
+		if err == nil && task.CombineKey == "" {
 			err = w.CommitCombiner(ctx, combineKey, nil)
 		}
 	}()
