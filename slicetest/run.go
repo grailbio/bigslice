@@ -10,36 +10,45 @@ package slicetest
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 
+	"github.com/grailbio/bigmachine"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-// Run evaluates the provided slice in local execution mode,
-// returning a scanner for the result. Errors are reported as fatal
-// to the provided t instance. Run is intended for unit testing of
-// Slice implementations.
-func Run(t *testing.T, slice bigslice.Slice) *sliceio.Scanner {
+var sessOnce sync.Once
+var sess *exec.Session
+
+// getSess returns the session to use for tests. It is created on the first
+// call.
+func getSess() *exec.Session {
+	sessOnce.Do(func() {
+		sess = exec.Start(exec.Bigmachine(bigmachine.Local))
+	})
+	return sess
+}
+
+// Run evaluates the provided slice using a local bigmachine system, returning a
+// scanner for the result. Errors are reported as fatal to the provided t
+// instance. Run is intended for unit testing of Func/Slice implementations.
+func Run(t *testing.T, fn *bigslice.FuncValue, args ...interface{}) *sliceio.Scanner {
 	t.Helper()
 	ctx := context.Background()
-	fn := bigslice.Func(func() bigslice.Slice { return slice })
-	sess := exec.Start(exec.Local)
-	res, err := sess.Run(ctx, fn)
+	res, err := getSess().Run(ctx, fn, args...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return res.Scanner()
 }
 
-// RunErr evaluates the provided slice in local execution mode
-// and returns the error, if any.
-func RunErr(slice bigslice.Slice) error {
+// RunErr evaluates the provided Func using a local bigmachine system and
+// returns the error, if any.
+func RunErr(fn *bigslice.FuncValue, args ...interface{}) error {
 	ctx := context.Background()
-	fn := bigslice.Func(func() bigslice.Slice { return slice })
-	sess := exec.Start(exec.Local)
-	_, err := sess.Run(ctx, fn)
+	_, err := getSess().Run(ctx, fn, args...)
 	return err
 }
 
@@ -82,12 +91,12 @@ func ScanAll(t *testing.T, scan *sliceio.Scanner, cols ...interface{}) {
 	}
 }
 
-// RunAndScan evaluates the provided slice and scans its results into
-// the provided slice pointers. Errors are reported as fatal to the provided
-// t instance.
-func RunAndScan(t *testing.T, slice bigslice.Slice, cols ...interface{}) {
+// RunAndScan evaluates the provided Func and scans its results into the
+// provided slice pointers. Errors are reported as fatal to the provided t
+// instance.
+func RunAndScan(t *testing.T, fn *bigslice.FuncValue, args []interface{}, cols ...interface{}) {
 	t.Helper()
-	scanner := Run(t, slice)
+	scanner := Run(t, fn, args...)
 	defer scanner.Close()
 	ScanAll(t, scanner, cols...)
 }

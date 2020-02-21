@@ -5,9 +5,11 @@ package bigslice_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/grailbio/base/errors"
@@ -19,29 +21,55 @@ import (
 	"github.com/grailbio/testutil"
 )
 
-func TestCache(t *testing.T) {
-	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
-		input := make([]int, n)
-		for i := range input {
-			input[i] = i
-		}
-		slice := bigslice.Const(nShard, input)
-		slice = bigslice.Map(slice, func(i int) int {
-			if !computeAllowed {
-				panic("compute not allowed")
-			}
-			return i * 2
-		})
-		var err error
-		ctx := context.Background()
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return slice
+var cache = bigslice.Func(func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+	input := make([]int, n)
+	for i := range input {
+		input[i] = i
 	}
-	runTestCache(t, makeSlice)
+	slice := bigslice.Const(nShard, input)
+	slice = bigslice.Map(slice, func(i int) int {
+		if !computeAllowed {
+			panic("compute not allowed")
+		}
+		return i * 2
+	})
+	var err error
+	ctx := context.Background()
+	slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+	if err != nil {
+		panic(err)
+	}
+	return slice
+})
+
+func TestCache(t *testing.T) {
+	runTestCache(t, cache)
 }
+
+var cacheDeps = bigslice.Func(func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
+	input := make([]int, n)
+	for i := range input {
+		input[i] = i
+	}
+	slice := bigslice.Const(nShard, input)
+	// This shuffle causes a break in the pipeline, so the pipelined task
+	// will have a dependency on the Const slice tasks. Caching should cause
+	// compilation/execution to eliminate these dependencies safely.
+	slice = bigslice.Reshuffle(slice)
+	slice = bigslice.Map(slice, func(i int) int {
+		if !computeAllowed {
+			panic("compute not allowed")
+		}
+		return i * 2
+	})
+	var err error
+	ctx := context.Background()
+	slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+	if err != nil {
+		panic(err)
+	}
+	return slice
+})
 
 // TestCacheDeps verifies that caching works when pipelined tasks have non-empty
 // dependencies. When the cache is valid, we do not need to read from these
@@ -49,36 +77,15 @@ func TestCache(t *testing.T) {
 // empty dependencies given to tasks that expect non-empty dependencies).
 func TestCacheDeps(t *testing.T) {
 	exec.DoShuffleReaders = false
-	makeSlice := func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice {
-		input := make([]int, n)
-		for i := range input {
-			input[i] = i
-		}
-		slice := bigslice.Const(nShard, input)
-		// This shuffle causes a break in the pipeline, so the pipelined task
-		// will have a dependency on the Const slice tasks. Caching should cause
-		// compilation/execution to eliminate these dependencies safely.
-		slice = bigslice.Reshuffle(slice)
-		slice = bigslice.Map(slice, func(i int) int {
-			if !computeAllowed {
-				panic("compute not allowed")
-			}
-			return i * 2
-		})
-		var err error
-		ctx := context.Background()
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return slice
-	}
-	runTestCache(t, makeSlice)
+	defer func() {
+		exec.DoShuffleReaders = true
+	}()
+	runTestCache(t, cacheDeps)
 }
 
 // runTestCache verifies that the caching in the slice returned by makeSlice
 // behaves as expected. See usage in TestCache.
-func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice) {
+func runTestCache(t *testing.T, fn *bigslice.FuncValue) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
 	ctx := context.Background()
@@ -87,20 +94,17 @@ func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, comput
 		N      = 10000
 		Nshard = 10
 	)
-	slice := makeSlice(N, Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	scan1 := runLocal(ctx, t, slice)
+	scan1 := slicetest.Run(t, fn, N, Nshard, dir, true)
 	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
 	// Recompute the slice to pick up the cached results.
-	slice = makeSlice(N, Nshard, dir, false)
-
-	scan2 := runLocal(ctx, t, slice)
+	scan2 := slicetest.Run(t, fn, N, Nshard, dir, false)
 	defer scan2.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
@@ -133,10 +137,28 @@ func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, comput
 	}
 }
 
+var cacheIncremental = bigslice.Func(func(N, Nshard int, dir string, rowsRan []bool) bigslice.Slice {
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	slice := bigslice.Const(Nshard, input)
+	slice = bigslice.Map(slice, func(i int) int {
+		rowsRan[i] = true
+		return i * 2
+	})
+	var err error
+	ctx := context.Background()
+	slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
+	if err != nil {
+		panic(err)
+	}
+	return slice
+})
+
 func TestCacheIncremental(t *testing.T) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
-	ctx := context.Background()
 
 	const (
 		N      = 10000
@@ -145,26 +167,8 @@ func TestCacheIncremental(t *testing.T) {
 
 	rowsRan := make([]bool, N)
 
-	input := make([]int, N)
-	for i := range input {
-		input[i] = i
-	}
-	makeSlice := func() bigslice.Slice {
-		slice := bigslice.Const(Nshard, input)
-		slice = bigslice.Map(slice, func(i int) int {
-			rowsRan[i] = true
-			return i * 2
-		})
-		var err error
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return slice
-	}
-
 	// Run and populate the cache.
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cacheIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -173,7 +177,7 @@ func TestCacheIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cacheIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -195,7 +199,7 @@ func TestCacheIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cacheIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -210,10 +214,28 @@ func TestCacheIncremental(t *testing.T) {
 	}
 }
 
+var cachePartialIncremental = bigslice.Func(func(N, Nshard int, dir string, rowsRan []bool) bigslice.Slice {
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	slice := bigslice.Const(Nshard, input)
+	slice = bigslice.Map(slice, func(i int) int {
+		rowsRan[i] = true
+		return i * 2
+	})
+	var err error
+	ctx := context.Background()
+	slice, err = bigslice.CachePartial(ctx, slice, filepath.Join(dir, "cached"))
+	if err != nil {
+		panic(err)
+	}
+	return slice
+})
+
 func TestCachePartialIncremental(t *testing.T) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
-	ctx := context.Background()
 
 	const (
 		N      = 10000
@@ -222,26 +244,8 @@ func TestCachePartialIncremental(t *testing.T) {
 
 	rowsRan := make([]bool, N)
 
-	input := make([]int, N)
-	for i := range input {
-		input[i] = i
-	}
-	makeSlice := func() bigslice.Slice {
-		slice := bigslice.Const(Nshard, input)
-		slice = bigslice.Map(slice, func(i int) int {
-			rowsRan[i] = true
-			return i * 2
-		})
-		var err error
-		slice, err = bigslice.CachePartial(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return slice
-	}
-
 	// Run and populate the cache.
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cachePartialIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -250,7 +254,7 @@ func TestCachePartialIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cachePartialIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -272,7 +276,7 @@ func TestCachePartialIncremental(t *testing.T) {
 	for i := range rowsRan {
 		rowsRan[i] = false
 	}
-	_ = runLocal(ctx, t, makeSlice())
+	_ = runLocal(t, cachePartialIncremental, N, Nshard, dir, rowsRan)
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
@@ -287,43 +291,42 @@ func TestCachePartialIncremental(t *testing.T) {
 	}
 }
 
+var cacheErr = bigslice.Func(func(dir string, errMsg string) bigslice.Slice {
+	slice := bigslice.ReaderFunc(1, func(shard int, state *bool, ints []int) (n int, err error) {
+		if *state {
+			return 0, errors.New(errMsg)
+		}
+		for i := range ints {
+			ints[i] = i
+		}
+		*state = true
+		return len(ints), nil
+	})
+	ctx := context.Background()
+	var err error
+	slice, err = bigslice.Cache(ctx, slice, file.Join(dir, "cached"))
+	if err != nil {
+		panic(err)
+	}
+	return slice
+})
+
 func TestCacheErr(t *testing.T) {
 	dir, cleanup := testutil.TempDir(t, "", "")
 	defer cleanup()
-	ctx := context.Background()
-
-	computeRan := false
-
-	makeSlice := func() bigslice.Slice {
-		slice := bigslice.ReaderFunc(1, func(shard int, state *bool, ints []int) (n int, err error) {
-			if *state {
-				return 0, errors.New("random error")
-			}
-			for i := range ints {
-				ints[i] = i
-			}
-			*state = true
-			computeRan = true
-			return len(ints), nil
-		})
-		var err error
-		slice, err = bigslice.Cache(ctx, slice, file.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return slice
+	err := slicetest.RunErr(cacheErr, dir, "first error")
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if err := slicetest.RunErr(makeSlice()); err == nil {
-		t.Error("expected error")
-	}
-	if !computeRan {
+	if !strings.Contains(err.Error(), "first error") {
 		t.Error()
 	}
 	// Ensure computation is rerun after error.
-	if err := slicetest.RunErr(makeSlice()); err == nil {
-		t.Error("expected error")
+	err = slicetest.RunErr(cacheErr, dir, "second error")
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if !computeRan {
+	if !strings.Contains(err.Error(), "second error") {
 		t.Error()
 	}
 }
@@ -346,12 +349,13 @@ func ls1(t *testing.T, dir string) []string {
 	return paths
 }
 
-func runLocal(ctx context.Context, t *testing.T, slice bigslice.Slice) *sliceio.Scanner {
+// runLocal runs f using the local executor, which runs all tasks within this
+// process. We use it for tests that use shared memory in the slice
+// computations.
+func runLocal(t *testing.T, f *bigslice.FuncValue, args ...interface{}) *sliceio.Scanner {
 	t.Helper()
-	fn := bigslice.Func(func() bigslice.Slice { return slice })
 	sess := exec.Start(exec.Local)
-	defer sess.Shutdown()
-	res, err := sess.Run(ctx, fn)
+	res, err := sess.Run(context.Background(), f, args...)
 	if err != nil {
 		t.Fatalf("error running func: %v", err)
 	}

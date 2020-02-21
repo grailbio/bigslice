@@ -60,6 +60,10 @@ func randIntSlice(r *rand.Rand, n int) []int {
 	return ints
 }
 
+var runAndScan = bigslice.Func(func(strs []string, ints []int) bigslice.Slice {
+	return bigslice.Const(10, strs, ints)
+})
+
 func TestRunAndScan(t *testing.T) {
 	const N = 10000
 	var (
@@ -67,12 +71,12 @@ func TestRunAndScan(t *testing.T) {
 		strs = randStringSlice(r, N)
 		ints = randIntSlice(r, N)
 	)
-	slice := bigslice.Const(10, strs, ints)
 	var (
 		scannedStrs []string
 		scannedInts []int
 	)
-	slicetest.RunAndScan(t, slice, &scannedStrs, &scannedInts)
+	args := []interface{}{strs, ints}
+	slicetest.RunAndScan(t, runAndScan, args, &scannedStrs, &scannedInts)
 	if got, want := len(scannedStrs), N; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}

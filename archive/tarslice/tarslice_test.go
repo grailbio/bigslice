@@ -15,13 +15,12 @@ import (
 	"testing"
 
 	"github.com/grailbio/base/must"
+	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/archive/tarslice"
 	"github.com/grailbio/bigslice/slicetest"
 )
 
-func TestReader(t *testing.T) {
-	const N = 1000
-
+var readTar = bigslice.Func(func(N int) bigslice.Slice {
 	var buf bytes.Buffer
 	w := tar.NewWriter(&buf)
 
@@ -40,10 +39,14 @@ func TestReader(t *testing.T) {
 		must.Nil(err)
 	}
 	must.Nil(w.Close())
+	return tarslice.Reader(10, func() (io.ReadCloser, error) { return ioutil.NopCloser(bytes.NewReader(buf.Bytes())), nil })
+})
 
-	slice := tarslice.Reader(10, func() (io.ReadCloser, error) { return ioutil.NopCloser(bytes.NewReader(buf.Bytes())), nil })
+func TestReader(t *testing.T) {
+	const N = 1000
 	var entries []tarslice.Entry
-	slicetest.RunAndScan(t, slice, &entries)
+	args := []interface{}{N}
+	slicetest.RunAndScan(t, readTar, args, &entries)
 	if got, want := len(entries), N; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
