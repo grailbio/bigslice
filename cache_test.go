@@ -5,7 +5,6 @@ package bigslice_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
