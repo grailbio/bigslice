@@ -19,8 +19,10 @@ import (
 	"github.com/grailbio/bigslice/sliceio"
 )
 
-var sessOnce sync.Once
-var sess *exec.Session
+var (
+	sessOnce sync.Once
+	sess     *exec.Session
+)
 
 // getSess returns the session to use for tests. It is created on the first
 // call.
