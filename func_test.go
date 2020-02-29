@@ -9,6 +9,95 @@ import (
 	"testing"
 )
 
+type testStruct0 struct{ Field0 int }
+type testStruct1 struct{ Field1 int }
+
+type testInterface interface{ FuncTestMethod() }
+type testInterfaceImpl struct{}
+
+func (s *testInterfaceImpl) FuncTestMethod() {}
+
+var fnTestFuncArgs = Func(
+	func(i int, s string, ss []string, m map[int]int,
+		ts0 testStruct0, pts1 *testStruct1, ti testInterface) Slice {
+
+		return Const(1, []int{})
+	})
+
+func TestFuncArgs(t *testing.T) {
+	ts0 := testStruct0{Field0: 0}
+	pts1 := &testStruct1{Field1: 0}
+	ptii := &testInterfaceImpl{}
+	for _, c := range []struct {
+		name string
+		args []interface{}
+		ok   bool
+	}{
+		{
+			name: "all non-nil",
+			args: []interface{}{
+				0, "", []string{}, map[int]int{0: 0},
+				ts0, pts1, ptii,
+			},
+			ok: true,
+		},
+		{
+			name: "nil for types that can be nil",
+			args: []interface{}{
+				0, "", nil, nil,
+				ts0, nil, nil,
+			},
+			ok: true,
+		},
+		{
+			name: "nil for int",
+			args: []interface{}{
+				nil, "", []string{}, map[int]int{0: 0},
+				ts0, pts1, ptii,
+			},
+			ok: false,
+		},
+		{
+			name: "nil for string",
+			args: []interface{}{
+				0, nil, []string{}, map[int]int{0: 0},
+				ts0, pts1, ptii,
+			},
+			ok: false,
+		},
+		{
+			name: "nil for struct",
+			args: []interface{}{
+				0, "", []string{}, map[int]int{0: 0},
+				nil, pts1, ptii,
+			},
+			ok: false,
+		},
+		{
+			name: "too few args",
+			args: []interface{}{},
+			ok:   false,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if c.ok {
+					if r != nil {
+						t.Errorf("expected no panic, got %v", r)
+					}
+				} else {
+					if r == nil {
+						t.Errorf("expected panic")
+					}
+				}
+			}()
+			inv := fnTestFuncArgs.Invocation("", c.args...)
+			inv.Invoke()
+		})
+	}
+}
+
 func TestFuncLocationsDiff(t *testing.T) {
 	for _, c := range []struct {
 		lhs  []string
