@@ -88,6 +88,10 @@ func (f *FuncValue) applyValue(args []reflect.Value) Slice {
 	argTypes := make([]reflect.Type, len(args))
 	for i, arg := range args {
 		if !arg.IsValid() {
+			if !checkNilAssignable(f.args[i]) {
+				// Untyped nil argument for type that cannot be nil.
+				typecheck.Panicf(2, "cannot use nil as type %s in argument to function", f.args[i])
+			}
 			argTypes[i] = f.args[i]
 			args[i] = reflect.Zero(f.args[i])
 			continue
