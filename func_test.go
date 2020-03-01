@@ -82,7 +82,7 @@ func TestNilFuncArgs(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			defer func() {
+			checkPanic := func() {
 				r := recover()
 				if c.ok {
 					if r != nil {
@@ -93,9 +93,15 @@ func TestNilFuncArgs(t *testing.T) {
 						t.Errorf("expected panic")
 					}
 				}
+			}
+			func() {
+				defer checkPanic()
+				fnTestNilFuncArgs.Invocation("", c.args...)
 			}()
-			inv := fnTestNilFuncArgs.Invocation("", c.args...)
-			inv.Invoke()
+			func() {
+				defer checkPanic()
+				fnTestNilFuncArgs.Apply(c.args...)
+			}()
 		})
 	}
 }
