@@ -9,24 +9,26 @@ import (
 	"testing"
 )
 
-type testStruct0 struct{ Field0 int }
-type testStruct1 struct{ Field1 int }
+type testStruct0 struct{ field0 int }
+type testStruct1 struct{ field1 int }
 
 type testInterface interface{ FuncTestMethod() }
 type testInterfaceImpl struct{}
 
 func (s *testInterfaceImpl) FuncTestMethod() {}
 
-var fnTestFuncArgs = Func(
+var fnTestNilFuncArgs = Func(
 	func(i int, s string, ss []string, m map[int]int,
 		ts0 testStruct0, pts1 *testStruct1, ti testInterface) Slice {
 
 		return Const(1, []int{})
 	})
 
-func TestFuncArgs(t *testing.T) {
-	ts0 := testStruct0{Field0: 0}
-	pts1 := &testStruct1{Field1: 0}
+// TestNilFuncArgs verifies that Func invocation handles untyped nil arguments
+// properly.
+func TestNilFuncArgs(t *testing.T) {
+	ts0 := testStruct0{field0: 0}
+	pts1 := &testStruct1{field1: 0}
 	ptii := &testInterfaceImpl{}
 	for _, c := range []struct {
 		name string
@@ -92,7 +94,7 @@ func TestFuncArgs(t *testing.T) {
 					}
 				}
 			}()
-			inv := fnTestFuncArgs.Invocation("", c.args...)
+			inv := fnTestNilFuncArgs.Invocation("", c.args...)
 			inv.Invoke()
 		})
 	}
