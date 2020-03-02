@@ -12,6 +12,10 @@ import (
 type testStruct0 struct{ field0 int }
 type testStruct1 struct{ field1 int }
 
+// Disable unused checking for testInterface, as we're just using it to make
+// sure that our func typechecking works properly, and we don't need to
+// call it to do so.
+// nolint:unused
 type testInterface interface{ FuncTestMethod() }
 type testInterfaceImpl struct{}
 
