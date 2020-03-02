@@ -75,11 +75,6 @@ func TestNilFuncArgs(t *testing.T) {
 			},
 			ok: false,
 		},
-		{
-			name: "too few args",
-			args: []interface{}{},
-			ok:   false,
-		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			checkPanic := func() {
