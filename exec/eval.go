@@ -10,8 +10,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice/internal/defaultsize"
@@ -31,6 +33,9 @@ const maxConsecutiveLost = 5
 // partitioning their outputs, and instantiating readers to retrieve the
 // output of any given task.
 type Executor interface {
+	// Name returns a human-friendly name for this executor.
+	Name() string
+
 	// Start starts the executor. It is called before evaluation has started
 	// and after all funcs have been registered. Start need not return:
 	// for example, the Bigmachine implementation of Executor uses
@@ -44,6 +49,9 @@ type Executor interface {
 
 	// Reader returns a locally accessible ReadCloser for the requested task.
 	Reader(*Task, int) sliceio.ReadCloser
+
+	// Eventer returns the eventer used to log events relevant to this executor.
+	Eventer() eventlog.Eventer
 
 	// HandleDebug adds executor-specific debug handlers to the provided
 	// http.ServeMux. This is used to serve diagnostic information relating
@@ -97,9 +105,11 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 			status := group.Start(task.Name)
 			// runner is true if this evaluator is going to execute the task.
 			runner := task.state == TaskInit
+			var startRunTime time.Time
 			if runner {
 				task.state = TaskWaiting
 				task.Status = status
+				startRunTime = time.Now()
 				go executor.Run(task)
 			} else {
 				status.Print("running in another invocation")
@@ -127,6 +137,11 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 							task.Broadcast()
 						}
 					}
+					d := time.Since(startRunTime)
+					executor.Eventer().Event("bigslice:taskComplete",
+						"name", task.Name.String(),
+						"state", task.state.String(),
+						"duration", d.Milliseconds())
 				}
 				task.Unlock()
 				status.Done()
