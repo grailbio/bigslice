@@ -6,7 +6,6 @@ import (
 	"runtime"
 
 	"github.com/grailbio/base/file"
-	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/traverse"
 	"github.com/grailbio/bigslice/sliceio"
 )
@@ -44,9 +43,9 @@ type FileShardCache struct {
 
 // NewShardCache constructs a ShardCache. It does O(numShards) parallelized
 // file operations to look up what's present in the cache.
-func NewFileShardCache(ctx context.Context, prefix string, numShards int) (*FileShardCache, error) {
+func NewFileShardCache(ctx context.Context, prefix string, numShards int) *FileShardCache {
 	if prefix == "" {
-		return &FileShardCache{}, nil
+		return &FileShardCache{}
 	}
 	// TODO(jcharumilind): Make this initialization more lazy. This is generally
 	// called within Funcs, but its result is generally ignored on workers to
@@ -57,7 +56,7 @@ func NewFileShardCache(ctx context.Context, prefix string, numShards int) (*File
 		c.shardIsCached[shard] = err == nil // treat lookup errors as cache misses
 		return nil
 	})
-	return &c, nil
+	return &c
 }
 
 func (c *FileShardCache) path(shard int) string {
@@ -97,7 +96,7 @@ func (c *FileShardCache) WritethroughReader(shard int, reader sliceio.Reader) sl
 // CacheReader returns a reader that reads from the cache.
 func (c *FileShardCache) CacheReader(shard int) sliceio.Reader {
 	if !c.shardIsCached[shard] {
-		log.Panicf("shard %d is not cached", shard)
+		return sliceio.ErrReader(fmt.Errorf("shard %d is not cached", shard))
 	}
 	return newFileReader(c.path(shard))
 }
