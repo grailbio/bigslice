@@ -79,8 +79,8 @@ func TestCacheDeps(t *testing.T) {
 // runTestCache verifies that the caching in the slice returned by makeSlice
 // behaves as expected. See usage in TestCache.
 func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
@@ -134,8 +134,8 @@ func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, comput
 }
 
 func TestCacheIncremental(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
@@ -211,8 +211,8 @@ func TestCacheIncremental(t *testing.T) {
 }
 
 func TestCachePartialIncremental(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
@@ -288,8 +288,8 @@ func TestCachePartialIncremental(t *testing.T) {
 }
 
 func TestCacheErr(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	computeRan := false
