@@ -86,7 +86,8 @@ func (r *readCacheSlice) Reader(shard int, _ []sliceio.Reader) sliceio.Reader {
 // ReadCache reads from an existing cache but does not write any cache itself.
 // This may be useful if you want to reuse a cache from a previous computation
 // and fail if it does not exist. typ is the type of the cached and returned
-// slice.
+// slice. You may construct typ using slicetype.New or pass a Slice, which
+// embeds slicetype.Type.
 func ReadCache(ctx context.Context, typ slicetype.Type, numShard int, prefix string) Slice {
 	shardCache := slicecache.NewFileShardCache(ctx, prefix, numShard)
 	shardCache.RequireAllCached()
