@@ -81,49 +81,31 @@ func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, comput
 		N      = 10000
 		Nshard = 10
 	)
-	slice := makeSlice(N, Nshard, dir, true)
+	slice1 := makeSlice(N, Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	scan1 := runLocal(ctx, t, slice)
+	scan1 := runLocal(ctx, t, slice1)
 	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
 	// Recompute the slice to pick up the cached results.
-	slice = makeSlice(N, Nshard, dir, false)
-
-	scan2 := runLocal(ctx, t, slice)
+	slice2 := makeSlice(N, Nshard, dir, false)
+	scan2 := runLocal(ctx, t, slice2)
 	defer scan2.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
-	var n int
-	for {
-		var v1, v2 int
-		ok := scan1.Scan(ctx, &v1)
-		if got, want := scan2.Scan(ctx, &v2), ok; got != want {
-			t.Errorf("got %v, want %v", got, want)
-			break
-		}
-		if !ok {
-			break
-		}
-		if v1 != v2 {
-			t.Errorf("%v != %v", v1, v2)
-		}
-		n++
-	}
-	if got, want := n, N; got != want {
+	v1 := scanInts(ctx, t, scan1)
+	v2 := scanInts(ctx, t, scan2)
+	if got, want := len(v1), N; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if err := scan1.Err(); err != nil {
-		t.Errorf("scan1: %v", err)
-	}
-	if err := scan2.Err(); err != nil {
-		t.Errorf("scan2: %v", err)
+	if !reflect.DeepEqual(v1, v2) {
+		t.Errorf("corrupt cache")
 	}
 }
 
@@ -334,32 +316,14 @@ func TestReadCache(t *testing.T) {
 	// same results.
 	slice2 := bigslice.ReadCache(ctx, slice1, slice1.NumShard(), prefix)
 	scan2 := runLocal(ctx, t, slice2)
-	defer scan2.Close()
 
-	var n int
-	for {
-		var v1, v2 int
-		ok := scan1.Scan(ctx, &v1)
-		if got, want := scan2.Scan(ctx, &v2), ok; got != want {
-			t.Errorf("got %v, want %v", got, want)
-			break
-		}
-		if !ok {
-			break
-		}
-		if v1 != v2 {
-			t.Errorf("%v != %v", v1, v2)
-		}
-		n++
-	}
-	if got, want := n, N; got != want {
+	v1 := scanInts(ctx, t, scan1)
+	v2 := scanInts(ctx, t, scan2)
+	if got, want := len(v1), N; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if err := scan1.Err(); err != nil {
-		t.Errorf("scan1: %v", err)
-	}
-	if err := scan2.Err(); err != nil {
-		t.Errorf("scan2: %v", err)
+	if !reflect.DeepEqual(v1, v2) {
+		t.Errorf("corrupt cache")
 	}
 }
 
@@ -410,4 +374,20 @@ func runLocal(ctx context.Context, t *testing.T, slice bigslice.Slice) *sliceio.
 		t.Fatalf("error running func: %v", err)
 	}
 	return res.Scanner()
+}
+
+func scanInts(ctx context.Context, t *testing.T, scan *sliceio.Scanner) []int {
+	t.Helper()
+	var (
+		v  int
+		vs []int
+	)
+	for scan.Scan(ctx, &v) {
+		vs = append(vs, v)
+	}
+	if err := scan.Err(); err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	sort.Ints(vs)
+	return vs
 }
