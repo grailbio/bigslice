@@ -42,6 +42,14 @@ type FileShardCache struct {
 	requireAll    bool
 }
 
+const (
+	// pathFormat is the format used for the path of cache files.
+	pathFormat = "%s-%04d-of-%04d"
+	// pathFormatAllShards is the format used to refer to all of a cache's
+	// files, for human consumption.
+	pathFormatAllShards = "%s-NNNN-of-%04d"
+)
+
 // NewShardCache constructs a ShardCache. It does O(numShards) parallelized
 // file operations to look up what's present in the cache.
 func NewFileShardCache(ctx context.Context, prefix string, numShards int) *FileShardCache {
@@ -61,7 +69,7 @@ func NewFileShardCache(ctx context.Context, prefix string, numShards int) *FileS
 }
 
 func (c *FileShardCache) path(shard int) string {
-	return fmt.Sprintf("%s-%04d-of-%04d", c.prefix, shard, c.numShards)
+	return fmt.Sprintf(pathFormat, c.prefix, shard, c.numShards)
 }
 
 func (c *FileShardCache) IsCached(shard int) bool {
@@ -101,7 +109,7 @@ func (c *FileShardCache) CacheReader(shard int) sliceio.Reader {
 	if !c.shardIsCached[shard] {
 		path := c.path(shard)
 		if c.requireAll {
-			path = fmt.Sprintf("%s-NNNN-of-%04d", c.prefix, c.numShards)
+			path = fmt.Sprintf(pathFormatAllShards, c.prefix, c.numShards)
 		}
 		err := fmt.Errorf("cache %q invalid for shard %d(%d); check %q",
 			c.prefix, shard, c.numShards, path)
