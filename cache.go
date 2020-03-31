@@ -35,7 +35,7 @@ func (c *cacheSlice) Cache() slicecache.ShardCache { return c.cache }
 // written to a separate file with this prefix. If all shards exist,
 // then Cache shortcuts computation and instead reads directly from
 // the previously computed output. The user must guarantee cache
-// consistency: if the cache is could be invalid (e.g., because of
+// consistency: if the cache could be invalid (e.g., because of
 // code changes), the user is responsible for removing existing
 // cached files, or picking a different prefix that correctly
 // represents the operation to be cached.
