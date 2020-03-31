@@ -294,8 +294,8 @@ func TestCacheErr(t *testing.T) {
 
 // TestReadCache verifies that ReadCache successfully reads from an existing cache.
 func TestReadCache(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	prefix := filepath.Join(dir, "cached")
 	ctx := context.Background()
 
@@ -330,8 +330,8 @@ func TestReadCache(t *testing.T) {
 // TestReadCacheError verifies that a ReadCache reader returns an error if the
 // cache does not exist.
 func TestReadCacheError(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	var (
 		prefix = filepath.Join(dir, "cached")
 		ctx    = context.Background()
