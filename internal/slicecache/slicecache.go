@@ -39,6 +39,7 @@ type FileShardCache struct {
 	prefix        string
 	numShards     int
 	shardIsCached []bool
+	requireAll    bool
 }
 
 // NewShardCache constructs a ShardCache. It does O(numShards) parallelized
@@ -50,7 +51,7 @@ func NewFileShardCache(ctx context.Context, prefix string, numShards int) *FileS
 	// TODO(jcharumilind): Make this initialization more lazy. This is generally
 	// called within Funcs, but its result is generally ignored on workers to
 	// ensure a consistent view of the cache for consistent compilation.
-	c := FileShardCache{prefix, numShards, make([]bool, numShards)}
+	c := FileShardCache{prefix, numShards, make([]bool, numShards), false}
 	_ = traverse.Limit(10*runtime.NumCPU()).Each(numShards, func(shard int) error {
 		_, err := file.Stat(ctx, c.path(shard))
 		c.shardIsCached[shard] = err == nil // treat lookup errors as cache misses
@@ -74,6 +75,7 @@ func (c *FileShardCache) RequireAllCached() {
 	if c == nil {
 		return
 	}
+	c.requireAll = true
 	for _, b := range c.shardIsCached {
 		if !b {
 			for i := range c.shardIsCached {
@@ -93,10 +95,17 @@ func (c *FileShardCache) WritethroughReader(shard int, reader sliceio.Reader) sl
 	return newWritethroughReader(reader, c.path(shard))
 }
 
-// CacheReader returns a reader that reads from the cache.
+// CacheReader returns a reader that reads from the cache. If the shard is not
+// cached, returns a reader that will always return an error.
 func (c *FileShardCache) CacheReader(shard int) sliceio.Reader {
 	if !c.shardIsCached[shard] {
-		return sliceio.ErrReader(fmt.Errorf("shard %d is not cached", shard))
+		path := c.path(shard)
+		if c.requireAll {
+			path = fmt.Sprintf("%s-NNNN-of-%04d", c.prefix, c.numShards)
+		}
+		err := fmt.Errorf("cache %q invalid for shard %d(%d); check %q",
+			c.prefix, shard, c.numShards, path)
+		return sliceio.ErrReader(err)
 	}
 	return newFileReader(c.path(shard))
 }
