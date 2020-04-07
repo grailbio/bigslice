@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 	"golang.org/x/sync/errgroup"
@@ -35,6 +36,10 @@ func (t testExecutor) Run(task *Task) {
 
 func (testExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
+}
+
+func (testExecutor) Eventer() eventlog.Eventer {
+	return eventlog.Nop{}
 }
 
 func (testExecutor) HandleDebug(handler *http.ServeMux) {
@@ -459,6 +464,10 @@ func (b benchExecutor) Run(task *Task) {
 
 func (benchExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
+}
+
+func (benchExecutor) Eventer() eventlog.Eventer {
+	return eventlog.Nop{}
 }
 
 func (benchExecutor) HandleDebug(handler *http.ServeMux) {
