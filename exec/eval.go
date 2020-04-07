@@ -141,7 +141,7 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 					executor.Eventer().Event("bigslice:taskComplete",
 						"name", task.Name.String(),
 						"state", task.state.String(),
-						"duration", d.Milliseconds())
+						"duration", d.Nanoseconds()/1e6)
 				}
 				task.Unlock()
 				status.Done()
