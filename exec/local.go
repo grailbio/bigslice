@@ -39,7 +39,7 @@ func newLocalExecutor() *localExecutor {
 	}
 }
 
-func (localExecutor) Name() string {
+func (*localExecutor) Name() string {
 	return "local"
 }
 
