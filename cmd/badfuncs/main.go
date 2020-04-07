@@ -47,16 +47,16 @@ func ok() {
 	for i, makeFunc := range makeFuncs {
 		funcs[i] = makeFunc()
 	}
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 
 	ctx := context.Background()
 	sess.Must(ctx, funcs[0])
 }
 
 func toolate() {
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 
 	f0 := makeFuncs[0]()
 	ctx := context.Background()
@@ -72,8 +72,8 @@ func random() {
 	for i, makeFunc := range makeFuncs {
 		funcs[i] = makeFunc()
 	}
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 	ctx := context.Background()
 	sess.Must(ctx, funcs[0])
 }
