@@ -10,6 +10,7 @@ import (
 	"github.com/grailbio/bigslice/internal/slicecache"
 	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetype"
 )
 
 type cacheSlice struct {
@@ -34,20 +35,17 @@ func (c *cacheSlice) Cache() slicecache.ShardCache { return c.cache }
 // written to a separate file with this prefix. If all shards exist,
 // then Cache shortcuts computation and instead reads directly from
 // the previously computed output. The user must guarantee cache
-// consistency: if the cache is could be invalid (e.g., because of
+// consistency: if the cache could be invalid (e.g., because of
 // code changes), the user is responsible for removing existing
 // cached files, or picking a different prefix that correctly
 // represents the operation to be cached.
 //
 // Cache uses GRAIL's file library, so prefix may refer to URLs to a
 // distributed object store such as S3.
-func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
-	shardCache, err := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
-	if err != nil {
-		return nil, err
-	}
+func Cache(ctx context.Context, slice Slice, prefix string) Slice {
+	shardCache := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
 	shardCache.RequireAllCached()
-	return &cacheSlice{MakeName("cache"), slice, shardCache}, nil
+	return &cacheSlice{MakeName("cache"), slice, shardCache}
 }
 
 // CachePartial caches the output of the slice to the given file
@@ -62,10 +60,36 @@ func Cache(ctx context.Context, slice Slice, prefix string) (Slice, error) {
 // of a modifiable file in S3, CachePartial produces corrupt results.
 //
 // As with Cache, the user must guarantee cache consistency.
-func CachePartial(ctx context.Context, slice Slice, prefix string) (Slice, error) {
-	shardCache, err := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
-	if err != nil {
-		return nil, err
-	}
-	return &cacheSlice{MakeName("cachepartial"), slice, shardCache}, nil
+func CachePartial(ctx context.Context, slice Slice, prefix string) Slice {
+	shardCache := slicecache.NewFileShardCache(ctx, prefix, slice.NumShard())
+	return &cacheSlice{MakeName("cachepartial"), slice, shardCache}
+}
+
+type readCacheSlice struct {
+	slicetype.Type
+	name     Name
+	numShard int
+	cache    *slicecache.FileShardCache
+}
+
+func (r *readCacheSlice) Name() Name             { return r.name }
+func (r *readCacheSlice) NumShard() int          { return r.numShard }
+func (*readCacheSlice) ShardType() ShardType     { return HashShard }
+func (*readCacheSlice) NumDep() int              { return 0 }
+func (*readCacheSlice) Dep(i int) Dep            { panic("no deps") }
+func (*readCacheSlice) Combiner() slicefunc.Func { return slicefunc.Nil }
+
+func (r *readCacheSlice) Reader(shard int, _ []sliceio.Reader) sliceio.Reader {
+	return r.cache.CacheReader(shard)
+}
+
+// ReadCache reads from an existing cache but does not write any cache itself.
+// This may be useful if you want to reuse a cache from a previous computation
+// and fail if it does not exist. typ is the type of the cached and returned
+// slice. You may construct typ using slicetype.New or pass a Slice, which
+// embeds slicetype.Type.
+func ReadCache(ctx context.Context, typ slicetype.Type, numShard int, prefix string) Slice {
+	shardCache := slicecache.NewFileShardCache(ctx, prefix, numShard)
+	shardCache.RequireAllCached()
+	return &readCacheSlice{typ, MakeName("readcache"), numShard, shardCache}
 }

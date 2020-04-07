@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/sliceio"
 	"github.com/grailbio/bigslice/slicetest"
+	"github.com/grailbio/bigslice/slicetype"
 	"github.com/grailbio/testutil"
 )
 
@@ -32,12 +34,8 @@ func TestCache(t *testing.T) {
 			}
 			return i * 2
 		})
-		var err error
 		ctx := context.Background()
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		slice = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		return slice
 	}
 	runTestCache(t, makeSlice)
@@ -65,12 +63,8 @@ func TestCacheDeps(t *testing.T) {
 			}
 			return i * 2
 		})
-		var err error
 		ctx := context.Background()
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		slice = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		return slice
 	}
 	runTestCache(t, makeSlice)
@@ -79,63 +73,45 @@ func TestCacheDeps(t *testing.T) {
 // runTestCache verifies that the caching in the slice returned by makeSlice
 // behaves as expected. See usage in TestCache.
 func runTestCache(t *testing.T, makeSlice func(n, nShard int, dir string, computeAllowed bool) bigslice.Slice) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
 		N      = 10000
 		Nshard = 10
 	)
-	slice := makeSlice(N, Nshard, dir, true)
+	slice1 := makeSlice(N, Nshard, dir, true)
 	if got, want := len(ls1(t, dir)), 0; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	scan1 := runLocal(ctx, t, slice)
+	scan1 := runLocal(ctx, t, slice1)
 	defer scan1.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
 	// Recompute the slice to pick up the cached results.
-	slice = makeSlice(N, Nshard, dir, false)
-
-	scan2 := runLocal(ctx, t, slice)
+	slice2 := makeSlice(N, Nshard, dir, false)
+	scan2 := runLocal(ctx, t, slice2)
 	defer scan2.Close()
 	if got, want := len(ls1(t, dir)), Nshard; got != want {
 		t.Errorf("got %v [%v], want %v", got, ls1(t, dir), want)
 	}
 
-	var n int
-	for {
-		var v1, v2 int
-		ok := scan1.Scan(ctx, &v1)
-		if got, want := scan2.Scan(ctx, &v2), ok; got != want {
-			t.Errorf("got %v, want %v", got, want)
-			break
-		}
-		if !ok {
-			break
-		}
-		if v1 != v2 {
-			t.Errorf("%v != %v", v1, v2)
-		}
-		n++
-	}
-	if got, want := n, N; got != want {
+	v1 := scanInts(ctx, t, scan1)
+	v2 := scanInts(ctx, t, scan2)
+	if got, want := len(v1), N; got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if err := scan1.Err(); err != nil {
-		t.Errorf("scan1: %v", err)
-	}
-	if err := scan2.Err(); err != nil {
-		t.Errorf("scan2: %v", err)
+	if !reflect.DeepEqual(v1, v2) {
+		t.Errorf("corrupt cache")
 	}
 }
 
 func TestCacheIncremental(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
@@ -155,11 +131,7 @@ func TestCacheIncremental(t *testing.T) {
 			rowsRan[i] = true
 			return i * 2
 		})
-		var err error
-		slice, err = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		slice = bigslice.Cache(ctx, slice, filepath.Join(dir, "cached"))
 		return slice
 	}
 
@@ -211,8 +183,8 @@ func TestCacheIncremental(t *testing.T) {
 }
 
 func TestCachePartialIncremental(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	const (
@@ -232,11 +204,7 @@ func TestCachePartialIncremental(t *testing.T) {
 			rowsRan[i] = true
 			return i * 2
 		})
-		var err error
-		slice, err = bigslice.CachePartial(ctx, slice, filepath.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		slice = bigslice.CachePartial(ctx, slice, filepath.Join(dir, "cached"))
 		return slice
 	}
 
@@ -288,8 +256,8 @@ func TestCachePartialIncremental(t *testing.T) {
 }
 
 func TestCacheErr(t *testing.T) {
-	dir, cleanup := testutil.TempDir(t, "", "")
-	defer cleanup()
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
 	ctx := context.Background()
 
 	computeRan := false
@@ -306,11 +274,7 @@ func TestCacheErr(t *testing.T) {
 			computeRan = true
 			return len(ints), nil
 		})
-		var err error
-		slice, err = bigslice.Cache(ctx, slice, file.Join(dir, "cached"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		slice = bigslice.Cache(ctx, slice, file.Join(dir, "cached"))
 		return slice
 	}
 	if err := slicetest.RunErr(makeSlice()); err == nil {
@@ -325,6 +289,60 @@ func TestCacheErr(t *testing.T) {
 	}
 	if !computeRan {
 		t.Error()
+	}
+}
+
+// TestReadCache verifies that ReadCache successfully reads from an existing cache.
+func TestReadCache(t *testing.T) {
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
+	prefix := filepath.Join(dir, "cached")
+	ctx := context.Background()
+
+	const (
+		N      = 10000
+		Nshard = 10
+	)
+	input := make([]int, N)
+	for i := range input {
+		input[i] = i
+	}
+	slice1 := bigslice.Const(Nshard, input)
+	slice1 = bigslice.Cache(ctx, slice1, prefix)
+	scan1 := runLocal(ctx, t, slice1)
+	defer scan1.Close()
+
+	// We now have a populated cache. Read from it, and make sure we get the
+	// same results.
+	slice2 := bigslice.ReadCache(ctx, slice1, slice1.NumShard(), prefix)
+	scan2 := runLocal(ctx, t, slice2)
+
+	v1 := scanInts(ctx, t, scan1)
+	v2 := scanInts(ctx, t, scan2)
+	if got, want := len(v1), N; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(v1, v2) {
+		t.Errorf("corrupt cache")
+	}
+}
+
+// TestReadCacheError verifies that a ReadCache reader returns an error if the
+// cache does not exist.
+func TestReadCacheError(t *testing.T) {
+	dir, cleanUp := testutil.TempDir(t, "", "")
+	defer cleanUp()
+	var (
+		prefix = filepath.Join(dir, "cached")
+		ctx    = context.Background()
+		slice  = bigslice.ReadCache(ctx, slicetype.New(reflect.TypeOf(0)), 1, prefix)
+		fn     = bigslice.Func(func() bigslice.Slice { return slice })
+		sess   = exec.Start(exec.Local)
+	)
+	defer sess.Shutdown()
+	_, err := sess.Run(ctx, fn)
+	if err == nil {
+		t.Errorf("expected error when reading from non-existent cache")
 	}
 }
 
@@ -356,4 +374,20 @@ func runLocal(ctx context.Context, t *testing.T, slice bigslice.Slice) *sliceio.
 		t.Fatalf("error running func: %v", err)
 	}
 	return res.Scanner()
+}
+
+func scanInts(ctx context.Context, t *testing.T, scan *sliceio.Scanner) []int {
+	t.Helper()
+	var (
+		v  int
+		vs []int
+	)
+	for scan.Scan(ctx, &v) {
+		vs = append(vs, v)
+	}
+	if err := scan.Err(); err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	sort.Ints(vs)
+	return vs
 }
