@@ -165,7 +165,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 
 type invocationRef struct{ Index uint64 }
 
-func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv bigslice.Invocation, env CompileEnv) error {
+func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, tid int, inv bigslice.Invocation, env CompileEnv) error {
 	// Substitute Result arguments for an invocation ref and record the
 	// dependency.
 	b.mu.Lock()
@@ -219,13 +219,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 			for i := range args {
 				args[i] = truncatef(inv.Args[i])
 			}
-			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
+			b.sess.tracer.Event(m, tid, inv, "B", "location", inv.Location, "args", args)
 			req := compileRequest{inv, env}
 			err := m.RetryCall(ctx, "Worker.Compile", req, nil)
 			if err != nil {
-				b.sess.tracer.Event(m, inv, "E", "error", err)
+				b.sess.tracer.Event(m, tid, inv, "E", "error", err)
 			} else {
-				b.sess.tracer.Event(m, inv, "E")
+				b.sess.tracer.Event(m, tid, inv, "E")
 			}
 			return err
 		})
@@ -275,12 +275,16 @@ func (b *bigmachineExecutor) Run(task *Task) {
 		numTasks.Add(-1)
 		m.UpdateStatus()
 	}()
+	var err error
+	defer func(procs int) { m.Done(procs, err) }(procs)
+	tid := m.acquireTid()
+	defer m.releaseTid(tid)
 
 	// Make sure that the invocation has been compiled on the selected
 	// machine.
 compile:
 	for {
-		err := b.compile(ctx, m, task.Invocation, task.CompileEnv)
+		err := b.compile(ctx, m, tid, task.Invocation, task.CompileEnv)
 		switch {
 		case err == nil:
 			break compile
@@ -299,12 +303,10 @@ compile:
 			// involve dependencies other than potentially uploading data from
 			// the driver node, so we consider any error to be fatal to the task.
 			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
-			m.Done(procs, err)
 			return
 		default:
 			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
 			task.Set(TaskLost)
-			m.Done(procs, err)
 			return
 		}
 	}
@@ -325,7 +327,6 @@ compile:
 				// TODO(marius): make this a separate state, or a separate
 				// error type?
 				task.Errorf("task %v has no location", deptask)
-				m.Done(procs, nil)
 				return
 			}
 			j, ok := machineIndices[depm.Addr]
@@ -345,7 +346,7 @@ compile:
 	}
 
 	task.Status.Print(m.Addr)
-	if err := g.Wait(); err != nil {
+	if err = g.Wait(); err != nil {
 		task.Errorf("failed to commit combiner: %v", err)
 		return
 	}
@@ -355,31 +356,33 @@ compile:
 	statsCtx, statsCancel := context.WithCancel(ctx)
 	go monitorTaskStats(statsCtx, m, task)
 
-	b.sess.tracer.Event(m, task, "B")
+	b.sess.tracer.Event(m, tid, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
-	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
+	err = m.RetryCall(ctx, "Worker.Run", req, &reply)
 	statsCancel()
-	m.Done(procs, err)
 	switch {
 	case err == nil:
-		b.sess.tracer.Event(m, task, "E")
+		b.sess.tracer.Event(m, tid, task, "E",
+			"read_duration", reply.Vals["readDuration"]/1e3,
+			"write_duration", reply.Vals["writeDurtaion"]/1e3,
+		)
 		b.setLocation(task, m)
 		task.Status.Printf("done: %s", reply.Vals)
 		task.Scope.Reset(&reply.Scope)
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
-		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
+		b.sess.tracer.Event(m, tid, task, "E", "error", ctx.Err())
 		task.Error(err)
 	case errors.Is(errors.Remote, err) && errors.Match(fatalErr, err):
-		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
+		b.sess.tracer.Event(m, tid, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)
 	default:
 		// Everything else we consider as the task being lost. It'll get
 		// resubmitted by the evaluator.
-		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "lost")
+		b.sess.tracer.Event(m, tid, task, "E", "error", err, "error_type", "lost")
 		task.Status.Printf("lost task during task evaluation: %v", err)
 		task.Set(TaskLost)
 	}
@@ -710,6 +713,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		taskTotalRecordsIn *stats.Int
 		taskRecordsIn      *stats.Int
 		taskRecordsOut     = taskStats.Int("write")
+		taskReadDuration   = taskStats.Int("readDuration")
+		taskWriteDuration  = taskStats.Int("writeDuration")
 		// Stats for the machine.
 		totalRecordsIn *stats.Int
 		recordsIn      *stats.Int
@@ -759,7 +764,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				r := newMachineReader(machine, taskPartition{TaskName{Op: dep.CombineKey}, dep.Partition})
-				in = append(in, &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}})
+				in = append(in, &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration})
 				defer r.Close()
 			}
 		} else {
@@ -776,7 +781,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					if err == nil {
 						defer rc.Close()
 						r := sliceio.NewDecodingReader(rc)
-						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration}
 						taskTotalRecordsIn.Add(info.Records)
 						totalRecordsIn.Add(info.Records)
 						taskIndex++
@@ -795,7 +800,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				r := newMachineReader(machine, tp)
-				reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+				reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration}
 				taskTotalRecordsIn.Add(info.Records)
 				totalRecordsIn.Add(info.Records)
 				defer r.Close()
@@ -820,6 +825,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// If we have a combiner, then we partition globally for the machine
 	// into common combiners.
 	if !task.Combiner.IsNil() {
+		// TODO.
 		return w.runCombine(ctx, task, taskStats, task.Do(in))
 	}
 
@@ -833,7 +839,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	type partition struct {
 		wc  writeCommitter
 		buf *bufio.Writer
-		*sliceio.Encoder
+		sliceio.Writer
 	}
 	partitions := make([]*partition, task.NumPartition)
 	for p := range partitions {
@@ -845,7 +851,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		part := new(partition)
 		part.wc = wc
 		part.buf = bufio.NewWriter(wc)
-		part.Encoder = sliceio.NewEncoder(part.buf)
+		part.Writer = &statsWriter{sliceio.NewEncoder(part.buf), taskWriteDuration}
 		partitions[p] = part
 	}
 	defer func() {
@@ -891,7 +897,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				count[p]++
 				// Flush when we fill up.
 				if lens[p] == psize {
-					if err := partitions[p].Encode(partitionv[p]); err != nil {
+					if err := partitions[p].Write(partitionv[p]); err != nil {
 						return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 					}
 					lens[p] = 0
@@ -908,7 +914,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if n == 0 {
 				continue
 			}
-			if err := partitions[p].Encode(partitionv[p].Slice(0, n)); err != nil {
+			if err := partitions[p].Write(partitionv[p].Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 		}
@@ -919,7 +925,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
-			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
+			if err := partitions[0].Write(in.Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 			taskRecordsOut.Add(int64(n))
@@ -931,6 +937,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		}
 	}
 
+	start := time.Now()
 	for i, part := range partitions {
 		if err := part.buf.Flush(); err != nil {
 			return err
@@ -940,6 +947,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			return err
 		}
 	}
+	taskWriteDuration.Add(time.Since(start).Nanoseconds())
 	partitions = nil
 	return nil
 }
@@ -1406,10 +1414,17 @@ type statsReader struct {
 	// numRead is a slice of *stats.Int, each of which is incremented with the
 	// number of records read.
 	numRead []*stats.Int
+	// readDurationNs is the total amount of time taken by the Read call to the
+	// underlying reader in nanoseconds.
+	readDurationNs *stats.Int
 }
 
 func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	n, err = s.reader.Read(ctx, f)
+	start := time.Now()
+	defer func() {
+		s.readDurationNs.Add(time.Since(start).Nanoseconds())
+	}()
 	for _, istat := range s.numRead {
 		istat.Add(int64(n))
 	}
@@ -1420,4 +1435,17 @@ func truncatef(v interface{}) string {
 	b := limitbuf.NewLogger(512)
 	fmt.Fprint(b, v)
 	return b.String()
+}
+
+type statsWriter struct {
+	writer          sliceio.Writer
+	writeDurationNs *stats.Int
+}
+
+func (s *statsWriter) Write(f frame.Frame) error {
+	start := time.Now()
+	defer func() {
+		s.writeDurationNs.Add(time.Since(start).Nanoseconds())
+	}()
+	return s.writer.Write(f)
 }

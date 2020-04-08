@@ -5,7 +5,6 @@
 package exec
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -13,21 +12,8 @@ import (
 	"time"
 
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/internal/trace"
 )
-
-// traceEvent is an event in the Chrome tracing format. The fields are
-// mirrored exactly. For more details, see:
-//	https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview
-type traceEvent struct {
-	Pid  int                    `json:"pid"`
-	Tid  int                    `json:"tid"`
-	Ts   int64                  `json:"ts"`
-	Ph   string                 `json:"ph"`
-	Dur  int64                  `json:"dur,omitempty"`
-	Name string                 `json:"name"`
-	Cat  string                 `json:"cat,omitempty"`
-	Args map[string]interface{} `json:"args"`
-}
 
 // A tracer tracks a set of trace events associated with objects in
 // Bigslice. Trace events are logged in the Chrome tracing format and
@@ -43,9 +29,9 @@ type traceEvent struct {
 type tracer struct {
 	mu sync.Mutex
 
-	events        []traceEvent
-	taskEvents    map[*Task][]traceEvent
-	compileEvents map[compileKey][]traceEvent
+	events        []trace.Event
+	taskEvents    map[*Task][]trace.Event
+	compileEvents map[compileKey][]trace.Event
 
 	machinePids map[*sliceMachine]int
 
@@ -63,8 +49,8 @@ type compileKey struct {
 
 func newTracer() *tracer {
 	return &tracer{
-		taskEvents:    make(map[*Task][]traceEvent),
-		compileEvents: make(map[compileKey][]traceEvent),
+		taskEvents:    make(map[*Task][]trace.Event),
+		compileEvents: make(map[compileKey][]trace.Event),
 		machinePids:   make(map[*sliceMachine]int),
 	}
 }
@@ -76,14 +62,14 @@ func newTracer() *tracer {
 // that are attached as event metadata. Args must be of even length.
 //
 // If mach is nil, the event is assigned to the evaluator.
-func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args ...interface{}) {
+func (t *tracer) Event(mach *sliceMachine, tid int, subject interface{}, ph string, args ...interface{}) {
 	if t == nil {
 		return
 	}
 	if len(args)%2 != 0 {
 		panic("trace.Event: invalid arguments")
 	}
-	var event traceEvent
+	var event trace.Event
 	event.Args = make(map[string]interface{}, len(args)/2)
 	for i := 0; i < len(args); i += 2 {
 		event.Args[fmt.Sprint(args[i])] = args[i+1]
@@ -103,8 +89,9 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 			pid = len(t.machinePids) + 1 // pid=0 is reserved for evaluator events
 			t.machinePids[mach] = pid
 			// Attach "process" name metadata so we can identify where a task is running.
-			t.events = append(t.events, traceEvent{
+			t.events = append(t.events, trace.Event{
 				Pid:  pid,
+				Tid:  tid,
 				Ts:   event.Ts,
 				Ph:   "M",
 				Name: "process_name",
@@ -115,7 +102,7 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 		}
 		event.Pid = pid
 	}
-	event.Tid = 1
+	event.Tid = tid
 	switch arg := subject.(type) {
 	case *Task:
 		event.Name = arg.Name.String()
@@ -140,7 +127,7 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 // Chrome's event tracing format.
 func (t *tracer) Marshal(w io.Writer) error {
 	t.mu.Lock()
-	events := make([]traceEvent, len(t.events))
+	events := make([]trace.Event, len(t.events))
 	copy(events, t.events)
 	for _, v := range t.taskEvents {
 		events = appendCoalesce(events, v, t.firstEvent)
@@ -150,11 +137,8 @@ func (t *tracer) Marshal(w io.Writer) error {
 	}
 	t.mu.Unlock()
 
-	envelope := struct {
-		TraceEvents []traceEvent `json:"traceEvents"`
-	}{events}
-	enc := json.NewEncoder(w)
-	return enc.Encode(envelope)
+	trace := trace.T{Events: events}
+	return trace.Encode(w)
 }
 
 // appendCoalesce appends a set of events on the provided list,
@@ -162,7 +146,7 @@ func (t *tracer) Marshal(w io.Writer) error {
 // into a single "X" event. This produces more visually compact (and
 // useful) trace visualizations. appendCoalesce also prunes orphan
 // events.
-func appendCoalesce(list []traceEvent, events []traceEvent, firstEvent time.Time) []traceEvent {
+func appendCoalesce(list []trace.Event, events []trace.Event, firstEvent time.Time) []trace.Event {
 	var begIndex = -1
 	for _, event := range events {
 		if event.Ph == "B" && begIndex < 0 {
