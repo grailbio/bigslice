@@ -275,8 +275,6 @@ func (b *bigmachineExecutor) Run(task *Task) {
 		numTasks.Add(-1)
 		m.UpdateStatus()
 	}()
-	var err error
-	defer func(procs int) { m.Done(procs, err) }(procs)
 
 	// Make sure that the invocation has been compiled on the selected
 	// machine.
@@ -301,10 +299,12 @@ compile:
 			// involve dependencies other than potentially uploading data from
 			// the driver node, so we consider any error to be fatal to the task.
 			task.Errorf("failed to compile invocation on machine %s: %v", m.Addr, err)
+			m.Done(procs, err)
 			return
 		default:
 			task.Status.Printf("task lost while compiling bigslice.Func: %v", err)
 			task.Set(TaskLost)
+			m.Done(procs, err)
 			return
 		}
 	}
@@ -325,6 +325,7 @@ compile:
 				// TODO(marius): make this a separate state, or a separate
 				// error type?
 				task.Errorf("task %v has no location", deptask)
+				m.Done(procs, nil)
 				return
 			}
 			j, ok := machineIndices[depm.Addr]
@@ -344,7 +345,7 @@ compile:
 	}
 
 	task.Status.Print(m.Addr)
-	if err = g.Wait(); err != nil {
+	if err := g.Wait(); err != nil {
 		task.Errorf("failed to commit combiner: %v", err)
 		return
 	}
@@ -357,8 +358,9 @@ compile:
 	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
-	err = m.RetryCall(ctx, "Worker.Run", req, &reply)
+	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
 	statsCancel()
+	m.Done(procs, err)
 	switch {
 	case err == nil:
 		b.sess.tracer.Event(m, task, "E",
