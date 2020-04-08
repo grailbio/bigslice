@@ -90,32 +90,6 @@ type sliceMachine struct {
 	mem  bigmachine.MemInfo
 	load bigmachine.LoadInfo
 	vals stats.Values
-
-	tidPool []bool
-}
-
-func (s *sliceMachine) acquireTid() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for tid, available := range s.tidPool {
-		if available {
-			s.tidPool[tid] = false
-			return tid
-		}
-	}
-	tid := len(s.tidPool)
-	s.tidPool = append(s.tidPool, false)
-	return tid
-}
-
-func (s *sliceMachine) releaseTid(tid int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.tidPool[tid] {
-		panic("releasing unallocated tid")
-
-	}
-	s.tidPool[tid] = true
 }
 
 func (s *sliceMachine) String() string {

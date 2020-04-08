@@ -165,7 +165,7 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 
 type invocationRef struct{ Index uint64 }
 
-func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, tid int, inv bigslice.Invocation, env CompileEnv) error {
+func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv bigslice.Invocation, env CompileEnv) error {
 	// Substitute Result arguments for an invocation ref and record the
 	// dependency.
 	b.mu.Lock()
@@ -219,13 +219,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, tid i
 			for i := range args {
 				args[i] = truncatef(inv.Args[i])
 			}
-			b.sess.tracer.Event(m, tid, inv, "B", "location", inv.Location, "args", args)
+			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
 			req := compileRequest{inv, env}
 			err := m.RetryCall(ctx, "Worker.Compile", req, nil)
 			if err != nil {
-				b.sess.tracer.Event(m, tid, inv, "E", "error", err)
+				b.sess.tracer.Event(m, inv, "E", "error", err)
 			} else {
-				b.sess.tracer.Event(m, tid, inv, "E")
+				b.sess.tracer.Event(m, inv, "E")
 			}
 			return err
 		})
@@ -277,14 +277,12 @@ func (b *bigmachineExecutor) Run(task *Task) {
 	}()
 	var err error
 	defer func(procs int) { m.Done(procs, err) }(procs)
-	tid := m.acquireTid()
-	defer m.releaseTid(tid)
 
 	// Make sure that the invocation has been compiled on the selected
 	// machine.
 compile:
 	for {
-		err := b.compile(ctx, m, tid, task.Invocation, task.CompileEnv)
+		err := b.compile(ctx, m, task.Invocation, task.CompileEnv)
 		switch {
 		case err == nil:
 			break compile
@@ -356,14 +354,14 @@ compile:
 	statsCtx, statsCancel := context.WithCancel(ctx)
 	go monitorTaskStats(statsCtx, m, task)
 
-	b.sess.tracer.Event(m, tid, task, "B")
+	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
 	err = m.RetryCall(ctx, "Worker.Run", req, &reply)
 	statsCancel()
 	switch {
 	case err == nil:
-		b.sess.tracer.Event(m, tid, task, "E",
+		b.sess.tracer.Event(m, task, "E",
 			"read_duration", reply.Vals["readDuration"]/1e3,
 			"write_duration", reply.Vals["writeDurtaion"]/1e3,
 		)
@@ -373,16 +371,16 @@ compile:
 		task.Set(TaskOk)
 		m.Assign(task)
 	case ctx.Err() != nil:
-		b.sess.tracer.Event(m, tid, task, "E", "error", ctx.Err())
+		b.sess.tracer.Event(m, task, "E", "error", ctx.Err())
 		task.Error(err)
 	case errors.Is(errors.Remote, err) && errors.Match(fatalErr, err):
-		b.sess.tracer.Event(m, tid, task, "E", "error", err, "error_type", "fatal")
+		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "fatal")
 		// Fatal errors aren't retryable.
 		task.Error(err)
 	default:
 		// Everything else we consider as the task being lost. It'll get
 		// resubmitted by the evaluator.
-		b.sess.tracer.Event(m, tid, task, "E", "error", err, "error_type", "lost")
+		b.sess.tracer.Event(m, task, "E", "error", err, "error_type", "lost")
 		task.Status.Printf("lost task during task evaluation: %v", err)
 		task.Set(TaskLost)
 	}
