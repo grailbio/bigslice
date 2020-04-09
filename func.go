@@ -88,7 +88,7 @@ func (f *FuncValue) applyValue(args []reflect.Value) Slice {
 	argTypes := make([]reflect.Type, len(args))
 	for i, arg := range args {
 		if !arg.IsValid() {
-			if !checkNilAssignable(f.args[i]) {
+			if !isNilAssignable(f.args[i]) {
 				// Untyped nil argument for type that cannot be nil.
 				typecheck.Panicf(2, "cannot use nil as type %s in argument to function", f.args[i])
 			}
@@ -103,7 +103,7 @@ func (f *FuncValue) applyValue(args []reflect.Value) Slice {
 	return out[0].Interface().(Slice)
 }
 
-func checkNilAssignable(typ reflect.Type) bool {
+func isNilAssignable(typ reflect.Type) bool {
 	switch typ.Kind() {
 	case reflect.Chan:
 	case reflect.Func:
@@ -126,7 +126,7 @@ func (f *FuncValue) typecheck(args ...reflect.Type) {
 	for i := range args {
 		expect, have := f.args[i], args[i]
 		if have == nil {
-			if !checkNilAssignable(expect) {
+			if !isNilAssignable(expect) {
 				typecheck.Panicf(2, "wrong type for argument %d: %s cannot be nil", i, expect)
 			}
 			continue
