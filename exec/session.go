@@ -380,13 +380,20 @@ func (r *Result) open() sliceio.ReadCloser {
 
 func writeTraceFile(tracer *tracer, path string) {
 	w, err := os.Create(path)
+	defer func() {
+		err := w.Close()
+		if err != nil {
+			log.Error.Printf("error closing trace file at %q: %v", path, err)
+			return
+		}
+	}()
 	if err != nil {
-		log.Error.Printf("could not create trace file at %q: %v", path, err)
+		log.Error.Printf("error creating trace file at %q: %v", path, err)
 		return
 	}
 	err = tracer.Marshal(w)
 	if err != nil {
-		log.Error.Printf("could not marshal to trace file at %q: %v", path, err)
+		log.Error.Printf("erro marshaling to trace file at %q: %v", path, err)
 		return
 	}
 }
