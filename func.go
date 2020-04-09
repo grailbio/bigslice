@@ -87,11 +87,35 @@ func (f *FuncValue) Apply(args ...interface{}) Slice {
 func (f *FuncValue) applyValue(args []reflect.Value) Slice {
 	argTypes := make([]reflect.Type, len(args))
 	for i, arg := range args {
+		if !arg.IsValid() {
+			if !isNilAssignable(f.args[i]) {
+				// Untyped nil argument for type that cannot be nil.
+				typecheck.Panicf(2, "cannot use nil as type %s in argument to function", f.args[i])
+			}
+			argTypes[i] = f.args[i]
+			args[i] = reflect.Zero(f.args[i])
+			continue
+		}
 		argTypes[i] = arg.Type()
 	}
 	f.typecheck(argTypes...)
 	out := f.fn.Call(args)
 	return out[0].Interface().(Slice)
+}
+
+func isNilAssignable(typ reflect.Type) bool {
+	switch typ.Kind() {
+	case reflect.Chan:
+	case reflect.Func:
+	case reflect.Interface:
+	case reflect.Map:
+	case reflect.Ptr:
+	case reflect.Slice:
+	case reflect.UnsafePointer:
+	default:
+		return false
+	}
+	return true
 }
 
 func (f *FuncValue) typecheck(args ...reflect.Type) {
@@ -101,6 +125,12 @@ func (f *FuncValue) typecheck(args ...reflect.Type) {
 	}
 	for i := range args {
 		expect, have := f.args[i], args[i]
+		if have == nil {
+			if !isNilAssignable(expect) {
+				typecheck.Panicf(2, "wrong type for argument %d: %s cannot be nil", i, expect)
+			}
+			continue
+		}
 		switch expect.Kind() {
 		case reflect.Interface:
 			if !have.Implements(expect) {
