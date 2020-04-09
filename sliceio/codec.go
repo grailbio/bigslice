@@ -80,10 +80,6 @@ func NewEncoder(w io.Writer) *Encoder {
 	}
 }
 
-func (e *Encoder) Write(f frame.Frame) error {
-	return e.Encode(f)
-}
-
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
 func (e *Encoder) Encode(f frame.Frame) error {
