@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -63,12 +64,13 @@ func init() {
 //	}
 type Session struct {
 	context.Context
-	index    int32
-	shutdown func()
-	p        int
-	maxLoad  float64
-	executor Executor
-	status   *status.Status
+	index     int32
+	shutdown  func()
+	p         int
+	maxLoad   float64
+	executor  Executor
+	status    *status.Status
+	tracePath string
 
 	machineCombiners bool
 
@@ -137,6 +139,14 @@ func Status(status *status.Status) Option {
 		dump.Register(name, func(ctx context.Context, w io.Writer) error {
 			return status.Marshal(w)
 		})
+	}
+}
+
+// TracePath configures the path to which a trace event file for the session
+// will be written on shutdown.
+func TracePath(path string) Option {
+	return func(s *Session) {
+		s.tracePath = path
 	}
 }
 
@@ -299,6 +309,9 @@ func (s *Session) Shutdown() {
 	if s.shutdown != nil {
 		s.shutdown()
 	}
+	if s.tracePath != "" {
+		writeTraceFile(s.tracer, s.tracePath)
+	}
 }
 
 // Status returns the session's status aggregator.
@@ -363,4 +376,24 @@ func (r *Result) open() sliceio.ReadCloser {
 		readers[i] = r.sess.executor.Reader(r.tasks[i], 0)
 	}
 	return sliceio.MultiReader(readers...)
+}
+
+func writeTraceFile(tracer *tracer, path string) {
+	w, err := os.Create(path)
+	if err != nil {
+		log.Error.Printf("error creating trace file at %q: %v", path, err)
+		return
+	}
+	defer func() {
+		err := w.Close()
+		if err != nil {
+			log.Error.Printf("error closing trace file at %q: %v", path, err)
+			return
+		}
+	}()
+	err = tracer.Marshal(w)
+	if err != nil {
+		log.Error.Printf("erro marshaling to trace file at %q: %v", path, err)
+		return
+	}
 }
