@@ -363,7 +363,10 @@ compile:
 	m.Done(procs, err)
 	switch {
 	case err == nil:
-		b.sess.tracer.Event(m, task, "E")
+		b.sess.tracer.Event(m, task, "E",
+			"read_duration", reply.Vals["readDuration"]/1e3,
+			"write_duration", reply.Vals["writeDuration"]/1e3,
+		)
 		b.setLocation(task, m)
 		task.Status.Printf("done: %s", reply.Vals)
 		task.Scope.Reset(&reply.Scope)
@@ -710,6 +713,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		taskTotalRecordsIn *stats.Int
 		taskRecordsIn      *stats.Int
 		taskRecordsOut     = taskStats.Int("write")
+		taskReadDuration   = taskStats.Int("readDuration")
+		taskWriteDuration  = taskStats.Int("writeDuration")
 		// Stats for the machine.
 		totalRecordsIn *stats.Int
 		recordsIn      *stats.Int
@@ -759,7 +764,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				r := newMachineReader(machine, taskPartition{TaskName{Op: dep.CombineKey}, dep.Partition})
-				in = append(in, &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}})
+				in = append(in, &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration})
 				defer r.Close()
 			}
 		} else {
@@ -776,7 +781,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					if err == nil {
 						defer rc.Close()
 						r := sliceio.NewDecodingReader(rc)
-						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration}
 						taskTotalRecordsIn.Add(info.Records)
 						totalRecordsIn.Add(info.Records)
 						taskIndex++
@@ -795,7 +800,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 					return err
 				}
 				r := newMachineReader(machine, tp)
-				reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}}
+				reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration}
 				taskTotalRecordsIn.Add(info.Records)
 				totalRecordsIn.Add(info.Records)
 				defer r.Close()
@@ -833,7 +838,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	type partition struct {
 		wc  writeCommitter
 		buf *bufio.Writer
-		*sliceio.Encoder
+		sliceio.Writer
 	}
 	partitions := make([]*partition, task.NumPartition)
 	for p := range partitions {
@@ -845,7 +850,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		part := new(partition)
 		part.wc = wc
 		part.buf = bufio.NewWriter(wc)
-		part.Encoder = sliceio.NewEncoder(part.buf)
+		part.Writer = &statsWriter{sliceio.NewEncoder(part.buf), taskWriteDuration}
 		partitions[p] = part
 	}
 	defer func() {
@@ -891,7 +896,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				count[p]++
 				// Flush when we fill up.
 				if lens[p] == psize {
-					if err := partitions[p].Encode(partitionv[p]); err != nil {
+					if err := partitions[p].Write(partitionv[p]); err != nil {
 						return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 					}
 					lens[p] = 0
@@ -908,7 +913,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if n == 0 {
 				continue
 			}
-			if err := partitions[p].Encode(partitionv[p].Slice(0, n)); err != nil {
+			if err := partitions[p].Write(partitionv[p].Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 		}
@@ -919,7 +924,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
-			if err := partitions[0].Encode(in.Slice(0, n)); err != nil {
+			if err := partitions[0].Write(in.Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 			taskRecordsOut.Add(int64(n))
@@ -1406,10 +1411,17 @@ type statsReader struct {
 	// numRead is a slice of *stats.Int, each of which is incremented with the
 	// number of records read.
 	numRead []*stats.Int
+	// readDurationNs is the total amount of time taken by the Read call to the
+	// underlying reader in nanoseconds.
+	readDurationNs *stats.Int
 }
 
 func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
 	n, err = s.reader.Read(ctx, f)
+	start := time.Now()
+	defer func() {
+		s.readDurationNs.Add(time.Since(start).Nanoseconds())
+	}()
 	for _, istat := range s.numRead {
 		istat.Add(int64(n))
 	}
@@ -1420,4 +1432,17 @@ func truncatef(v interface{}) string {
 	b := limitbuf.NewLogger(512)
 	fmt.Fprint(b, v)
 	return b.String()
+}
+
+type statsWriter struct {
+	writer          sliceio.Writer
+	writeDurationNs *stats.Int
+}
+
+func (s *statsWriter) Write(f frame.Frame) error {
+	start := time.Now()
+	defer func() {
+		s.writeDurationNs.Add(time.Since(start).Nanoseconds())
+	}()
+	return s.writer.Write(f)
 }
