@@ -11,6 +11,7 @@ import (
 )
 
 type testStruct0 struct{ field0 int }
+
 // testStruct1 exists to avoid the problem of registering the same struct twice
 // with gob. As a convenience, bigslice.Func registers its argument types.
 // However, if you pass the same struct as a value and a pointer, we attempt to
@@ -30,9 +31,9 @@ type testInterfaceImpl struct{}
 func (s *testInterfaceImpl) FuncTestMethod() {}
 
 var fnTestNilFuncArgs = Func(
-	func(_ int, _ string, _ []string, _ map[int]int,
-		_ testStruct0, _ *testStruct1, _ unsafe.Pointer,
-		_ testInterface) Slice {
+	func(int, string, []string, map[int]int,
+		testStruct0, *testStruct1, unsafe.Pointer,
+		testInterface) Slice {
 
 		return Const(1, []int{})
 	})
