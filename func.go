@@ -111,6 +111,7 @@ func checkNilAssignable(typ reflect.Type) bool {
 	case reflect.Map:
 	case reflect.Ptr:
 	case reflect.Slice:
+	case reflect.UnsafePointer:
 	default:
 		return false
 	}

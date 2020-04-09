@@ -7,6 +7,7 @@ package bigslice
 import (
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 type testStruct0 struct{ field0 int }
@@ -23,7 +24,8 @@ func (s *testInterfaceImpl) FuncTestMethod() {}
 
 var fnTestNilFuncArgs = Func(
 	func(i int, s string, ss []string, m map[int]int,
-		ts0 testStruct0, pts1 *testStruct1, ti testInterface) Slice {
+		ts0 testStruct0, pts1 *testStruct1, upts1 unsafe.Pointer,
+		ti testInterface) Slice {
 
 		return Const(1, []int{})
 	})
@@ -33,6 +35,7 @@ var fnTestNilFuncArgs = Func(
 func TestNilFuncArgs(t *testing.T) {
 	ts0 := testStruct0{field0: 0}
 	pts1 := &testStruct1{field1: 0}
+	upts1 := unsafe.Pointer(pts1)
 	ptii := &testInterfaceImpl{}
 	for _, c := range []struct {
 		name string
@@ -43,7 +46,7 @@ func TestNilFuncArgs(t *testing.T) {
 			name: "all non-nil",
 			args: []interface{}{
 				0, "", []string{}, map[int]int{0: 0},
-				ts0, pts1, ptii,
+				ts0, pts1, upts1, ptii,
 			},
 			ok: true,
 		},
@@ -51,7 +54,7 @@ func TestNilFuncArgs(t *testing.T) {
 			name: "nil for types that can be nil",
 			args: []interface{}{
 				0, "", nil, nil,
-				ts0, nil, nil,
+				ts0, nil, nil, nil,
 			},
 			ok: true,
 		},
@@ -59,7 +62,7 @@ func TestNilFuncArgs(t *testing.T) {
 			name: "nil for int",
 			args: []interface{}{
 				nil, "", []string{}, map[int]int{0: 0},
-				ts0, pts1, ptii,
+				ts0, pts1, upts1, ptii,
 			},
 			ok: false,
 		},
@@ -67,7 +70,7 @@ func TestNilFuncArgs(t *testing.T) {
 			name: "nil for string",
 			args: []interface{}{
 				0, nil, []string{}, map[int]int{0: 0},
-				ts0, pts1, ptii,
+				ts0, pts1, upts1, ptii,
 			},
 			ok: false,
 		},
@@ -75,7 +78,7 @@ func TestNilFuncArgs(t *testing.T) {
 			name: "nil for struct",
 			args: []interface{}{
 				0, "", []string{}, map[int]int{0: 0},
-				nil, pts1, ptii,
+				nil, pts1, upts1, ptii,
 			},
 			ok: false,
 		},
