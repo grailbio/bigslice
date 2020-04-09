@@ -11,6 +11,13 @@ import (
 )
 
 type testStruct0 struct{ field0 int }
+// testStruct1 exists to avoid the problem of registering the same struct twice
+// with gob. As a convenience, bigslice.Func registers its argument types.
+// However, if you pass the same struct as a value and a pointer, we attempt to
+// register the same type twice with different names, e.g.
+// "github.com/grailbio/bigslice.testStruct0" and "*bigslice.testStruct0". This
+// causes a panic in gob. Instead, we just use a different type altogether for
+// our pointer-to-struct argument.
 type testStruct1 struct{ field1 int }
 
 // Disable unused checking for testInterface, as we're just using it to make
