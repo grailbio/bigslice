@@ -148,6 +148,9 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 	}
 }
 
+// assignTid assigns a thread ID to event, using mach's tid pool and type of
+// event. events is the slices of existing relevant events, e.g.
+// t.taskEvents[arg].
 func (t *tracer) assignTid(mach *sliceMachine, ph string, events []traceEvent, event *traceEvent) {
 	event.Tid = 0
 	tidPool := t.machineTidPools[mach]
