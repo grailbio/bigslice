@@ -393,7 +393,7 @@ func writeTraceFile(tracer *tracer, path string) {
 	}()
 	err = tracer.Marshal(w)
 	if err != nil {
-		log.Error.Printf("error marshaling to trace file at %q: %v", path, err)
+		log.Error.Printf("erro marshaling to trace file at %q: %v", path, err)
 		return
 	}
 }
