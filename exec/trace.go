@@ -37,7 +37,7 @@ type traceEvent struct {
 // they are run on.
 //
 // To produce easier to interpret visualizations, tracer assigns generated
-// virtual "thread IDs" to trace events and events are also coalesced into
+// virtual "thread IDs" to trace events, and events are also coalesced into
 // "complete events" (X) at the time of rendering.
 //
 // TODO(marius): garbage collection of old events.
