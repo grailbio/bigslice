@@ -30,9 +30,9 @@ type testInterfaceImpl struct{}
 func (s *testInterfaceImpl) FuncTestMethod() {}
 
 var fnTestNilFuncArgs = Func(
-	func(i int, s string, ss []string, m map[int]int,
-		ts0 testStruct0, pts1 *testStruct1, upts1 unsafe.Pointer,
-		ti testInterface) Slice {
+	func(_ int, _ string, _ []string, _ map[int]int,
+		_ testStruct0, _ *testStruct1, _ unsafe.Pointer,
+		_ testInterface) Slice {
 
 		return Const(1, []int{})
 	})
