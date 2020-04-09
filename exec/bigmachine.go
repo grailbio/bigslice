@@ -820,7 +820,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	// If we have a combiner, then we partition globally for the machine
 	// into common combiners.
 	if !task.Combiner.IsNil() {
-		// TODO.
 		return w.runCombine(ctx, task, taskStats, task.Do(in))
 	}
 
