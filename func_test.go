@@ -100,14 +100,11 @@ func TestNilFuncArgs(t *testing.T) {
 			} else {
 				matcher = h.Panics(h.HasSubstr("nil"))
 			}
-			expect.That(t,
-				func() { fnTestNilFuncArgs.Invocation("", c.args...) },
-				matcher,
-			)
-			expect.That(t,
-				func() { fnTestNilFuncArgs.Apply(c.args...) },
-				matcher,
-			)
+			invoke := func() { fnTestNilFuncArgs.Invocation("", c.args...) }
+			expect.That(t, invoke, matcher)
+
+			apply := func() { fnTestNilFuncArgs.Apply(c.args...) }
+			expect.That(t, apply, matcher)
 		})
 	}
 }
