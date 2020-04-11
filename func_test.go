@@ -5,9 +5,11 @@
 package bigslice
 
 import (
-	"reflect"
 	"testing"
 	"unsafe"
+
+	"github.com/grailbio/testutil/expect"
+	"github.com/grailbio/testutil/h"
 )
 
 type testStruct0 struct{ field0 int }
@@ -92,26 +94,20 @@ func TestNilFuncArgs(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			checkPanic := func() {
-				r := recover()
-				if c.ok {
-					if r != nil {
-						t.Errorf("expected no panic, got %v", r)
-					}
-				} else {
-					if r == nil {
-						t.Errorf("expected panic")
-					}
-				}
+			var matcher *h.Matcher
+			if c.ok {
+				matcher = h.Panics(h.Nil())
+			} else {
+				matcher = h.Panics(h.HasSubstr("nil"))
 			}
-			func() {
-				defer checkPanic()
-				fnTestNilFuncArgs.Invocation("", c.args...)
-			}()
-			func() {
-				defer checkPanic()
-				fnTestNilFuncArgs.Apply(c.args...)
-			}()
+			expect.That(t,
+				func() { fnTestNilFuncArgs.Invocation("", c.args...) },
+				matcher,
+			)
+			expect.That(t,
+				func() { fnTestNilFuncArgs.Apply(c.args...) },
+				matcher,
+			)
 		})
 	}
 }
@@ -160,8 +156,6 @@ func TestFuncLocationsDiff(t *testing.T) {
 			[]string{"a", "- b", "c", "+ d", "+ e"},
 		},
 	} {
-		if got, want := FuncLocationsDiff(c.lhs, c.rhs), c.diff; !reflect.DeepEqual(got, want) {
-			t.Errorf("got %v, want %v", got, want)
-		}
+		expect.That(t, FuncLocationsDiff(c.lhs, c.rhs), h.EQ(c.diff))
 	}
 }
