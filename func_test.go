@@ -98,6 +98,8 @@ func TestNilFuncArgs(t *testing.T) {
 			if c.ok {
 				matcher = h.Panics(h.Nil())
 			} else {
+				// Expect a panic with a message saying something about
+				// nil-ness.
 				matcher = h.Panics(h.HasSubstr("nil"))
 			}
 			invoke := func() { fnTestNilFuncArgs.Invocation("", c.args...) }
