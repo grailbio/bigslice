@@ -129,7 +129,7 @@ func TestCombiner(t *testing.T) {
 		}
 	}
 	var b bytes.Buffer
-	n, err := c.WriteTo(ctx, sliceio.NewEncoder(&b))
+	n, err := c.WriteTo(ctx, sliceio.NewEncodingWriter(&b))
 	if err != nil {
 		t.Fatal(err)
 	}

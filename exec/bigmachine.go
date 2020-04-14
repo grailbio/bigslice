@@ -850,7 +850,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 		part := new(partition)
 		part.wc = wc
 		part.buf = bufio.NewWriter(wc)
-		part.Writer = &statsWriter{sliceio.NewEncoder(part.buf), taskWriteDuration}
+		part.Writer = &statsWriter{sliceio.NewEncodingWriter(part.buf), taskWriteDuration}
 		partitions[p] = part
 	}
 	defer func() {
@@ -1148,7 +1148,7 @@ func (w *worker) writeCombiner(key TaskName) {
 				return err
 			}
 			buf := bufio.NewWriter(wc)
-			enc := sliceio.NewEncoder(buf)
+			enc := sliceio.NewEncodingWriter(buf)
 			n, err := combiner.WriteTo(ctx, enc)
 			if err != nil {
 				wc.Discard(ctx)

@@ -55,11 +55,11 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 		// Ideally we'd use the underlying context for each op here,
 		// but the way encoder is set up, we can't (understandably)
 		// pass a new writer for each encode.
-		r.enc = sliceio.NewEncoder(r.file.Writer(backgroundcontext.Get()))
+		r.enc = sliceio.NewEncodingWriter(r.file.Writer(backgroundcontext.Get()))
 	}
 	n, err := r.Reader.Read(ctx, frame)
 	if err == nil || err == sliceio.EOF {
-		if err := r.enc.Encode(frame.Slice(0, n)); err != nil {
+		if err := r.enc.Write(frame.Slice(0, n)); err != nil {
 			return n, err
 		}
 		if err == sliceio.EOF {
