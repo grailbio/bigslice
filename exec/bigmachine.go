@@ -1015,14 +1015,19 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		w.combinerStates[combineKey]--
 		w.mu.Unlock()
 		if err == nil && task.CombineKey == "" {
+			taskWriteDuration := taskStats.Int("writeDuration")
+			start := time.Now()
 			err = w.CommitCombiner(ctx, combineKey, nil)
+			// Note that machine combiner write duration is not currently
+			// captured, as it does not happen within the context of a single
+			// task execution.
+			taskWriteDuration.Add(time.Since(start).Nanoseconds())
 		}
 	}()
 
 	var (
-		taskRecordsOut    = taskStats.Int("write")
-		taskWriteDuration = taskStats.Int("writeDuration")
-		recordsOut        = w.stats.Int("write")
+		taskRecordsOut = taskStats.Int("write")
+		recordsOut     = w.stats.Int("write")
 	)
 	// Now perform the partition-combine operation. We maintain a
 	// per-task combine buffer for each partition. When this buffer
@@ -1046,11 +1051,8 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		if err != nil && err != sliceio.EOF {
 			return maybeTaskFatalErr{err}
 		}
-		partitionStart := time.Now()
 		task.Partitioner(ctx, out, task.NumPartition, shards[:n])
-		taskWriteDuration.Add(time.Since(partitionStart).Nanoseconds())
 		for i := 0; i < n; i++ {
-			combineStart := time.Now()
 			p := shards[i]
 			pcomb := partitionCombiner[p]
 			pcomb.Combine(out.Slice(i, i+1))
@@ -1076,7 +1078,6 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 			if err != nil {
 				return err
 			}
-			taskWriteDuration.Add(time.Since(combineStart).Nanoseconds())
 		}
 		taskRecordsOut.Add(int64(n))
 		recordsOut.Add(int64(n))
@@ -1085,7 +1086,6 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		}
 	}
 	// Flush the remainder.
-	combineStart := time.Now()
 	for p, comb := range partitionCombiner {
 		combiner := <-combiners[p]
 		err := combiner.Combine(ctx, comb.Compact())
@@ -1094,7 +1094,6 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 			return err
 		}
 	}
-	taskWriteDuration.Add(time.Since(combineStart).Nanoseconds())
 	return nil
 }
 
