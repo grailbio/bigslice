@@ -363,6 +363,7 @@ compile:
 	m.Done(procs, err)
 	switch {
 	case err == nil:
+		// Convert nanoseconds to microseconds to be same units as event durations.
 		b.sess.tracer.Event(m, task, "E",
 			"read_duration", reply.Vals["readDuration"]/1e3,
 			"write_duration", reply.Vals["writeDuration"]/1e3,
