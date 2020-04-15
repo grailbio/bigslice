@@ -365,8 +365,8 @@ compile:
 	case err == nil:
 		// Convert nanoseconds to microseconds to be same units as event durations.
 		b.sess.tracer.Event(m, task, "E",
-			"read_duration", reply.Vals["readDuration"]/1e3,
-			"write_duration", reply.Vals["writeDuration"]/1e3,
+			"readDuration", reply.Vals["readDuration"]/1e3,
+			"writeDuration", reply.Vals["writeDuration"]/1e3,
 		)
 		b.setLocation(task, m)
 		task.Status.Printf("done: %s", reply.Vals)
