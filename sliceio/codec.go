@@ -70,9 +70,9 @@ type Encoder struct {
 	crc hash.Hash32
 }
 
-// NewEncoder returns a a new Encoder that streams slices into the
-// provided writer.
-func NewEncoder(w io.Writer) *Encoder {
+// NewEncodingWriter returns a Writer that streams slices into the provided
+// writer.
+func NewEncodingWriter(w io.Writer) *Encoder {
 	crc := crc32.NewIEEE()
 	return &Encoder{
 		enc: newGobEncoder(io.MultiWriter(w, crc)),
@@ -82,7 +82,7 @@ func NewEncoder(w io.Writer) *Encoder {
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
-func (e *Encoder) Encode(f frame.Frame) error {
+func (e *Encoder) Write(f frame.Frame) error {
 	e.crc.Reset()
 	if err := e.enc.Encode(f.Len()); err != nil {
 		return err
