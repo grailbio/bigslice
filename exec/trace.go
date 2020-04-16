@@ -45,7 +45,7 @@ type tracer struct {
 
 	events        []traceEvent
 	taskEvents    map[*Task][]traceEvent
-	compileEvents map[uint64][]traceEvent
+	compileEvents map[compileKey][]traceEvent
 
 	machinePids map[*sliceMachine]int
 
@@ -54,10 +54,17 @@ type tracer struct {
 	firstEvent time.Time
 }
 
+// compileKey is the key used for compilation events, which are scoped to a
+// (machine, invocation).
+type compileKey struct {
+	addr string
+	inv  uint64
+}
+
 func newTracer() *tracer {
 	return &tracer{
 		taskEvents:    make(map[*Task][]traceEvent),
-		compileEvents: make(map[uint64][]traceEvent),
+		compileEvents: make(map[compileKey][]traceEvent),
 		machinePids:   make(map[*sliceMachine]int),
 	}
 }
@@ -122,7 +129,8 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 		}
 		event.Name = name.String()
 		event.Cat = "invocation"
-		t.compileEvents[arg.Index] = append(t.compileEvents[arg.Index], event)
+		key := compileKey{mach.Addr, arg.Index}
+		t.compileEvents[key] = append(t.compileEvents[key], event)
 	default:
 		panic(fmt.Sprintf("unsupported subject type %T", subject))
 	}

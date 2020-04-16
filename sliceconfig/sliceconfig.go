@@ -38,19 +38,20 @@ import (
 // by Parse.
 var Path = os.ExpandEnv("$HOME/.bigslice/config")
 
-// Parse registers configuration flags, bigslice flags, and calls
-// flag.Parse. It reads bigslice configuration from Path defined in
-// this package. Parse returns session as configured by the
-// configuration and any flags provided. Parse panics if session
-// creation fails. Parse also instantiates the default http server
-// according to the configuration profile, and registers the bigslice
-// session status handlers with it.
-func Parse() (sess *exec.Session, shutdown func()) {
+// Parse registers configuration flags, bigslice flags, and calls flag.Parse. It
+// reads bigslice configuration from Path defined in this package. Parse returns
+// a session as configured by the configuration and any flags provided. Parse
+// panics if session creation fails. Parse also instantiates the default http
+// server according to the configuration profile, and registers the bigslice
+// session status handlers with it. Call Shutdown() on the returned session when
+// you are done with it.
+func Parse() *exec.Session {
 	log.AddFlags()
 	local := flag.Bool("local", false, "run bigslice in local mode")
 	config.RegisterFlags("", Path)
 	flag.Parse()
 	must.Nil(config.ProcessFlags())
+	var sess *exec.Session
 	if *local {
 		sess = exec.Start(exec.Local, exec.Status(new(status.Status)))
 	} else {
@@ -60,5 +61,5 @@ func Parse() (sess *exec.Session, shutdown func()) {
 	sess.HandleDebug(http.DefaultServeMux)
 	http.Handle("/debug/status", status.Handler(sess.Status()))
 	config.Must("http", nil)
-	return sess, func() {}
+	return sess
 }

@@ -102,8 +102,8 @@ func main() {
 		n   = flag.Int("n", 1000, "number of shards to process")
 		out = flag.String("out", "", "output path")
 	)
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 
 	must.True(*out != "", "missing flag -out")
 

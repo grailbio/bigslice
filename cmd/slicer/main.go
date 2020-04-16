@@ -39,8 +39,8 @@ Available test are:
 	}
 
 	wait := flag.Bool("wait", false, "don't exit after completion")
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 
 	if flag.NArg() == 0 {
 		flag.Usage()

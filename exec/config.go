@@ -20,6 +20,7 @@ func init() {
 		constr.InstanceVar(&system, "system", "", "the bigmachine system used for job execution")
 		constr.InstanceVar(&sess.eventer, "eventer", "", "the eventer used to log bigslice events")
 		constr.FloatVar(&sess.maxLoad, "max-load", DefaultMaxLoad, "per-machine maximum load")
+		constr.StringVar(&sess.tracePath, "trace-path", "", "path at which to write trace event file")
 		constr.Doc = "bigslice configures the bigslice runtime"
 		constr.New = func() (interface{}, error) {
 			if system != nil {
