@@ -6,6 +6,8 @@ package exec
 
 import (
 	"github.com/grailbio/base/config"
+	// Make eventer/cloudwatch instance available.
+	_ "github.com/grailbio/base/eventlog/cloudwatch"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
 )
@@ -16,6 +18,7 @@ func init() {
 		constr.IntVar(&sess.p, "parallelism", 1024, "allowable parallelism for the job")
 		var system bigmachine.System
 		constr.InstanceVar(&system, "system", "", "the bigmachine system used for job execution")
+		constr.InstanceVar(&sess.eventer, "eventer", "", "the eventer used to log bigslice events")
 		constr.FloatVar(&sess.maxLoad, "max-load", DefaultMaxLoad, "per-machine maximum load")
 		constr.StringVar(&sess.tracePath, "trace-path", "", "path at which to write trace event file")
 		constr.Doc = "bigslice configures the bigslice runtime"
