@@ -12,7 +12,7 @@ import (
 // shellQuote quotes a string to be used as an argument in an sh command line.
 func shellQuote(s string) string {
 	// We wrap with single quotes, as they will work with any string except
-	// those with single quotes. We handle single quotes by tranforming them
+	// those with single quotes. We handle single quotes by transforming them
 	// into "'\''" and letting the shell concatenate the strings back together.
 	return "'" + strings.Replace(s, "'", `'\''`, -1) + "'"
 }
