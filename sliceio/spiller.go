@@ -5,6 +5,7 @@
 package sliceio
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -54,14 +55,14 @@ func (dir Spiller) Spill(frame frame.Frame) (int, error) {
 		return 0, err
 	}
 	// TODO(marius): buffer?
-	enc := NewEncoder(f)
+	enc := NewEncodingWriter(f)
 	for frame.Len() > 0 {
 		n := SpillBatchSize
 		m := frame.Len()
 		if m < n {
 			n = m
 		}
-		if err := enc.Encode(frame.Slice(0, n)); err != nil {
+		if err := enc.Write(context.Background(), frame.Slice(0, n)); err != nil {
 			return 0, err
 		}
 		frame = frame.Slice(n, m)

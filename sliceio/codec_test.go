@@ -72,17 +72,17 @@ func TestCodec(t *testing.T) {
 	fz.Fuzz(&c1)
 
 	var b bytes.Buffer
-	enc := NewEncoder(&b)
+	enc := NewEncodingWriter(&b)
 
+	ctx := context.Background()
 	in := frame.Slices(c0, c1)
-	if err := enc.Encode(in); err != nil {
+	if err := enc.Write(ctx, in); err != nil {
 		t.Fatal(err)
 	}
-	if err := enc.Encode(in); err != nil {
+	if err := enc.Write(ctx, in); err != nil {
 		t.Fatal(err)
 	}
 	data := b.Bytes()
-	ctx := context.Background()
 	for _, chunkSize := range []int{1, N / 3, N / 2, N, N * 2} {
 		dec := NewDecodingReader(bytes.NewReader(data))
 		out := frame.Make(in, N*2, N*2)
@@ -121,7 +121,7 @@ func TestCodec(t *testing.T) {
 		for i := range out {
 			outptrs[i] = out[i].Pointer() // points to the slice header's data
 		}
-		if err := enc.Encode(in); err != nil {
+		if err := enc.Write(in); err != nil {
 			t.Fatal(err)
 		}
 		if err := dec.Decode(out...); err != nil {
@@ -143,16 +143,16 @@ func TestDecodingReaderWithZeros(t *testing.T) {
 	type fields struct{ A, B, C int }
 	var b bytes.Buffer
 	in := []fields{{1, 2, 3}, {1, 0, 3}}
-	enc := NewEncoder(&b)
-	if err := enc.Encode(frame.Slices(in[0:1])); err != nil {
+	ctx := context.Background()
+	enc := NewEncodingWriter(&b)
+	if err := enc.Write(ctx, frame.Slices(in[0:1])); err != nil {
 		t.Fatal(err)
 	}
-	if err := enc.Encode(frame.Slices(in[1:2])); err != nil {
+	if err := enc.Write(ctx, frame.Slices(in[1:2])); err != nil {
 		t.Fatal(err)
 	}
 
 	r := NewDecodingReader(&b)
-	ctx := context.Background()
 
 	var out []fields
 	if err := ReadAll(ctx, r, &out); err != nil {
@@ -171,8 +171,9 @@ func TestDecodingReaderCorrupted(t *testing.T) {
 		col[i] = i
 	}
 	var b bytes.Buffer
-	enc := NewEncoder(&b)
-	if err := enc.Encode(frame.Slices(col, col, col)); err != nil {
+	enc := NewEncodingWriter(&b)
+	ctx := context.Background()
+	if err := enc.Write(ctx, frame.Slices(col, col, col)); err != nil {
 		t.Fatal(err)
 	}
 	buf := func() []byte {
@@ -228,17 +229,17 @@ func TestDecodingReaderCorrupted(t *testing.T) {
 func TestDecodingSlices(t *testing.T) {
 	// Gob will reuse slices during decoding if we're not careful.
 	var b bytes.Buffer
+	ctx := context.Background()
 	in := [][]string{{"a", "b"}, {"c", "d"}}
-	enc := NewEncoder(&b)
-	if err := enc.Encode(frame.Slices(in[0:1])); err != nil {
+	enc := NewEncodingWriter(&b)
+	if err := enc.Write(ctx, frame.Slices(in[0:1])); err != nil {
 		t.Fatal(err)
 	}
-	if err := enc.Encode(frame.Slices(in[1:2])); err != nil {
+	if err := enc.Write(ctx, frame.Slices(in[1:2])); err != nil {
 		t.Fatal(err)
 	}
 
 	r := NewDecodingReader(&b)
-	ctx := context.Background()
 	var out [][]string
 	if err := ReadAll(ctx, r, &out); err != nil {
 		t.Fatal(err)
@@ -276,14 +277,15 @@ func TestScratchBufferGrowth(t *testing.T) {
 		b   bytes.Buffer
 		in0 = []int{0, 1}
 		in1 = []int{2, 3, 4}
-		enc = NewEncoder(&b)
+		enc = NewEncodingWriter(&b)
+		ctx = context.Background()
 	)
 	// Encode a 2-length frame followed by a 3-length frame. This will cause
 	// the decoder to resize its scratch buffer.
-	if err := enc.Encode(frame.Slices(in0)); err != nil {
+	if err := enc.Write(ctx, frame.Slices(in0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := enc.Encode(frame.Slices(in1)); err != nil {
+	if err := enc.Write(ctx, frame.Slices(in1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +295,7 @@ func TestScratchBufferGrowth(t *testing.T) {
 	f := frame.Make(slicetype.New(typeOfInt), 1, 1)
 	var out []int
 	for {
-		n, err := r.Read(context.Background(), f)
+		n, err := r.Read(ctx, f)
 		if err == EOF {
 			break
 		}
@@ -326,7 +328,7 @@ func testRoundTrip(t *testing.T, cols ...interface{}) {
 		cols[i] = reflect.Indirect(ptr).Interface()
 	}
 	var b bytes.Buffer
-	enc := NewEncoder(&b)
+	enc := NewEncodingWriter(&b)
 	for i := 0; i < N; i += Stride {
 		j := i + Stride
 		if j > N {
@@ -336,7 +338,8 @@ func testRoundTrip(t *testing.T, cols ...interface{}) {
 		for k := range args {
 			args[k] = reflect.ValueOf(cols[k]).Slice(i, j).Interface()
 		}
-		if err := enc.Encode(frame.Slices(args...)); err != nil {
+		ctx := context.Background()
+		if err := enc.Write(ctx, frame.Slices(args...)); err != nil {
 			t.Fatal(err)
 		}
 	}
