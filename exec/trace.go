@@ -49,7 +49,7 @@ type tracer struct {
 	compileEvents map[compileKey][]traceEvent
 
 	machinePids     map[*sliceMachine]int
-	machineTidPools map[*sliceMachine]tidPool
+	machineTidPools map[*sliceMachine]*tidPool
 
 	// firstEvent is used to store the time of the first observed
 	// event so that the offsets in the trace are meaningful.
@@ -76,7 +76,7 @@ func newTracer() *tracer {
 		taskEvents:      make(map[*Task][]traceEvent),
 		compileEvents:   make(map[compileKey][]traceEvent),
 		machinePids:     make(map[*sliceMachine]int),
-		machineTidPools: make(map[*sliceMachine]tidPool),
+		machineTidPools: make(map[*sliceMachine]*tidPool),
 	}
 }
 
@@ -153,11 +153,14 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 // t.taskEvents[arg].
 func (t *tracer) assignTid(mach *sliceMachine, ph string, events []traceEvent, event *traceEvent) {
 	event.Tid = 0
-	tidPool := t.machineTidPools[mach]
+	pool, ok := t.machineTidPools[mach]
+	if !ok {
+		pool = new(tidPool)
+		t.machineTidPools[mach] = pool
+	}
 	switch ph {
 	case "B":
-		event.Tid = tidPool.Acquire()
-		t.machineTidPools[mach] = tidPool
+		event.Tid = pool.Acquire()
 	case "E":
 		if len(events) == 0 {
 			break
@@ -167,7 +170,7 @@ func (t *tracer) assignTid(mach *sliceMachine, ph string, events []traceEvent, e
 			break
 		}
 		event.Tid = lastEvent.Tid
-		tidPool.Release(event.Tid)
+		pool.Release(event.Tid)
 	}
 }
 
