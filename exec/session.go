@@ -17,6 +17,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/diagnostic/dump"
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -70,6 +71,7 @@ type Session struct {
 	maxLoad   float64
 	executor  Executor
 	status    *status.Status
+	eventer   eventlog.Eventer
 	tracePath string
 
 	machineCombiners bool
@@ -87,6 +89,7 @@ func newSession() *Session {
 		Context: backgroundcontext.Get(),
 		index:   atomic.AddInt32(&nextSessionIndex, 1) - 1,
 		roots:   make(map[*Task]struct{}),
+		eventer: eventlog.Nop{},
 	}
 }
 
@@ -139,6 +142,14 @@ func Status(status *status.Status) Option {
 		dump.Register(name, func(ctx context.Context, w io.Writer) error {
 			return status.Marshal(w)
 		})
+	}
+}
+
+// Eventer configures the session with an Eventer that will be used to log
+// session events (for analytics).
+func Eventer(e eventlog.Eventer) Option {
+	return func(s *Session) {
+		s.eventer = e
 	}
 }
 
@@ -213,6 +224,12 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 
 func (s *Session) start() {
 	s.shutdown = s.executor.Start(s)
+	s.eventer.Event("bigslice:sessionStart",
+		"command", command(),
+		"executorType", s.executor.Name(),
+		"parallelism", s.p,
+		"maxLoad", s.maxLoad,
+		"machineCombiners", s.machineCombiners)
 	s.tracer = newTracer()
 
 	name := fmt.Sprintf("bigslice-%02d-trace", s.index)
@@ -393,7 +410,7 @@ func writeTraceFile(tracer *tracer, path string) {
 	}()
 	err = tracer.Marshal(w)
 	if err != nil {
-		log.Error.Printf("erro marshaling to trace file at %q: %v", path, err)
+		log.Error.Printf("error marshaling to trace file at %q: %v", path, err)
 		return
 	}
 }
