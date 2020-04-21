@@ -5,6 +5,7 @@
 package sliceio
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -61,7 +62,7 @@ func (dir Spiller) Spill(frame frame.Frame) (int, error) {
 		if m < n {
 			n = m
 		}
-		if err := enc.Write(frame.Slice(0, n)); err != nil {
+		if err := enc.Write(context.Background(), frame.Slice(0, n)); err != nil {
 			return 0, err
 		}
 		frame = frame.Slice(n, m)
