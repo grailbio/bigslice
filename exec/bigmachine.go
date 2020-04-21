@@ -20,6 +20,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/limitbuf"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
@@ -120,6 +121,10 @@ type bigmachineExecutor struct {
 
 func newBigmachineExecutor(system bigmachine.System, params ...bigmachine.Param) *bigmachineExecutor {
 	return &bigmachineExecutor{system: system, params: params}
+}
+
+func (b *bigmachineExecutor) Name() string {
+	return "bigmachine:" + b.system.Name()
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
@@ -425,6 +430,10 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return newEvalReader(b, task, partition)
+}
+
+func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
+	return b.sess.eventer
 }
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {

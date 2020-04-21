@@ -15,12 +15,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
 	"golang.org/x/sync/errgroup"
 )
 
-type testExecutor struct{ *testing.T }
+type testExecutor struct{}
+
+func (testExecutor) Name() string {
+	return "test"
+}
 
 func (testExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
@@ -35,6 +40,10 @@ func (t testExecutor) Run(task *Task) {
 
 func (testExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
+}
+
+func (testExecutor) Eventer() eventlog.Eventer {
+	return eventlog.Nop{}
 }
 
 func (testExecutor) HandleDebug(handler *http.ServeMux) {
@@ -63,7 +72,7 @@ func (s *simpleEvalTest) Go(t *testing.T) {
 	ctx := context.Background()
 	s.wg.Add(1)
 	go func() {
-		s.evalErr = Eval(ctx, testExecutor{t}, s.Tasks, nil)
+		s.evalErr = Eval(ctx, testExecutor{}, s.Tasks, nil)
 		s.wg.Done()
 	}()
 }
@@ -204,7 +213,7 @@ func TestResubmitLostInteriorTask(t *testing.T) {
 
 			var g errgroup.Group
 			for i := 0; i < parallel; i++ {
-				g.Go(func() error { return Eval(ctx, testExecutor{t}, tasks, nil) })
+				g.Go(func() error { return Eval(ctx, testExecutor{}, tasks, nil) })
 			}
 
 			var (
@@ -333,7 +342,7 @@ func TestMultiPhaseEval(t *testing.T) {
 		go func() {
 			t.Helper()
 			defer wg.Done()
-			if err := Eval(context.Background(), testExecutor{t}, tasks, nil); err != nil {
+			if err := Eval(context.Background(), testExecutor{}, tasks, nil); err != nil {
 				t.Fatal(err)
 			}
 		}()
@@ -459,6 +468,10 @@ func (b benchExecutor) Run(task *Task) {
 
 func (benchExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
+}
+
+func (benchExecutor) Eventer() eventlog.Eventer {
+	return eventlog.Nop{}
 }
 
 func (benchExecutor) HandleDebug(handler *http.ServeMux) {

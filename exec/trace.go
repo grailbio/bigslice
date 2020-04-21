@@ -36,8 +36,9 @@ type traceEvent struct {
 // and individual task or invocation events are tracked by the machine
 // they are run on.
 //
-// Tracer does not assign "thread IDs" to trace events; rather events are
-// coalesced into "complete events" (X) at the time of rendering.
+// To produce easier to interpret visualizations, tracer assigns generated
+// virtual "thread IDs" to trace events, and events are also coalesced into
+// "complete events" (X) at the time of rendering.
 //
 // TODO(marius): garbage collection of old events.
 type tracer struct {
@@ -47,12 +48,21 @@ type tracer struct {
 	taskEvents    map[*Task][]traceEvent
 	compileEvents map[compileKey][]traceEvent
 
-	machinePids map[*sliceMachine]int
+	machinePids     map[*sliceMachine]int
+	machineTidPools map[*sliceMachine]*tidPool
 
 	// firstEvent is used to store the time of the first observed
 	// event so that the offsets in the trace are meaningful.
 	firstEvent time.Time
 }
+
+// tidPool is a pool of (virtual) thread IDs that we use to assign Tids to
+// events. This makes visualization with the Chrome tracing tool much nicer, as
+// concurrent events are shown on their own rows. The length of the pool is the
+// maximum number of B events without a matching E event. The indexes of the
+// slices are the Tids that we allocate, their corresponding value indicating
+// whether it is considered available for allocation.
+type tidPool []bool
 
 // compileKey is the key used for compilation events, which are scoped to a
 // (machine, invocation).
@@ -63,9 +73,10 @@ type compileKey struct {
 
 func newTracer() *tracer {
 	return &tracer{
-		taskEvents:    make(map[*Task][]traceEvent),
-		compileEvents: make(map[compileKey][]traceEvent),
-		machinePids:   make(map[*sliceMachine]int),
+		taskEvents:      make(map[*Task][]traceEvent),
+		compileEvents:   make(map[compileKey][]traceEvent),
+		machinePids:     make(map[*sliceMachine]int),
+		machineTidPools: make(map[*sliceMachine]*tidPool),
 	}
 }
 
@@ -115,11 +126,11 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 		}
 		event.Pid = pid
 	}
-	event.Tid = 1
 	switch arg := subject.(type) {
 	case *Task:
 		event.Name = arg.Name.String()
 		event.Cat = "task"
+		t.assignTid(mach, ph, t.taskEvents[arg], &event)
 		t.taskEvents[arg] = append(t.taskEvents[arg], event)
 	case bigslice.Invocation:
 		var name strings.Builder
@@ -130,9 +141,36 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 		event.Name = name.String()
 		event.Cat = "invocation"
 		key := compileKey{mach.Addr, arg.Index}
+		t.assignTid(mach, ph, t.compileEvents[key], &event)
 		t.compileEvents[key] = append(t.compileEvents[key], event)
 	default:
 		panic(fmt.Sprintf("unsupported subject type %T", subject))
+	}
+}
+
+// assignTid assigns a thread ID to event, using mach's tid pool and type of
+// event. events is the slices of existing relevant events, e.g.
+// t.taskEvents[arg].
+func (t *tracer) assignTid(mach *sliceMachine, ph string, events []traceEvent, event *traceEvent) {
+	event.Tid = 0
+	pool, ok := t.machineTidPools[mach]
+	if !ok {
+		pool = new(tidPool)
+		t.machineTidPools[mach] = pool
+	}
+	switch ph {
+	case "B":
+		event.Tid = pool.Acquire()
+	case "E":
+		if len(events) == 0 {
+			break
+		}
+		lastEvent := events[len(events)-1]
+		if lastEvent.Ph != "B" {
+			break
+		}
+		event.Tid = lastEvent.Tid
+		pool.Release(event.Tid)
 	}
 }
 
@@ -193,4 +231,30 @@ func appendCoalesce(list []traceEvent, events []traceEvent, firstEvent time.Time
 		list = list[:len(list)-1]
 	}
 	return list
+}
+
+// Acquire acquires an available thread ID from pool p. Thread IDs are
+// sequential and 1-indexed, preserving 0 for events without meaningful thread
+// IDs.
+func (p *tidPool) Acquire() int {
+	for tid, available := range *p {
+		if available {
+			(*p)[tid] = false
+			return tid + 1
+		}
+	}
+	// Nothing available in the pool, so grow it.
+	tid := len(*p)
+	*p = append(*p, false)
+	return tid + 1
+}
+
+// Release releases a tid, a thread ID previously acquired in Acquire. This
+// makes it available to be returned from a future call to Acquire.
+func (p *tidPool) Release(tid int) {
+	if (*p)[tid-1] {
+		panic("releasing unallocated tid")
+
+	}
+	(*p)[tid-1] = true
 }

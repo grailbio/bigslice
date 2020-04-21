@@ -13,6 +13,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
@@ -36,6 +37,10 @@ func newLocalExecutor() *localExecutor {
 		buffers: make(map[*Task]taskBuffer),
 		limiter: limiter.New(),
 	}
+}
+
+func (*localExecutor) Name() string {
+	return "local"
 }
 
 func (l *localExecutor) Start(sess *Session) (shutdown func()) {
@@ -130,6 +135,10 @@ func (l *localExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 	buf := l.buffers[task]
 	l.mu.Unlock()
 	return buf.Reader(partition)
+}
+
+func (l *localExecutor) Eventer() eventlog.Eventer {
+	return l.sess.eventer
 }
 
 func (*localExecutor) HandleDebug(*http.ServeMux) {}
