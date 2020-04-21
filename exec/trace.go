@@ -251,10 +251,10 @@ func (p *tidPool) Acquire() int {
 
 // Release releases a tid, a thread ID previously acquired in Acquire. This
 // makes it available to be returned from a future call to Acquire.
-func (p tidPool) Release(tid int) {
-	if p[tid-1] {
+func (p *tidPool) Release(tid int) {
+	if (*p)[tid-1] {
 		panic("releasing unallocated tid")
 
 	}
-	p[tid-1] = true
+	(*p)[tid-1] = true
 }
