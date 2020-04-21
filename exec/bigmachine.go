@@ -20,6 +20,7 @@ import (
 
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/limitbuf"
 	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
@@ -120,6 +121,10 @@ type bigmachineExecutor struct {
 
 func newBigmachineExecutor(system bigmachine.System, params ...bigmachine.Param) *bigmachineExecutor {
 	return &bigmachineExecutor{system: system, params: params}
+}
+
+func (b *bigmachineExecutor) Name() string {
+	return "bigmachine:" + b.system.Name()
 }
 
 // Start starts registers the bigslice worker with bigmachine and then
@@ -425,6 +430,10 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return newEvalReader(b, task, partition)
+}
+
+func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
+	return b.sess.eventer
 }
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
@@ -897,7 +906,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				count[p]++
 				// Flush when we fill up.
 				if lens[p] == psize {
-					if err := partitions[p].Write(partitionv[p]); err != nil {
+					if err := partitions[p].Write(ctx, partitionv[p]); err != nil {
 						return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 					}
 					lens[p] = 0
@@ -914,7 +923,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if n == 0 {
 				continue
 			}
-			if err := partitions[p].Write(partitionv[p].Slice(0, n)); err != nil {
+			if err := partitions[p].Write(ctx, partitionv[p].Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 		}
@@ -925,7 +934,7 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
-			if err := partitions[0].Write(in.Slice(0, n)); err != nil {
+			if err := partitions[0].Write(ctx, in.Slice(0, n)); err != nil {
 				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
 			}
 			taskRecordsOut.Add(int64(n))
@@ -1448,10 +1457,10 @@ type statsWriter struct {
 	writeDurationNs *stats.Int
 }
 
-func (s *statsWriter) Write(f frame.Frame) error {
+func (s *statsWriter) Write(ctx context.Context, f frame.Frame) error {
 	start := time.Now()
 	defer func() {
 		s.writeDurationNs.Add(time.Since(start).Nanoseconds())
 	}()
-	return s.writer.Write(f)
+	return s.writer.Write(ctx, f)
 }

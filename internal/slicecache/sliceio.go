@@ -59,7 +59,7 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 	}
 	n, err := r.Reader.Read(ctx, frame)
 	if err == nil || err == sliceio.EOF {
-		if err := r.enc.Write(frame.Slice(0, n)); err != nil {
+		if err := r.enc.Write(ctx, frame.Slice(0, n)); err != nil {
 			return n, err
 		}
 		if err == sliceio.EOF {

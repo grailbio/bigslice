@@ -82,7 +82,7 @@ func NewEncodingWriter(w io.Writer) *Encoder {
 
 // Encode encodes a batch of rows and writes the encoded output into
 // the encoder's writer.
-func (e *Encoder) Write(f frame.Frame) error {
+func (e *Encoder) Write(_ context.Context, f frame.Frame) error {
 	e.crc.Reset()
 	if err := e.enc.Encode(f.Len()); err != nil {
 		return err

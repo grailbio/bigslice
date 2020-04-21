@@ -35,7 +35,7 @@ type tracer struct {
 	compileEvents map[compileKey][]trace.Event
 
 	machinePids     map[*sliceMachine]int
-	machineTidPools map[*sliceMachine]tidPool
+	machineTidPools map[*sliceMachine]*tidPool
 
 	// firstEvent is used to store the time of the first observed
 	// event so that the offsets in the trace are meaningful.
@@ -62,7 +62,7 @@ func newTracer() *tracer {
 		taskEvents:      make(map[*Task][]trace.Event),
 		compileEvents:   make(map[compileKey][]trace.Event),
 		machinePids:     make(map[*sliceMachine]int),
-		machineTidPools: make(map[*sliceMachine]tidPool),
+		machineTidPools: make(map[*sliceMachine]*tidPool),
 	}
 }
 
@@ -139,11 +139,14 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 // t.taskEvents[arg].
 func (t *tracer) assignTid(mach *sliceMachine, ph string, events []trace.Event, event *trace.Event) {
 	event.Tid = 0
-	tidPool := t.machineTidPools[mach]
+	pool, ok := t.machineTidPools[mach]
+	if !ok {
+		pool = new(tidPool)
+		t.machineTidPools[mach] = pool
+	}
 	switch ph {
 	case "B":
-		event.Tid = tidPool.Acquire()
-		t.machineTidPools[mach] = tidPool
+		event.Tid = pool.Acquire()
 	case "E":
 		if len(events) == 0 {
 			break
@@ -153,7 +156,7 @@ func (t *tracer) assignTid(mach *sliceMachine, ph string, events []trace.Event, 
 			break
 		}
 		event.Tid = lastEvent.Tid
-		tidPool.Release(event.Tid)
+		pool.Release(event.Tid)
 	}
 }
 
@@ -231,10 +234,10 @@ func (p *tidPool) Acquire() int {
 
 // Release releases a tid, a thread ID previously acquired in Acquire. This
 // makes it available to be returned from a future call to Acquire.
-func (p tidPool) Release(tid int) {
-	if p[tid-1] {
+func (p *tidPool) Release(tid int) {
+	if (*p)[tid-1] {
 		panic("releasing unallocated tid")
 
 	}
-	p[tid-1] = true
+	(*p)[tid-1] = true
 }
