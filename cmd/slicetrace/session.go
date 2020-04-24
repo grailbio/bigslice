@@ -64,7 +64,10 @@ type session struct {
 	opStats []opStat
 }
 
-var reInv = regexp.MustCompile(`^\d+`)
+// reInv is used to match the event name of "invocation" category events.
+// The name is the invocation index, e.g. "4". If the invocation was exclusive,
+// the names has "[x]" appended, e.g. "4[x]".
+var reInv = regexp.MustCompile(`^(\d+)`)
 
 // reTask is used to match the event name of "task" category events. The name is
 // the full task name, from which we parse the invocation index, op name, shard
@@ -109,14 +112,18 @@ func buildInvs(events []trace.Event) []invocation {
 		if event.Cat != "invocation" {
 			continue
 		}
-		if !reInv.MatchString(event.Name) {
+		matches := reInv.FindStringSubmatch(event.Name)
+		if matches == nil {
+			log.Printf("could not parse name: %#v", event)
 			continue
 		}
-		index, err := strconv.Atoi(event.Name)
+		index, err := strconv.Atoi(matches[1])
 		if err != nil {
-			log.Fatalf("unexpected invocation index %q: %#v", event.Name, event)
+			log.Printf("could not parse invocation index from name: %s", event.Name)
+			continue
 		}
 		if _, ok := invByIndex[index]; ok {
+			log.Printf("unexpected invocation index %q: %#v", event.Name, event)
 			continue
 		}
 		var args []string
