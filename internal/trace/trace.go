@@ -37,6 +37,5 @@ func (t *T) Encode(w io.Writer) error {
 // Decode decodes the JSON object format read from r into t. Call this with a t
 // zero value.
 func (t *T) Decode(r io.Reader) error {
-	dec := json.NewDecoder(r)
-	return dec.Decode(t)
+	return json.NewDecoder(r).Decode(t)
 }
