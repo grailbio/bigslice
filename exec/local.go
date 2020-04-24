@@ -137,6 +137,10 @@ func (l *localExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 	return buf.Reader(partition)
 }
 
+func (l *localExecutor) Discard(task *Task) {
+	// TODO: Discard from buffers?
+}
+
 func (l *localExecutor) Eventer() eventlog.Eventer {
 	return l.sess.eventer
 }

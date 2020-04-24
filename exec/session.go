@@ -222,6 +222,32 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 	return res
 }
 
+// Discard discards the storage resources held by the subgraph given by roots.
+// This should be used to discard tasks whose results are no longer needed. If
+// the task results are needed by another computation, they will be recomputed.
+// Discarding is best-effort, so no error is returned.
+func (s *Session) Discard(roots []*Task) {
+	const numWorkers = 8
+	var (
+		wg     sync.WaitGroup
+		cTasks = make(chan *Task)
+	)
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range cTasks {
+				s.executor.Discard(task)
+			}
+		}()
+	}
+	iterTasks(roots, func(task *Task) {
+		cTasks <- task
+	})
+	close(cTasks)
+	wg.Wait()
+}
+
 func (s *Session) start() {
 	s.shutdown = s.executor.Start(s)
 	s.eventer.Event("bigslice:sessionStart",
@@ -393,6 +419,14 @@ func (r *Result) open() sliceio.ReadCloser {
 		readers[i] = r.sess.executor.Reader(r.tasks[i], 0)
 	}
 	return sliceio.MultiReader(readers...)
+}
+
+// Discard discards the storage resources held by the subgraph of tasks used to
+// compute r. This should be used to discard results that are no longer needed.
+// If the results are needed by another computation, they will be recomputed.
+// Discarding is best-effort, so no error is returned.
+func (r *Result) Discard() {
+	r.sess.Discard(r.tasks)
 }
 
 func writeTraceFile(tracer *tracer, path string) {

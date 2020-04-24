@@ -50,6 +50,10 @@ type Executor interface {
 	// Reader returns a locally accessible ReadCloser for the requested task.
 	Reader(*Task, int) sliceio.ReadCloser
 
+	// Discard discards the storage resources held by a computed task.
+	// Discarding is best-effort, so no error is returned.
+	Discard(*Task)
+
 	// Eventer returns the eventer used to log events relevant to this executor.
 	Eventer() eventlog.Eventer
 

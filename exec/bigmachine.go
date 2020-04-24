@@ -432,6 +432,20 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 	return newEvalReader(b, task, partition)
 }
 
+func (b *bigmachineExecutor) Discard(task *Task) {
+	log.Printf("(*bigmachineExecutor).Discard(%v)", task)
+	task.Set(TaskLost)
+	m := b.location(task)
+	if m == nil {
+		return
+	}
+	ctx := context.Background()
+	err := m.RetryCall(ctx, "Worker.Discard", task.Name, nil)
+	if err != nil {
+		log.Error.Printf("error discarding %v: %v", task, err)
+	}
+}
+
 func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
 	return b.sess.eventer
 }
@@ -959,6 +973,35 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
+func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (err error) {
+	defer func() {
+		log.Printf("(*worker).Discard(%v) returned: %v", taskName, err)
+	}()
+	log.Printf("(*worker).Discard(%v)", taskName)
+	w.mu.Lock()
+	named := w.tasks[taskName.InvIndex]
+	w.mu.Unlock()
+	if named == nil {
+		return nil
+	}
+	task := named[taskName]
+	if task == nil {
+		// TODO: Inconsistent compilation? Return error?
+		return nil
+	}
+	task.Set(TaskLost)
+	for partition := 0; partition < task.NumPartition; partition++ {
+		log.Printf("(*worker).Discard(%v): discarding partition %d", taskName, partition)
+		err := w.store.Discard(ctx, taskName, partition)
+		if err != nil {
+			log.Error.Printf("error discarding %v:%d: %v", taskName, partition, err)
+		}
+	}
+	return nil
+}
+
+// TODO(jcharumilind): TaskName now has enough information on its own; get rid
+// of this struct.
 type taskStatsRequest struct {
 	// Invocation is the invocation from which the task was compiled.
 	Invocation uint64
