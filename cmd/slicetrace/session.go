@@ -186,7 +186,6 @@ func buildOpStats(tasks []task) []opStat {
 		if !ok {
 			a = &accum{
 				minStart: 1<<63 - 1,
-				// Otherwise zero values are fine.
 			}
 			accums[invOp] = a
 		}
