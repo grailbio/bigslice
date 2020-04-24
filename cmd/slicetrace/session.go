@@ -157,12 +157,14 @@ func buildTasks(events []trace.Event) []task {
 		}
 		invIndex, err := strconv.Atoi(matches[1])
 		if err != nil {
-			panic("should be digits")
+			log.Printf("could not parse invocation index from name: %s", event.Name)
+			continue
 		}
 		op := matches[2]
 		shards, err := strconv.Atoi(matches[3])
 		if err != nil {
-			panic("should be digits")
+			log.Printf("could not parse shards from name: %s", event.Name)
+			continue
 		}
 		shard, err := strconv.Atoi(matches[4])
 		if err != nil {
