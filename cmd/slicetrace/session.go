@@ -28,6 +28,7 @@ type invocation struct {
 type task struct {
 	invIndex int
 	op       string
+	shards   int
 	shard    int
 	// start is measured as a duration offset from the start of tracing.
 	start    time.Duration
@@ -64,7 +65,13 @@ type session struct {
 }
 
 var reInv = regexp.MustCompile(`^\d+`)
-var reTask = regexp.MustCompile(`inv(\d+)_([^@]*)@[^:]+:(\d+)`)
+
+// reTask is used to match the event name of "task" category events. The name is
+// the full task name, from which we parse the invocation index, op name, shard
+// number, and total number of shards. For example, the task name
+// "inv2_reader_map@2000:132" will be parsed as invocation 2, op "reader_map",
+// shards 2000, shard 132.
+var reTask = regexp.MustCompile(`inv(\d+)_([^@]*)@(\d+):(\d+)`)
 
 func newSession(events []trace.Event) *session {
 	tasks := buildTasks(events)
@@ -146,15 +153,21 @@ func buildTasks(events []trace.Event) []task {
 			panic("should be digits")
 		}
 		op := matches[2]
-		shard, err := strconv.Atoi(matches[3])
+		shards, err := strconv.Atoi(matches[3])
 		if err != nil {
 			panic("should be digits")
+		}
+		shard, err := strconv.Atoi(matches[4])
+		if err != nil {
+			log.Printf("could not parse shard from name: %s", event.Name)
+			continue
 		}
 		readDuration := int64(event.Args["readDuration"].(float64))
 		writeDuration := int64(event.Args["writeDuration"].(float64))
 		tasks = append(tasks, task{
 			invIndex: invIndex,
 			op:       op,
+			shards:   shards,
 			shard:    shard,
 			start:    time.Duration(event.Ts * 1e3),
 			duration: time.Duration(event.Dur * 1e3),
@@ -171,7 +184,7 @@ func buildOpStats(tasks []task) []opStat {
 		op       string
 	}
 	type accum struct {
-		maxShard  int
+		shards    int
 		minStart  time.Duration
 		maxEnd    time.Duration
 		durations []time.Duration
@@ -188,6 +201,10 @@ func buildOpStats(tasks []task) []opStat {
 				minStart: 1<<63 - 1,
 			}
 			accums[invOp] = a
+			// We expect all tasks to have the same total number of shards, so
+			// we set it on the first task we see and then verify for all
+			// subsequent tasks.
+			a.shards = task.shards
 		}
 		if task.start < a.minStart {
 			a.minStart = task.start
@@ -196,8 +213,8 @@ func buildOpStats(tasks []task) []opStat {
 		if a.maxEnd < end {
 			a.maxEnd = end
 		}
-		if a.maxShard < task.shard {
-			a.maxShard = task.shard
+		if task.shards != a.shards {
+			log.Fatalf("different total number of shards: got %d, want %d", task.shards, a.shards)
 		}
 		a.durations = append(a.durations, task.duration)
 		a.total += task.duration
@@ -213,7 +230,7 @@ func buildOpStats(tasks []task) []opStat {
 		opStats = append(opStats, opStat{
 			invIndex: invOp.invIndex,
 			op:       invOp.op,
-			shards:   a.maxShard + 1,
+			shards:   a.shards,
 			start:    a.minStart,
 			duration: a.maxEnd - a.minStart,
 			total:    a.total,
