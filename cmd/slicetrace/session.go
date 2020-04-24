@@ -235,6 +235,9 @@ func buildOpStats(tasks []task) []opStat {
 		sort.Slice(a.durations, func(i, j int) bool {
 			return a.durations[i] < a.durations[j]
 		})
+		// It is safe to call computeQuartiles, because a.durations is non-empty
+		// by construction. a will only exist if there was a task, and if there
+		// was a task, its duration was added to a.durations.
 		q1, q2, q3 := computeQuartiles(a.durations)
 		opStats = append(opStats, opStat{
 			invIndex: invOp.invIndex,
@@ -253,31 +256,6 @@ func buildOpStats(tasks []task) []opStat {
 		})
 	}
 	return opStats
-}
-
-func computeQuartiles(ds []time.Duration) (time.Duration, time.Duration, time.Duration) {
-	mid := len(ds) / 2
-	q2 := computeMedian(ds)
-	q3 := ds[(len(ds) - 1)]
-	if len(ds) > 1 {
-		q3 = computeMedian(ds[mid : len(ds)-1])
-	}
-	if len(ds)%2 == 0 {
-		q1 := computeMedian(ds[0:mid])
-		return q1, q2, q3
-	} else {
-		q1 := computeMedian(ds[0 : mid+1])
-		return q1, q2, q3
-	}
-}
-
-func computeMedian(ds []time.Duration) time.Duration {
-	mid := len(ds) / 2
-	if len(ds)%2 == 0 {
-		return (ds[mid-1] + ds[mid]) / 2
-	} else {
-		return ds[mid]
-	}
 }
 
 func truncatef(v interface{}) string {
