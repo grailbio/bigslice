@@ -31,8 +31,7 @@ type Event struct {
 
 // Encode JSON encodes t into w.
 func (t *T) Encode(w io.Writer) error {
-	enc := json.NewEncoder(w)
-	return enc.Encode(t)
+	return json.NewEncoder(w).Encode(t)
 }
 
 // Decode decodes the JSON object format read from r into t. Call this with a t
