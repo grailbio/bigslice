@@ -986,7 +986,6 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	}
 	task := named[taskName]
 	if task == nil {
-		// TODO: Inconsistent compilation? Return error?
 		return nil
 	}
 	task.Set(TaskLost)
