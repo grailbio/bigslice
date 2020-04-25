@@ -432,14 +432,13 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 	return newEvalReader(b, task, partition)
 }
 
-func (b *bigmachineExecutor) Discard(task *Task) {
+func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
 	log.Printf("(*bigmachineExecutor).Discard(%v)", task)
 	task.Set(TaskLost)
 	m := b.location(task)
 	if m == nil {
 		return
 	}
-	ctx := context.Background()
 	err := m.RetryCall(ctx, "Worker.Discard", task.Name, nil)
 	if err != nil {
 		log.Error.Printf("error discarding %v: %v", task, err)

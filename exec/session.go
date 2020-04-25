@@ -226,7 +226,7 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 // This should be used to discard tasks whose results are no longer needed. If
 // the task results are needed by another computation, they will be recomputed.
 // Discarding is best-effort, so no error is returned.
-func (s *Session) Discard(roots []*Task) {
+func (s *Session) Discard(ctx context.Context, roots []*Task) {
 	const numWorkers = 8
 	var (
 		wg     sync.WaitGroup
@@ -237,12 +237,15 @@ func (s *Session) Discard(roots []*Task) {
 		go func() {
 			defer wg.Done()
 			for task := range cTasks {
-				s.executor.Discard(task)
+				s.executor.Discard(ctx, task)
 			}
 		}()
 	}
 	iterTasks(roots, func(task *Task) {
-		cTasks <- task
+		select {
+		case <-ctx.Done():
+		case cTasks <- task:
+		}
 	})
 	close(cTasks)
 	wg.Wait()
@@ -425,8 +428,8 @@ func (r *Result) open() sliceio.ReadCloser {
 // compute r. This should be used to discard results that are no longer needed.
 // If the results are needed by another computation, they will be recomputed.
 // Discarding is best-effort, so no error is returned.
-func (r *Result) Discard() {
-	r.sess.Discard(r.tasks)
+func (r *Result) Discard(ctx context.Context) {
+	r.sess.Discard(ctx, r.tasks)
 }
 
 func writeTraceFile(tracer *tracer, path string) {
