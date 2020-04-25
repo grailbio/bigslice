@@ -70,6 +70,26 @@ func testStore(t *testing.T, store Store) {
 	if !bytes.Equal(data, got) {
 		t.Error("data do not match")
 	}
+	// No partition 1 was ever stored, so discarding is a no-op.
+	err = store.Discard(ctx, task, 1)
+	if err != nil {
+		t.Error(err)
+	}
+	// Make sure we can still Open successfully after the unrelated Discard.
+	rc, err = store.Open(ctx, task, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	// Now discard, and try to Open. It should fail.
+	err = store.Discard(ctx, task, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Open(ctx, task, 0, 0)
+	if err == nil {
+		t.Fatal("expected error opening discarded (task, partition)")
+	}
 }
 
 func TestStoreImpls(t *testing.T) {

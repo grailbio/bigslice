@@ -57,7 +57,8 @@ type Store interface {
 	// Stat returns metadata for the stored slice.
 	Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error)
 
-	// Discard discards the data stored for task and partition.
+	// Discard discards the data stored for task and partition. Returns
+	// ctx.Err(), as it is otherwise best-effort.
 	Discard(ctx context.Context, task TaskName, partition int) error
 }
 
@@ -154,13 +155,13 @@ func (m *memoryStore) Discard(ctx context.Context, task TaskName, partition int)
 	defer m.mu.Unlock()
 	partitions, ok := m.tasks[task]
 	if !ok {
-		return nil
+		return ctx.Err()
 	}
 	if partition >= len(partitions) {
-		return nil
+		return ctx.Err()
 	}
 	partitions[partition] = nil
-	return nil
+	return ctx.Err()
 }
 
 // FileStore is a store implementation that uses grailfiles; thus
@@ -253,10 +254,9 @@ func (s *fileStore) Stat(ctx context.Context, task TaskName, partition int) (sli
 
 func (s *fileStore) Discard(ctx context.Context, task TaskName, partition int) error {
 	path := s.path(task, partition)
-	if err := file.Remove(ctx, path); err != nil {
-		return errors.E(fmt.Sprintf("error discarding %q", path), err)
-	}
-	return nil
+	// Best effort, so don't propagate the error.
+	_ = file.Remove(ctx, path)
+	return ctx.Err()
 }
 
 type fileIOCloser struct {
