@@ -203,13 +203,13 @@ func buildOpStats(tasks []task) []opStat {
 	}
 	accums := make(map[invOp]*accum)
 	for _, task := range tasks {
-		invOp := invOp{task.invIndex, task.op}
-		a, ok := accums[invOp]
+		key := invOp{task.invIndex, task.op}
+		a, ok := accums[key]
 		if !ok {
 			a = &accum{
 				minStart: 1<<63 - 1,
 			}
-			accums[invOp] = a
+			accums[key] = a
 			// We expect all tasks to have the same total number of shards, so
 			// we set it on the first task we see and then verify for all
 			// subsequent tasks.
