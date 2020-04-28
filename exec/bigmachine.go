@@ -787,8 +787,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				// (e.g., S3), then read it directly.
 				info, err := w.store.Stat(ctx, deptask.Name, dep.Partition)
 				if err == nil {
-					rc, err := w.store.Open(ctx, deptask.Name, dep.Partition, 0)
-					if err == nil {
+					rc, openErr := w.store.Open(ctx, deptask.Name, dep.Partition, 0)
+					if openErr == nil {
 						defer rc.Close()
 						r := sliceio.NewDecodingReader(rc)
 						reader.q[j] = &statsReader{r, []*stats.Int{taskRecordsIn, recordsIn}, taskReadDuration}
@@ -906,8 +906,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 				count[p]++
 				// Flush when we fill up.
 				if lens[p] == psize {
-					if err := partitions[p].Write(ctx, partitionv[p]); err != nil {
-						return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
+					if writeErr := partitions[p].Write(ctx, partitionv[p]); writeErr != nil {
+						return maybeTaskFatalErr{errors.E(errors.Fatal, writeErr)}
 					}
 					lens[p] = 0
 				}
@@ -934,8 +934,8 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 			if err != nil && err != sliceio.EOF {
 				return maybeTaskFatalErr{err}
 			}
-			if err := partitions[0].Write(ctx, in.Slice(0, n)); err != nil {
-				return maybeTaskFatalErr{errors.E(errors.Fatal, err)}
+			if writeErr := partitions[0].Write(ctx, in.Slice(0, n)); writeErr != nil {
+				return maybeTaskFatalErr{errors.E(errors.Fatal, writeErr)}
 			}
 			taskRecordsOut.Add(int64(n))
 			recordsOut.Add(int64(n))
@@ -993,21 +993,21 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 		w.mu.Unlock()
 		return fmt.Errorf("combine key %s already committed", combineKey)
 	case combinerError:
-		err := w.combinerErrors[combineKey]
+		combErr := w.combinerErrors[combineKey]
 		w.mu.Unlock()
-		return maybeTaskFatalErr{err}
+		return maybeTaskFatalErr{combErr}
 	case combinerNone:
 		combiners := make([]chan *combiner, task.NumPartition)
 		for i := range combiners {
-			comb, err := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), task.Combiner, *defaultChunksize*100)
-			if err != nil {
+			comb, combErr := newCombiner(task, fmt.Sprintf("%s%d", combineKey, i), task.Combiner, *defaultChunksize*100)
+			if combErr != nil {
 				w.mu.Unlock()
 				for j := 0; j < i; j++ {
-					if err := (<-combiners[j]).Discard(); err != nil {
-						log.Error.Printf("error discarding combiner: %v", err)
+					if discardErr := (<-combiners[j]).Discard(); discardErr != nil {
+						log.Error.Printf("error discarding combiner: %v", discardErr)
 					}
 				}
-				return err
+				return combErr
 			}
 			combiners[i] = make(chan *combiner, 1)
 			combiners[i] <- comb
@@ -1082,10 +1082,10 @@ func (w *worker) runCombine(ctx context.Context, task *Task, taskStats *stats.Ma
 			}
 
 			flushed := pcomb.Compact()
-			err := combiner.Combine(ctx, flushed)
+			combErr := combiner.Combine(ctx, flushed)
 			combiners[p] <- combiner
-			if err != nil {
-				return err
+			if combErr != nil {
+				return combErr
 			}
 		}
 		taskRecordsOut.Add(int64(n))
@@ -1157,9 +1157,13 @@ func (w *worker) writeCombiner(key TaskName) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for part := range w.combiners[key] {
-		part, combiner := part, <-w.combiners[key][part]
+		part := part
+		combiner := <-w.combiners[key][part]
 		g.Go(func() error {
-			w.commitLimiter.Acquire(ctx, 1)
+			err := w.commitLimiter.Acquire(ctx, 1)
+			if err != nil {
+				return err
+			}
 			defer w.commitLimiter.Release(1)
 			wc, err := w.store.Create(ctx, key, part)
 			if err != nil {

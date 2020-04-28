@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/gofuzz"
+	fuzz "github.com/google/gofuzz"
 )
 
 // TestComputeQuartiles verifies that quartiles are computed correctly for

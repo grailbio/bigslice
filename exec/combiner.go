@@ -340,7 +340,7 @@ func (c *combiner) WriteTo(ctx context.Context, enc *sliceio.Encoder) (int64, er
 			return total, err
 		}
 		total += int64(n)
-		if err := enc.Write(ctx, in.Slice(0, n)); err != nil {
+		if err = enc.Write(ctx, in.Slice(0, n)); err != nil {
 			return total, err
 		}
 		if err == sliceio.EOF {
