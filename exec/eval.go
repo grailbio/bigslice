@@ -130,7 +130,20 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 					if enableMaxConsecutiveLost {
 						// Only the runner bookkeeps consecutiveLost to avoid
 						// double-counting task loss.
-						updateConsecutiveLost(task)
+						switch task.state {
+						case TaskOk:
+							task.consecutiveLost = 0
+						case TaskLost:
+							task.consecutiveLost++
+							if task.consecutiveLost >= maxConsecutiveLost {
+								// We've lost this task too many times, so we
+								// consider it in error.
+								task.state = TaskErr
+								task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
+								task.Status.Printf(task.err.Error())
+								task.Broadcast()
+							}
+						}
 					}
 					d := time.Since(startRunTime)
 					executor.Eventer().Event("bigslice:taskComplete",
@@ -353,23 +366,4 @@ func (s *state) done(src *Task) (ready []*Task) {
 		}
 	}
 	return
-}
-
-// updateConsecutiveLost updates the accounting of consecutive task loss,
-// promoting the TaskLost to TaskErr if we exceed maxConsecutiveLost.
-func updateConsecutiveLost(task *Task) {
-	switch task.state {
-	case TaskOk:
-		task.consecutiveLost = 0
-	case TaskLost:
-		task.consecutiveLost++
-		if task.consecutiveLost >= maxConsecutiveLost {
-			// We've lost this task too many times, so we
-			// consider it in error.
-			task.state = TaskErr
-			task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
-			task.Status.Printf(task.err.Error())
-			task.Broadcast()
-		}
-	}
 }
