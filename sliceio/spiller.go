@@ -62,8 +62,8 @@ func (dir Spiller) Spill(frame frame.Frame) (int, error) {
 		if m < n {
 			n = m
 		}
-		if err = enc.Write(context.Background(), frame.Slice(0, n)); err != nil {
-			return 0, err
+		if writeErr := enc.Write(context.Background(), frame.Slice(0, n)); writeErr != nil {
+			return 0, writeErr
 		}
 		frame = frame.Slice(n, m)
 	}
