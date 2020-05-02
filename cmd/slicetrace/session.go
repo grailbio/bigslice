@@ -123,7 +123,8 @@ func buildInvs(events []trace.Event) []invocation {
 			continue
 		}
 		if _, ok := invByIndex[index]; ok {
-			log.Printf("unexpected invocation index %q: %#v", event.Name, event)
+			// We just assume that the invocations across machines are all the
+			// same, so we just take the first one, and ignore the rest.
 			continue
 		}
 		var args []string
