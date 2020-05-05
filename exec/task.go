@@ -49,8 +49,8 @@ const (
 	// execution (it is runnable) but has not yet been allocated
 	// resources by the executor.
 	TaskWaiting
-	// TaskRunning is the state of a task that's currently being run.
-	// After a task is in state TaskRunning, it can only enter a
+	// TaskRunning is the state of a task that's currently being run or
+	// discarded. After a task is in state TaskRunning, it can only enter a
 	// larger-valued state.
 	TaskRunning
 

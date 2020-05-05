@@ -987,7 +987,15 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	if task == nil {
 		return nil
 	}
-	task.Set(TaskLost)
+	task.Lock()
+	if task.state != TaskOk {
+		// We have no results to discard if the task is not TaskOk, as it has
+		// not completed successfully.
+		task.Unlock()
+		return nil
+	}
+	task.state = TaskRunning
+	task.Unlock()
 	for partition := 0; partition < task.NumPartition; partition++ {
 		log.Printf("(*worker).Discard(%v): discarding partition %d", taskName, partition)
 		err := w.store.Discard(ctx, taskName, partition)
@@ -995,6 +1003,7 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 			log.Error.Printf("error discarding %v:%d: %v", taskName, partition, err)
 		}
 	}
+	task.Set(TaskLost)
 	return nil
 }
 
