@@ -439,9 +439,8 @@ func writeTraceFile(tracer *tracer, path string) {
 		return
 	}
 	defer func() {
-		err := w.Close()
-		if err != nil {
-			log.Error.Printf("error closing trace file at %q: %v", path, err)
+		if closeErr := w.Close(); closeErr != nil {
+			log.Error.Printf("error closing trace file at %q: %v", path, closeErr)
 			return
 		}
 	}()

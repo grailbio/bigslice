@@ -28,6 +28,12 @@ var defaultChunksize = &defaultsize.Chunk
 // evaluation (e.g. an error that causes worker processes to exit).
 const maxConsecutiveLost = 5
 
+// enableMaxConsecutiveLost enables the use of the maxConsecutiveLost value to
+// consider repeatedly lost tasks as errors. See documentation for
+// maxConsecutiveLost. It is exposed so that we can disable it in some testing
+// scenarios.
+var enableMaxConsecutiveLost = true
+
 // Executor defines an interface used to provide implementations of
 // task runners. An Executor is responsible for running single tasks,
 // partitioning their outputs, and instantiating readers to retrieve the
@@ -125,20 +131,22 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 					err = task.Wait(ctx)
 				}
 				if runner {
-					// Only the runner bookkeeps consecutiveLost to avoid
-					// double-counting task loss.
-					switch task.state {
-					case TaskOk:
-						task.consecutiveLost = 0
-					case TaskLost:
-						task.consecutiveLost++
-						if task.consecutiveLost >= maxConsecutiveLost {
-							// We've lost this task too many times, so we
-							// consider it in error.
-							task.state = TaskErr
-							task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
-							task.Status.Printf(task.err.Error())
-							task.Broadcast()
+					if enableMaxConsecutiveLost {
+						// Only the runner bookkeeps consecutiveLost to avoid
+						// double-counting task loss.
+						switch task.state {
+						case TaskOk:
+							task.consecutiveLost = 0
+						case TaskLost:
+							task.consecutiveLost++
+							if task.consecutiveLost >= maxConsecutiveLost {
+								// We've lost this task too many times, so we
+								// consider it in error.
+								task.state = TaskErr
+								task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
+								task.Status.Printf(task.err.Error())
+								task.Broadcast()
+							}
 						}
 					}
 					d := time.Since(startRunTime)
@@ -235,6 +243,7 @@ func (s *state) Enqueue(task *Task) (nwait int) {
 			s.schedule(task)
 			nwait++
 		case TaskInit, TaskLost:
+			s.clear(task)
 			ready := true
 			for _, dep := range task.Deps {
 				n := s.Enqueue(dep.Head)
@@ -243,7 +252,6 @@ func (s *state) Enqueue(task *Task) (nwait int) {
 				}
 				s.add(dep.Head, task, n)
 				ready = false
-				continue
 			}
 			nwait++
 			if ready {
@@ -325,6 +333,16 @@ func (s *state) schedule(task *Task) {
 	s.todo[task] = true
 }
 
+// Clear the dependency information stored for task.
+func (s *state) clear(task *Task) {
+	delete(s.counts, task)
+	for _, dep := range task.Deps {
+		if d := s.deps[dep.Head]; d != nil {
+			delete(d, task)
+		}
+	}
+}
+
 // Add adds a dependency from the provided src to dst tasks.
 func (s *state) add(src, dst *Task, n int) {
 	if d := s.deps[src]; d == nil {
@@ -349,7 +367,6 @@ func (s *state) done(src *Task) (ready []*Task) {
 		s.counts[dst]--
 		if s.counts[dst] == 0 {
 			ready = append(ready, dst)
-			delete(s.deps[src], dst)
 		}
 	}
 	return

@@ -27,8 +27,8 @@ func (f *fileReader) Read(ctx context.Context, frame frame.Frame) (int, error) {
 	}
 	n, err := f.Reader.Read(ctx, frame)
 	if err != nil {
-		if err := f.file.Close(ctx); err != nil {
-			log.Error.Printf("%s: close: %v", f.file.Name(), err)
+		if closeErr := f.file.Close(ctx); closeErr != nil {
+			log.Error.Printf("%s: close: %v", f.file.Name(), closeErr)
 		}
 	}
 	return n, err
@@ -59,12 +59,12 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 	}
 	n, err := r.Reader.Read(ctx, frame)
 	if err == nil || err == sliceio.EOF {
-		if err := r.enc.Write(ctx, frame.Slice(0, n)); err != nil {
-			return n, err
+		if writeErr := r.enc.Write(ctx, frame.Slice(0, n)); writeErr != nil {
+			return n, writeErr
 		}
 		if err == sliceio.EOF {
-			if err := r.file.Close(ctx); err != nil {
-				return n, err
+			if closeErr := r.file.Close(ctx); closeErr != nil {
+				return n, closeErr
 			}
 		}
 	} else {
