@@ -433,8 +433,16 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 }
 
 func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
+	task.Lock()
+	if task.state != TaskOk {
+		// We have no results to discard if the task is not TaskOk, as it has
+		// not completed successfully.
+		task.Unlock()
+		return
+	}
+	task.state = TaskRunning
+	task.Unlock()
 	log.Printf("(*bigmachineExecutor).Discard(%v)", task)
-	task.Set(TaskLost)
 	m := b.location(task)
 	if m == nil {
 		return
@@ -443,6 +451,7 @@ func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
 	if err != nil {
 		log.Error.Printf("error discarding %v: %v", task, err)
 	}
+	task.Set(TaskLost)
 }
 
 func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
