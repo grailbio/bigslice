@@ -88,6 +88,10 @@ func (*stressExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
 }
 
+func (*stressExecutor) Discard(ctx context.Context, task *Task) {
+	panic("not implemented")
+}
+
 func (*stressExecutor) Eventer() eventlog.Eventer {
 	return eventlog.Nop{}
 }
