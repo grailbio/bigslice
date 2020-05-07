@@ -6,6 +6,7 @@ package exec
 
 import (
 	"context"
+	"math/rand"
 	"reflect"
 	"sort"
 	"sync"
@@ -242,6 +243,118 @@ func TestScanFaultTolerance(t *testing.T) {
 	}
 	if err = scanner.Err(); err != nil {
 		t.Fatalf("scanner error:%v", err)
+	}
+}
+
+// TestDiscard verifies that discarding a Result leaves its tasks TaskLost.
+func TestDiscard(t *testing.T) {
+	const Nshard = 10
+	const N = Nshard * 100
+	f := bigslice.Func(func() bigslice.Slice {
+		vs := make([]int, N)
+		for i := range vs {
+			vs[i] = i
+		}
+		slice := bigslice.Const(Nshard, vs, vs)
+		slice = bigslice.Reduce(slice, func(x, y int) int { return x + y })
+		return slice
+	})
+	testSession(t, func(t *testing.T, sess *Session) {
+		ctx := context.Background()
+		result, err := sess.Run(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.Discard(ctx)
+		iterTasks(result.tasks, func(task *Task) {
+			if got, want := task.State(), TaskLost; got != want {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
+	})
+}
+
+// TestDiscardStress verifies that execution is robust to concurrent evaluation
+// and discarding. It does this by repeatedly concurrently evaluating and
+// discarding the same task graph and verifying that a final evaluation produces
+// correct results.
+func TestDiscardStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+	enableMaxConsecutiveLost = false
+	const Nshard = 10
+	const N = Nshard * 100
+	// Niter is the number of stress test iterations. Each iteration
+	// concurrently runs and discards a task graph, then verifies that a final
+	// evaluation produces correct results.
+	const Niter = 100
+	// Nrun is the number of times we concurrently run evaluation and
+	// discarding within a single iteration.
+	const Nrun = 100
+	f := bigslice.Func(func() bigslice.Slice {
+		vs := make([]int, N)
+		for i := range vs {
+			vs[i] = i
+		}
+		slice := bigslice.Const(Nshard, vs, append([]int{}, vs...))
+		slice = bigslice.Reduce(slice, func(x, y int) int { return x + y })
+		return slice
+	})
+	id := bigslice.Func(func(result *Result) bigslice.Slice {
+		return result
+	})
+	for j := 0; j < Niter; j++ {
+		testSession(t, func(t *testing.T, sess *Session) {
+			ctx := context.Background()
+			result, err := sess.Run(ctx, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Start two goroutines, one which continually evaluates and one
+			// which continually discards results.
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < Nrun; i++ {
+					_, err := sess.Run(ctx, id, result)
+					if err != nil {
+						t.Error(err)
+					}
+				}
+			}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < Nrun; i++ {
+					result.Discard(ctx)
+				}
+			}()
+			wg.Wait()
+			// Do one final evaluation, the result of which we verify for
+			// correctness.
+			result, err = sess.Run(ctx, id, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := result.Scanner()
+			x := rand.Int()
+			var count, i, j int
+			for s.Scan(ctx, &i, &j) {
+				count++
+				if i != j {
+					t.Error("result computed incorrectly")
+					break
+				}
+			}
+			if scanErr := s.Err(); scanErr != nil {
+				t.Fatal(scanErr)
+			}
+			if got, want := count, N; got != want {
+				t.Errorf("%v got %v, want %v", x, got, want)
+			}
+		})
 	}
 }
 
