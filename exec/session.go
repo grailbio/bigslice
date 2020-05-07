@@ -227,27 +227,14 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 // the task results are needed by another computation, they will be recomputed.
 // Discarding is best-effort, so no error is returned.
 func (s *Session) Discard(ctx context.Context, roots []*Task) {
-	const numWorkers = 8
-	var (
-		wg     sync.WaitGroup
-		cTasks = make(chan *Task)
-	)
-	for i := 0; i < numWorkers; i++ {
+	var wg sync.WaitGroup
+	iterTasks(roots, func(task *Task) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for task := range cTasks {
-				s.executor.Discard(ctx, task)
-			}
+			s.executor.Discard(ctx, task)
 		}()
-	}
-	iterTasks(roots, func(task *Task) {
-		select {
-		case <-ctx.Done():
-		case cTasks <- task:
-		}
 	})
-	close(cTasks)
 	wg.Wait()
 }
 
