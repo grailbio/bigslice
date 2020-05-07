@@ -446,7 +446,6 @@ func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
 	}
 	task.state = TaskRunning
 	task.Unlock()
-	log.Printf("(*bigmachineExecutor).Discard(%v)", task)
 	m := b.location(task)
 	if m == nil {
 		return
