@@ -132,7 +132,7 @@ func (d TaskDep) Task(i int) *Task {
 // machine-local buffers of combiner outputs for some (non-overlapping)
 // subset of shards for a task.
 type TaskName struct {
-	// InvIndex is the index of the invocation of which this task is a part.
+	// InvIndex is the index of the invocation for which the task was compiled.
 	InvIndex uint64
 	// Op is a unique string describing the operation that is provided
 	// by the task.
