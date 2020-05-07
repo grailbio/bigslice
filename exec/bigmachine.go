@@ -243,7 +243,6 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 
 func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
 	return m.Commits.Do(key, func() error {
-		log.Printf("committing key %v on worker %v", key, m.Addr)
 		return m.RetryCall(ctx, "Worker.CommitCombiner", TaskName{Op: key}, nil)
 	})
 }
@@ -985,10 +984,6 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 }
 
 func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (err error) {
-	defer func() {
-		log.Printf("(*worker).Discard(%v) returned: %v", taskName, err)
-	}()
-	log.Printf("(*worker).Discard(%v)", taskName)
 	w.mu.Lock()
 	named := w.tasks[taskName.InvIndex]
 	w.mu.Unlock()
@@ -1009,7 +1004,6 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	task.state = TaskRunning
 	task.Unlock()
 	for partition := 0; partition < task.NumPartition; partition++ {
-		log.Printf("(*worker).Discard(%v): discarding partition %d", taskName, partition)
 		err := w.store.Discard(ctx, taskName, partition)
 		if err != nil {
 			log.Error.Printf("error discarding %v:%d: %v", taskName, partition, err)
