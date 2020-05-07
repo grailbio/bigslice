@@ -1012,6 +1012,11 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 			log.Error.Printf("error discarding %v:%d: %v", taskName, partition, err)
 		}
 	}
+	if !task.Combiner.IsNil() && task.CombineKey == "" {
+		w.mu.Lock()
+		w.combinerStates[task.Name] = combinerNone
+		w.mu.Unlock()
+	}
 	task.Set(TaskLost)
 	return nil
 }
