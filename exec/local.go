@@ -157,6 +157,10 @@ func (l *localExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 }
 
 func (l *localExecutor) Discard(_ context.Context, task *Task) {
+	if !task.Combiner.IsNil() && task.CombineKey != "" {
+		// We do not yet handle tasks with shared combiners.
+		return
+	}
 	task.Lock()
 	if task.state == TaskOk {
 		l.mu.Lock()

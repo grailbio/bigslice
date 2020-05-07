@@ -433,6 +433,10 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 }
 
 func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
+	if !task.Combiner.IsNil() && task.CombineKey != "" {
+		// We do not yet handle tasks with shared combiners.
+		return
+	}
 	task.Lock()
 	if task.state != TaskOk {
 		// We have no results to discard if the task is not TaskOk, as it has
