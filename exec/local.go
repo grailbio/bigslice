@@ -171,7 +171,6 @@ func (l *localExecutor) Discard(_ context.Context, task *Task) {
 		return
 	}
 	task.Unlock()
-	return
 }
 
 func (l *localExecutor) Eventer() eventlog.Eventer {
