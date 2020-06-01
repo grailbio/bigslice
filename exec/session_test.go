@@ -282,7 +282,11 @@ func TestDiscardStress(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
+	origEnableMaxConsecutiveLost := enableMaxConsecutiveLost
 	enableMaxConsecutiveLost = false
+	defer func() {
+		enableMaxConsecutiveLost = origEnableMaxConsecutiveLost
+	}()
 	const Nshard = 10
 	const N = Nshard * 100
 	// Niter is the number of stress test iterations. Each iteration

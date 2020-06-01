@@ -143,7 +143,11 @@ func TestEvalStress(t *testing.T) {
 	// rates and are verifying its behavior, even though in practice we would
 	// give up, as error rates this high would generally mean some systematic
 	// problem that needs to be fixed.
+	origEnableMaxConsecutiveLost := enableMaxConsecutiveLost
 	enableMaxConsecutiveLost = false
+	defer func() {
+		enableMaxConsecutiveLost = origEnableMaxConsecutiveLost
+	}()
 	var (
 		executor = newStressExecutor()
 		shutdown = executor.Start(nil)
