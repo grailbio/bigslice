@@ -255,8 +255,12 @@ func TestDiscard(t *testing.T) {
 		for i := range vs {
 			vs[i] = i
 		}
+		// We set up a computation with a Reduce to:
+		// - break the pipeline so all tasks materialize some results.
+		// - have a non-tree task graph to verify that traversal works
+		//   correctly.
 		slice := bigslice.Const(Nshard, vs, vs)
-		slice = bigslice.Reduce(slice, func(x, y int) int { return x + y })
+		slice = bigslice.Reduce(slice, func(int, int) int { return 0 })
 		return slice
 	})
 	testSession(t, func(t *testing.T, sess *Session) {
