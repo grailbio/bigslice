@@ -1006,7 +1006,7 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	for partition := 0; partition < task.NumPartition; partition++ {
 		err := w.store.Discard(ctx, taskName, partition)
 		if err != nil {
-			log.Error.Printf("error discarding %v:%d: %v", taskName, partition, err)
+			log.Printf("warning: failed to discard %v:%d: %v", taskName, partition, err)
 		}
 	}
 	if !task.Combiner.IsNil() && task.CombineKey == "" {
