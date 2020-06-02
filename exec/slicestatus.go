@@ -43,31 +43,37 @@ func (s sliceStatus) printTo(t *status.Task) {
 
 // iterTasks calls f for each task in the full graph specified by tasks. It is
 // post-order DFS so that tasks are visited in a valid execution order. We use
-// this property to display slice status in a sensible order.
-func iterTasks(tasks []*Task, f func(*Task)) {
+// this property to display slice status in a sensible order. If f returns an
+// error, iterTasks halts and returns that error.
+func iterTasks(tasks []*Task, f func(*Task) error) error {
 	visited := make(map[*Task]struct{})
-	var walk func([]*Task)
-	walk = func(tasks []*Task) {
+	var walk func([]*Task) error
+	walk = func(tasks []*Task) error {
 		if len(tasks) == 0 {
-			return
+			return nil
 		}
 		// This optimization to only use the first task as a marker for
 		// visitation is safe because task slices that result from compilation
 		// are either identical or mutually exclusive.
 		if _, ok := visited[tasks[0]]; ok {
-			return
+			return nil
 		}
 		visited[tasks[0]] = struct{}{}
 		for _, t := range tasks {
 			for _, d := range t.Deps {
 				for i := 0; i < d.NumTask(); i++ {
-					walk([]*Task{d.Task(i)})
+					if err := walk([]*Task{d.Task(i)}); err != nil {
+						return err
+					}
 				}
 			}
-			f(t)
+			if err := f(t); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	walk(tasks)
+	return walk(tasks)
 }
 
 // maintainSliceGroup maintains a status.Group that tracks the evaluation status
@@ -76,7 +82,7 @@ func iterTasks(tasks []*Task, f func(*Task)) {
 func maintainSliceGroup(ctx context.Context, tasks []*Task, group *status.Group) {
 	sliceToStatusTask := make(map[bigslice.Name]*status.Task)
 	// We set up a status.Task for each slice computed by the given task graph.
-	iterTasks(tasks, func(t *Task) {
+	_ = iterTasks(tasks, func(t *Task) error {
 		for i := len(t.Slices) - 1; i >= 0; i-- {
 			// The slices are in dependency order, so we visit them in reverse
 			// to get them in execution order.
@@ -85,6 +91,7 @@ func maintainSliceGroup(ctx context.Context, tasks []*Task, group *status.Group)
 				sliceToStatusTask[s.Name()] = group.Start(s.Name().String())
 			}
 		}
+		return nil
 	})
 	group.Printf("count: %d", len(sliceToStatusTask))
 	statusc := make(chan sliceStatus)
@@ -105,7 +112,7 @@ func monitorSliceStatus(ctx context.Context, tasks []*Task, group *status.Group,
 	sub := NewTaskSubscriber()
 	taskToLastState := make(map[*Task]TaskState)
 	sliceToStatus := make(map[bigslice.Name]sliceStatus)
-	iterTasks(tasks, func(t *Task) {
+	_ = iterTasks(tasks, func(t *Task) error {
 		// Subscribe to updates before we grab the initial state so that we
 		// are guaranteed to see every subsequent update.
 		t.Subscribe(sub)
@@ -118,10 +125,12 @@ func monitorSliceStatus(ctx context.Context, tasks []*Task, group *status.Group,
 			sliceToStatus[s.Name()] = status
 			statusc <- status
 		}
+		return nil
 	})
 	defer func() {
-		iterTasks(tasks, func(t *Task) {
+		_ = iterTasks(tasks, func(t *Task) error {
 			t.Unsubscribe(sub)
+			return nil
 		})
 	}()
 	// Initial state is ready. Observe updates.

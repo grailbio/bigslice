@@ -18,6 +18,7 @@ import (
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/diagnostic/dump"
 	"github.com/grailbio/base/eventlog"
+	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -227,13 +228,25 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 // the task results are needed by another computation, they will be recomputed.
 // Discarding is best-effort, so no error is returned.
 func (s *Session) Discard(ctx context.Context, roots []*Task) {
-	var wg sync.WaitGroup
-	iterTasks(roots, func(task *Task) {
+	var (
+		limiter = limiter.New()
+		wg      sync.WaitGroup
+	)
+	limiter.Release(64)
+	// Best effort, so discard error.
+	_ = iterTasks(roots, func(task *Task) error {
+		if err := limiter.Acquire(ctx, 1); err != nil {
+			return err
+		}
 		wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer func() {
+				wg.Done()
+				limiter.Release(1)
+			}()
 			s.executor.Discard(ctx, task)
 		}()
+		return nil
 	})
 	wg.Wait()
 }
@@ -396,8 +409,9 @@ func (r *Result) Scanner() *sliceio.Scanner {
 // metrics.
 func (r *Result) Scope() *metrics.Scope {
 	r.initScope.Do(func() {
-		iterTasks(r.tasks, func(task *Task) {
+		_ = iterTasks(r.tasks, func(task *Task) error {
 			r.scope.Merge(&task.Scope)
+			return nil
 		})
 	})
 	return &r.scope

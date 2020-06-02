@@ -270,10 +270,11 @@ func TestDiscard(t *testing.T) {
 			t.Fatal(err)
 		}
 		result.Discard(ctx)
-		iterTasks(result.tasks, func(task *Task) {
+		_ = iterTasks(result.tasks, func(task *Task) error {
 			if got, want := task.State(), TaskLost; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
+			return nil
 		})
 	})
 }
