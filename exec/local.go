@@ -114,16 +114,16 @@ func (l *localExecutor) depReaders(ctx context.Context, task *Task) ([]sliceio.R
 			}
 			combiner, err := newCombiner(dep.Task(0), combineKey.String(), dep.Task(0).Combiner, *defaultChunksize*100)
 			if err != nil {
-				return nil, errors.E(errors.Fatal, "could not make combiner for %v", dep.Task(0), err)
+				return nil, errors.E(errors.Fatal, "could not make combiner for %v", dep.Task(0).String(), err)
 			}
 			buf := frame.Make(dep.Task(0), *defaultChunksize, *defaultChunksize)
 			for {
 				n, err := reader.Read(ctx, buf)
 				if err != nil && err != sliceio.EOF {
-					return nil, err
+					return nil, errors.E("error reading %v", dep.Task(0).String(), err)
 				}
 				if err := combiner.Combine(ctx, buf.Slice(0, n)); err != nil {
-					return nil, errors.E(errors.Fatal, "failed to combine %v", dep.Task(0), err)
+					return nil, errors.E(errors.Fatal, "failed to combine %v", dep.Task(0).String(), err)
 				}
 				if err == sliceio.EOF {
 					break
@@ -131,7 +131,7 @@ func (l *localExecutor) depReaders(ctx context.Context, task *Task) ([]sliceio.R
 			}
 			reader, err := combiner.Reader()
 			if err != nil {
-				return nil, errors.E(errors.Fatal, "failed to start reading combiner for %v", dep.Task(0), err)
+				return nil, errors.E(errors.Fatal, "failed to start reading combiner for %v", dep.Task(0).String(), err)
 			}
 			in = append(in, reader)
 		} else if dep.Expand {
