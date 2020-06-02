@@ -166,8 +166,9 @@ func (l *localExecutor) Discard(_ context.Context, task *Task) {
 		l.mu.Lock()
 		delete(l.buffers, task)
 		l.mu.Unlock()
+		task.state = TaskLost
+		task.Broadcast()
 		task.Unlock()
-		task.Set(TaskLost)
 		return
 	}
 	task.Unlock()
