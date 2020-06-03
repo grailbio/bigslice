@@ -57,8 +57,11 @@ type Store interface {
 	// Stat returns metadata for the stored slice.
 	Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error)
 
-	// Discard discards the data stored for task and partition. Returns
-	// ctx.Err(), as it is otherwise best-effort.
+	// Discard discards the data stored for task and partition. Subsequent calls
+	// to Open for the given (task, partition) will fail. ReadClosers that
+	// already exist may start returning errors, depending on the
+	// implementation. If no such (task, partition) is stored, returns a non-nil
+	// error.
 	Discard(ctx context.Context, task TaskName, partition int) error
 }
 
@@ -155,10 +158,10 @@ func (m *memoryStore) Discard(ctx context.Context, task TaskName, partition int)
 	defer m.mu.Unlock()
 	partitions, ok := m.tasks[task]
 	if !ok {
-		return ctx.Err()
+		return errors.E(errors.NotExist, fmt.Sprintf("%s[%d]", task, partition))
 	}
 	if partition >= len(partitions) {
-		return ctx.Err()
+		return errors.E(errors.NotExist, fmt.Sprintf("%s[%d]", task, partition))
 	}
 	partitions[partition] = nil
 	return ctx.Err()
@@ -254,9 +257,7 @@ func (s *fileStore) Stat(ctx context.Context, task TaskName, partition int) (sli
 
 func (s *fileStore) Discard(ctx context.Context, task TaskName, partition int) error {
 	path := s.path(task, partition)
-	// Best effort, so don't propagate the error.
-	_ = file.Remove(ctx, path)
-	return ctx.Err()
+	return file.Remove(ctx, path)
 }
 
 type fileIOCloser struct {

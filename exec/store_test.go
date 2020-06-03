@@ -72,8 +72,8 @@ func testStore(t *testing.T, store Store) {
 	}
 	// No partition 1 was ever stored, so discarding is a no-op.
 	err = store.Discard(ctx, task, 1)
-	if err != nil {
-		t.Error(err)
+	if err == nil {
+		t.Error("expected error discarding non-existent (task, partition)")
 	}
 	// Make sure we can still Open successfully after the unrelated Discard.
 	rc, err = store.Open(ctx, task, 0, 0)
