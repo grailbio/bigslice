@@ -243,7 +243,6 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv b
 
 func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
 	return m.Commits.Do(key, func() error {
-		log.Printf("committing key %v on worker %v", key, m.Addr)
 		return m.RetryCall(ctx, "Worker.CommitCombiner", TaskName{Op: key}, nil)
 	})
 }
@@ -430,6 +429,31 @@ func (b *bigmachineExecutor) Reader(task *Task, partition int) sliceio.ReadClose
 	}
 	// TODO(marius): access the store here, too, in case it's a shared one (e.g., s3)
 	return newEvalReader(b, task, partition)
+}
+
+func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
+	if !task.Combiner.IsNil() && task.CombineKey != "" {
+		// We do not yet handle tasks with shared combiners.
+		return
+	}
+	task.Lock()
+	if task.state != TaskOk {
+		// We have no results to discard if the task is not TaskOk, as it has
+		// not completed successfully.
+		task.Unlock()
+		return
+	}
+	task.state = TaskRunning
+	task.Unlock()
+	m := b.location(task)
+	if m == nil {
+		return
+	}
+	err := m.RetryCall(ctx, "Worker.Discard", task.Name, nil)
+	if err != nil {
+		log.Error.Printf("error discarding %v: %v", task, err)
+	}
+	task.Set(TaskLost)
 }
 
 func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
@@ -959,6 +983,43 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	return nil
 }
 
+func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (err error) {
+	w.mu.Lock()
+	named := w.tasks[taskName.InvIndex]
+	w.mu.Unlock()
+	if named == nil {
+		return nil
+	}
+	task := named[taskName]
+	if task == nil {
+		return nil
+	}
+	task.Lock()
+	if task.state != TaskOk {
+		// We have no results to discard if the task is not TaskOk, as it has
+		// not completed successfully.
+		task.Unlock()
+		return nil
+	}
+	task.state = TaskRunning
+	task.Unlock()
+	for partition := 0; partition < task.NumPartition; partition++ {
+		err := w.store.Discard(ctx, taskName, partition)
+		if err != nil {
+			log.Printf("warning: failed to discard %v:%d: %v", taskName, partition, err)
+		}
+	}
+	if !task.Combiner.IsNil() && task.CombineKey == "" {
+		w.mu.Lock()
+		w.combinerStates[task.Name] = combinerNone
+		w.mu.Unlock()
+	}
+	task.Set(TaskLost)
+	return nil
+}
+
+// TODO(jcharumilind): TaskName now has enough information on its own; get rid
+// of this struct.
 type taskStatsRequest struct {
 	// Invocation is the invocation from which the task was compiled.
 	Invocation uint64

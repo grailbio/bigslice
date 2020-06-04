@@ -42,6 +42,8 @@ func (testExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
 }
 
+func (testExecutor) Discard(context.Context, *Task) {}
+
 func (testExecutor) Eventer() eventlog.Eventer {
 	return eventlog.Nop{}
 }
@@ -469,6 +471,8 @@ func (b benchExecutor) Run(task *Task) {
 func (benchExecutor) Reader(*Task, int) sliceio.ReadCloser {
 	panic("not implemented")
 }
+
+func (benchExecutor) Discard(context.Context, *Task) {}
 
 func (benchExecutor) Eventer() eventlog.Eventer {
 	return eventlog.Nop{}

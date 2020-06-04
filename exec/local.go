@@ -64,50 +64,14 @@ func (l *localExecutor) Run(task *Task) {
 		return
 	}
 	defer l.limiter.Release(n)
-	in := make([]sliceio.Reader, 0, len(task.Deps))
-	for _, dep := range task.Deps {
-		reader := new(multiReader)
-		reader.q = make([]sliceio.Reader, dep.NumTask())
-		for j := 0; j < dep.NumTask(); j++ {
-			reader.q[j] = l.Reader(dep.Task(j), dep.Partition)
-		}
-		if dep.NumTask() > 0 && !dep.Task(0).Combiner.IsNil() {
-			// Perform input combination in-line, one for each partition.
-			combineKey := task.Name
-			if task.CombineKey != "" {
-				combineKey = TaskName{Op: task.CombineKey}
-			}
-			combiner, err := newCombiner(dep.Task(0), combineKey.String(), dep.Task(0).Combiner, *defaultChunksize*100)
-			if err != nil {
-				task.Error(err)
-				return
-			}
-			buf := frame.Make(dep.Task(0), *defaultChunksize, *defaultChunksize)
-			for {
-				n, err := reader.Read(ctx, buf)
-				if err != nil && err != sliceio.EOF {
-					task.Error(err)
-					return
-				}
-				if err := combiner.Combine(ctx, buf.Slice(0, n)); err != nil {
-					task.Error(err)
-					return
-				}
-				if err == sliceio.EOF {
-					break
-				}
-			}
-			reader, err := combiner.Reader()
-			if err != nil {
-				task.Error(err)
-				return
-			}
-			in = append(in, reader)
-		} else if dep.Expand {
-			in = append(in, reader.q...)
+	in, err := l.depReaders(ctx, task)
+	if err != nil {
+		if errors.Match(fatalErr, err) {
+			task.Error(err)
 		} else {
-			in = append(in, reader)
+			task.Set(TaskLost)
 		}
+		return
 	}
 	task.Set(TaskRunning)
 
@@ -123,18 +87,91 @@ func (l *localExecutor) Run(task *Task) {
 		l.mu.Unlock()
 		task.state = TaskOk
 	} else {
-		task.state = TaskErr
+		if errors.Match(fatalErr, err) {
+			task.state = TaskErr
+		} else {
+			task.state = TaskLost
+		}
 		task.err = err
 	}
 	task.Broadcast()
 	task.Unlock()
 }
 
+func (l *localExecutor) depReaders(ctx context.Context, task *Task) ([]sliceio.Reader, error) {
+	in := make([]sliceio.Reader, 0, len(task.Deps))
+	for _, dep := range task.Deps {
+		reader := new(multiReader)
+		reader.q = make([]sliceio.Reader, dep.NumTask())
+		for j := 0; j < dep.NumTask(); j++ {
+			reader.q[j] = l.Reader(dep.Task(j), dep.Partition)
+		}
+		if dep.NumTask() > 0 && !dep.Task(0).Combiner.IsNil() {
+			// Perform input combination in-line, one for each partition.
+			combineKey := task.Name
+			if task.CombineKey != "" {
+				combineKey = TaskName{Op: task.CombineKey}
+			}
+			combiner, err := newCombiner(dep.Task(0), combineKey.String(), dep.Task(0).Combiner, *defaultChunksize*100)
+			if err != nil {
+				return nil, errors.E(errors.Fatal, "could not make combiner for %v", dep.Task(0).String(), err)
+			}
+			buf := frame.Make(dep.Task(0), *defaultChunksize, *defaultChunksize)
+			for {
+				n, err := reader.Read(ctx, buf)
+				if err != nil && err != sliceio.EOF {
+					return nil, errors.E("error reading %v", dep.Task(0).String(), err)
+				}
+				if err := combiner.Combine(ctx, buf.Slice(0, n)); err != nil {
+					return nil, errors.E(errors.Fatal, "failed to combine %v", dep.Task(0).String(), err)
+				}
+				if err == sliceio.EOF {
+					break
+				}
+			}
+			reader, err := combiner.Reader()
+			if err != nil {
+				return nil, errors.E(errors.Fatal, "failed to start reading combiner for %v", dep.Task(0).String(), err)
+			}
+			in = append(in, reader)
+		} else if dep.Expand {
+			in = append(in, reader.q...)
+		} else {
+			in = append(in, reader)
+		}
+	}
+	return in, nil
+}
+
 func (l *localExecutor) Reader(task *Task, partition int) sliceio.ReadCloser {
 	l.mu.Lock()
-	buf := l.buffers[task]
+	buf, ok := l.buffers[task]
 	l.mu.Unlock()
+	if !ok {
+		return sliceio.ReaderWithCloseFunc{
+			Reader:    sliceio.ErrReader(fmt.Errorf("no data for %v", task)),
+			CloseFunc: func() error { return nil },
+		}
+	}
 	return buf.Reader(partition)
+}
+
+func (l *localExecutor) Discard(_ context.Context, task *Task) {
+	if !task.Combiner.IsNil() && task.CombineKey != "" {
+		// We do not yet handle tasks with shared combiners.
+		return
+	}
+	task.Lock()
+	if task.state == TaskOk {
+		l.mu.Lock()
+		delete(l.buffers, task)
+		l.mu.Unlock()
+		task.state = TaskLost
+		task.Broadcast()
+		task.Unlock()
+		return
+	}
+	task.Unlock()
 }
 
 func (l *localExecutor) Eventer() eventlog.Eventer {

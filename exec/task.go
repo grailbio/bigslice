@@ -49,8 +49,8 @@ const (
 	// execution (it is runnable) but has not yet been allocated
 	// resources by the executor.
 	TaskWaiting
-	// TaskRunning is the state of a task that's currently being run.
-	// After a task is in state TaskRunning, it can only enter a
+	// TaskRunning is the state of a task that's currently being run or
+	// discarded. After a task is in state TaskRunning, it can only enter a
 	// larger-valued state.
 	TaskRunning
 
@@ -132,6 +132,8 @@ func (d TaskDep) Task(i int) *Task {
 // machine-local buffers of combiner outputs for some (non-overlapping)
 // subset of shards for a task.
 type TaskName struct {
+	// InvIndex is the index of the invocation for which the task was compiled.
+	InvIndex uint64
 	// Op is a unique string describing the operation that is provided
 	// by the task.
 	Op string

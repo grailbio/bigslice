@@ -118,12 +118,13 @@ func TestMonitorSliceStatus(t *testing.T) {
 	taskCounts := make(map[bigslice.Name]int32)
 	var allTasks []*Task
 	var numTasks int
-	iterTasks(tasks, func(t *Task) {
+	_ = iterTasks(tasks, func(t *Task) error {
 		numTasks++
 		allTasks = append(allTasks, t)
 		for _, slice := range t.Slices {
 			taskCounts[slice.Name()]++
 		}
+		return nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	var s status.Status

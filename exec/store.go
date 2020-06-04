@@ -56,6 +56,13 @@ type Store interface {
 
 	// Stat returns metadata for the stored slice.
 	Stat(ctx context.Context, task TaskName, partition int) (sliceInfo, error)
+
+	// Discard discards the data stored for task and partition. Subsequent calls
+	// to Open for the given (task, partition) will fail. ReadClosers that
+	// already exist may start returning errors, depending on the
+	// implementation. If no such (task, partition) is stored, returns a non-nil
+	// error.
+	Discard(ctx context.Context, task TaskName, partition int) error
 }
 
 // MemoryStore is a store implementation that maintains in-memory buffers
@@ -146,6 +153,20 @@ func (m *memoryStore) Stat(ctx context.Context, task TaskName, partition int) (s
 	}, nil
 }
 
+func (m *memoryStore) Discard(ctx context.Context, task TaskName, partition int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	partitions, ok := m.tasks[task]
+	if !ok {
+		return errors.E(errors.NotExist, fmt.Sprintf("%s[%d]", task, partition))
+	}
+	if partition >= len(partitions) {
+		return errors.E(errors.NotExist, fmt.Sprintf("%s[%d]", task, partition))
+	}
+	partitions[partition] = nil
+	return ctx.Err()
+}
+
 // FileStore is a store implementation that uses grailfiles; thus
 // task output can be stored at any URL supported by grailfile (e.g.,
 // S3).
@@ -232,6 +253,11 @@ func (s *fileStore) Stat(ctx context.Context, task TaskName, partition int) (sli
 		Size:    n,
 		Records: count,
 	}, nil
+}
+
+func (s *fileStore) Discard(ctx context.Context, task TaskName, partition int) error {
+	path := s.path(task, partition)
+	return file.Remove(ctx, path)
 }
 
 type fileIOCloser struct {

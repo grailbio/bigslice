@@ -236,6 +236,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 				CompileEnv: c.env,
 				Invocation: c.inv,
 				Name: TaskName{
+					InvIndex: c.inv.Index,
 					Op:       shuffleOpName,
 					Shard:    shard,
 					NumShard: len(result.tasks),
@@ -271,7 +272,12 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 		tasks[i] = &Task{
 			Type:         slices[0],
 			CompileEnv:   c.env,
-			Name:         TaskName{Op: opName, Shard: i, NumShard: len(tasks)},
+			Name:         TaskName{
+				InvIndex: c.inv.Index,
+				Op: opName,
+				Shard: i,
+				NumShard: len(tasks),
+			},
 			Invocation:   c.inv,
 			Pragma:       pragmas,
 			NumPartition: part.NumPartition(),

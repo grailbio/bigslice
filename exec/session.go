@@ -18,6 +18,7 @@ import (
 	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/diagnostic/dump"
 	"github.com/grailbio/base/eventlog"
+	"github.com/grailbio/base/limiter"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigmachine"
@@ -222,6 +223,32 @@ func (s *Session) Must(ctx context.Context, funcv *bigslice.FuncValue, args ...i
 	return res
 }
 
+// Discard discards the storage resources held by the subgraph given by roots.
+// This should be used to discard tasks whose results are no longer needed. If
+// the task results are needed by another computation, they will be recomputed.
+// Discarding is best-effort, so no error is returned.
+func (s *Session) Discard(ctx context.Context, roots []*Task) {
+	var (
+		limiter = limiter.New()
+		wg      sync.WaitGroup
+	)
+	limiter.Release(64)
+	// Best effort, so discard error.
+	_ = iterTasks(roots, func(task *Task) error {
+		if err := limiter.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer limiter.Release(1)
+			s.executor.Discard(ctx, task)
+		}()
+		return nil
+	})
+	wg.Wait()
+}
+
 func (s *Session) start() {
 	s.shutdown = s.executor.Start(s)
 	s.eventer.Event("bigslice:sessionStart",
@@ -380,8 +407,9 @@ func (r *Result) Scanner() *sliceio.Scanner {
 // metrics.
 func (r *Result) Scope() *metrics.Scope {
 	r.initScope.Do(func() {
-		iterTasks(r.tasks, func(task *Task) {
+		_ = iterTasks(r.tasks, func(task *Task) error {
 			r.scope.Merge(&task.Scope)
+			return nil
 		})
 	})
 	return &r.scope
@@ -393,6 +421,14 @@ func (r *Result) open() sliceio.ReadCloser {
 		readers[i] = r.sess.executor.Reader(r.tasks[i], 0)
 	}
 	return sliceio.MultiReader(readers...)
+}
+
+// Discard discards the storage resources held by the subgraph of tasks used to
+// compute r. This should be used to discard results that are no longer needed.
+// If the results are needed by another computation, they will be recomputed.
+// Discarding is best-effort, so no error is returned.
+func (r *Result) Discard(ctx context.Context) {
+	r.sess.Discard(ctx, r.tasks)
 }
 
 func writeTraceFile(tracer *tracer, path string) {

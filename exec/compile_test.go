@@ -113,10 +113,11 @@ func TestCompile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compilation failed")
 			}
-			iterTasks(tasks, func(task *Task) {
+			_ = iterTasks(tasks, func(task *Task) error {
 				if task.Pragma == nil {
 					t.Errorf("%v has nil task.Pragma", task)
 				}
+				return nil
 			})
 			g := makeGraph(tasks)
 			want, err := ioutil.ReadFile("testdata/" + c.name + ".graph")
