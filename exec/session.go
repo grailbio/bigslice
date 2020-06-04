@@ -240,10 +240,8 @@ func (s *Session) Discard(ctx context.Context, roots []*Task) {
 		}
 		wg.Add(1)
 		go func() {
-			defer func() {
-				wg.Done()
-				limiter.Release(1)
-			}()
+			defer wg.Done()
+			defer limiter.Release(1)
 			s.executor.Discard(ctx, task)
 		}()
 		return nil
