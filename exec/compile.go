@@ -270,12 +270,12 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	tasks = make([]*Task, slice.NumShard())
 	for i := range tasks {
 		tasks[i] = &Task{
-			Type:         slices[0],
-			CompileEnv:   c.env,
-			Name:         TaskName{
+			Type:       slices[0],
+			CompileEnv: c.env,
+			Name: TaskName{
 				InvIndex: c.inv.Index,
-				Op: opName,
-				Shard: i,
+				Op:       opName,
+				Shard:    i,
 				NumShard: len(tasks),
 			},
 			Invocation:   c.inv,
