@@ -21,8 +21,6 @@ run:
   # reported.
   skip-files:
 
-  modules-download-mode: readonly
-
   # disallow multiple parallel golangci-lint instances
   allow-parallel-runners: false
 
