@@ -1,0 +1,89 @@
+run:
+  concurrency: 4
+  timeout: 1m
+
+  # exit code when at least one issue was found
+  issues-exit-code: 1
+
+  # include test files
+  tests: true
+
+  build-tags:
+
+  # which dirs to skip: issues from them won't be reported;
+  skip-dirs:
+
+  # enables skipping of default directories:
+  #   vendor$, third_party$, testdata$, examples$, Godeps$, builtin$
+  skip-dirs-use-default: true
+
+  # which files to skip: they will be analyzed, but issues from them won't be
+  # reported.
+  skip-files:
+
+  modules-download-mode: readonly
+
+  # disallow multiple parallel golangci-lint instances
+  allow-parallel-runners: false
+
+output:
+  # colored-line-number|line-number|json|tab|checkstyle|code-climate
+  format: colored-line-number
+
+  # print lines of code with issue
+  print-issued-lines: true
+
+  # print linter name in the end of issue text
+  print-linter-name: true
+
+  # make issues output unique by line
+  uniq-by-line: true
+
+linters-settings:
+  errcheck:
+    # do not report about not checking errors in type assertions: `a :=
+    # b.(MyStruct)`
+    check-type-assertions: false
+
+    # do not report about assignment of errors to blank identifier: `num, _ :=
+    # strconv.Atoi(numStr)`
+    check-blank: false
+
+  govet:
+    # report about shadowed variables
+    check-shadowing: true
+
+    # settings per analyzer
+    settings:
+      # run `go tool vet help` to see all analyzers
+      printf:
+        # run `go tool vet help printf` to see available settings for `printf`
+        # analyzer
+        funcs:
+          - (github.com/grailbio/base/log).Fatal
+          - (github.com/grailbio/base/log).Output
+          - (github.com/grailbio/base/log).Outputf
+          - (github.com/grailbio/base/log).Panic
+          - (github.com/grailbio/base/log).Panicf
+          - (github.com/grailbio/base/log).Print
+          - (github.com/grailbio/base/log).Printf
+
+  unused:
+    # do not report unused exported identifiers
+    check-exported: false
+
+linters:
+  disable-all: true
+  fast: false
+  enable:
+    - deadcode
+    - goimports
+    - gosimple
+    - govet
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - structcheck
+    - typecheck
+    - unused
+    - varcheck
