@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        go: [1.12, 1.13]
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Go ${{ matrix.go }}
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ matrix.go }}
+    - name: Check out
+      uses: actions/checkout@v2
+    - name: Build
+      run: go build -v ./...
+    - name: Test
+      run: go test -v -short ./...
+  golangci:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out
+      uses: actions/checkout@v2
+      # Use 1.13, as v.io's go.mod causes an error in 1.14. It improperly
+      # specifies a patch version for its Go version:
+      # https://github.com/vanadium/core/blob/v0.1.7/go.mod#L3. Remove this when
+      # we upgrade to a v.io that does not have this problem.
+    - name: Set up Go 1.13
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.13
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v1
+      with:
+        version: v1.27
+        only-new-issues: true
