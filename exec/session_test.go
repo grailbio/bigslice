@@ -327,9 +327,9 @@ func TestDiscardStress(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := 0; i < Nrun; i++ {
-					_, err := sess.Run(ctx, id, result)
-					if err != nil {
-						t.Error(err)
+					_, runErr := sess.Run(ctx, id, result)
+					if runErr != nil {
+						t.Error(runErr)
 					}
 				}
 			}()
