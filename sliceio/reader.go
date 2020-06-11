@@ -93,6 +93,7 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 			// There's not much for us to do if the Close fails, so we just
 			// ignore it.
 			_ = m.q[0].Close()
+			m.q[0] = nil
 			m.q = m.q[1:]
 		case err != nil:
 			m.err = err
@@ -106,11 +107,15 @@ func (m *multiReader) Read(ctx context.Context, out frame.Frame) (n int, err err
 
 func (m *multiReader) Close() error {
 	var err error
-	for _, r := range m.q {
+	for i, r := range m.q {
+		if r == nil {
+			continue
+		}
 		cerr := r.Close()
 		if err == nil {
 			err = cerr
 		}
+		m.q[i] = nil
 	}
 	return err
 }
