@@ -29,9 +29,8 @@ var Analyzer = &analysis.Analyzer{
 }
 
 const (
-	bigslicePkgPath     = "github.com/grailbio/bigslice"
-	execPkgPath         = "github.com/grailbio/bigslice/exec"
-	funcValueTypeString = "*github.com/grailbio/bigslice.FuncValue"
+	bigslicePkgPath = "github.com/grailbio/bigslice"
+	execPkgPath     = "github.com/grailbio/bigslice/exec"
 )
 
 func run(pass *analysis.Pass) (interface{}, error) {
