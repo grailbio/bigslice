@@ -10,4 +10,5 @@ require (
 	github.com/grailbio/testutil v0.0.3
 	github.com/spaolacci/murmur3 v1.1.0
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/tools v0.0.0-20190911174233-4f2ddba30aff
 )
