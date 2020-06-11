@@ -1393,7 +1393,10 @@ func (r *openerAtReader) Close() error {
 	if r.readCloser == nil {
 		return nil
 	}
-	return r.readCloser.Close()
+	r.sliceioReader = nil
+	err := r.readCloser.Close()
+	r.readCloser = nil
+	return err
 }
 
 // machineTaskPartition is a task partition on a specific machine. It implements
