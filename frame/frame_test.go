@@ -188,15 +188,16 @@ func TestZero(t *testing.T) {
 
 func TestZerox(t *testing.T) {
 	type struct1 struct {
-		a, b, c int
+		_, _, _ int
 	}
 	type struct2 struct {
-		b [10000]byte
+		_ [10000]byte
 	}
 	type struct3 struct {
+		// nolint: unused
 		struct1
-		two *struct2
-		ok  string
+		_ *struct2
+		_ string
 	}
 	slices := []interface{}{
 		new([]int),
