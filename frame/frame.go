@@ -63,13 +63,13 @@ type data struct {
 
 // NewData constructs a new data from the provided reflect.Value.
 func newData(v reflect.Value) data {
-	var data data
-	data.ptr = unsafe.Pointer(v.Pointer())
-	data.val = v
-	data.typ = newDataType(v.Type().Elem())
-	data.ops = makeSliceOps(data.typ.Type, v)
-	data.ops.swap = reflect.Swapper(v.Interface())
-	return data
+	var d data
+	d.ptr = unsafe.Pointer(v.Pointer())
+	d.val = v
+	d.typ = newDataType(v.Type().Elem())
+	d.ops = makeSliceOps(d.typ.Type, v)
+	d.ops.swap = reflect.Swapper(v.Interface())
+	return d
 }
 
 // A Frame is a collection of 0 or more typed, equal-length columns
