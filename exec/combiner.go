@@ -233,7 +233,6 @@ type combiner struct {
 	spiller    sliceio.Spiller
 	name       string
 	total      int
-	read       bool
 }
 
 // NewCombiner creates a new combiner with the given type, name,
