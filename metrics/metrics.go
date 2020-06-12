@@ -37,11 +37,6 @@ func newMetric(makeMetric func(id int) Metric) {
 	metrics = append(metrics, makeMetric(len(metrics)))
 }
 
-// all returns all currently defined metrics.
-func all() []Metric {
-	return metrics[1:]
-}
-
 // Metric is the abstract type of a metric. Each metric type must implement a
 // set of generic operations; the metric-specific operations are provided by the
 // metric types themselves.
