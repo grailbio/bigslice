@@ -23,10 +23,10 @@ func TestSpiller(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer spill.Cleanup()
-	if _, err := spill.Spill(f1); err != nil {
+	if _, err = spill.Spill(f1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := spill.Spill(f1); err != nil {
+	if _, err = spill.Spill(f1); err != nil {
 		t.Fatal(err)
 	}
 
