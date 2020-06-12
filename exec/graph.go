@@ -55,24 +55,24 @@ func (s *Session) handleTasksGraph(w http.ResponseWriter, r *http.Request) {
 		indexed[task] = len(indexed)
 	}
 
-	type node struct {
+	type Node struct {
 		Name   string `json:"name"`
 		Group  int    `json:"group"`
 		Radius int    `json:"radius"`
 	}
-	type link struct {
+	type Link struct {
 		Source int `json:"source"`
 		Target int `json:"target"`
 	}
 
 	var graph struct {
-		Nodes []node `json:"nodes"`
-		Links []link `json:"links"`
+		Nodes []Node `json:"nodes"`
+		Links []Link `json:"links"`
 	}
 
-	graph.Nodes = make([]node, len(tasks))
+	graph.Nodes = make([]Node, len(tasks))
 	for task, index := range indexed {
-		var node node
+		var node Node
 		node.Name = task.Name.String()
 		if roots[task] {
 			node.Radius = 10
@@ -84,7 +84,7 @@ func (s *Session) handleTasksGraph(w http.ResponseWriter, r *http.Request) {
 		for _, dep := range task.Deps {
 			for i := 0; i < dep.NumTask(); i++ {
 				deptask := dep.Task(i)
-				graph.Links = append(graph.Links, link{index, indexed[deptask]})
+				graph.Links = append(graph.Links, Link{index, indexed[deptask]})
 			}
 		}
 	}
