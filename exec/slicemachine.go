@@ -600,7 +600,8 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, ma
 	var wg sync.WaitGroup
 	slicemachines := make([]*sliceMachine, len(machines))
 	for i := range machines {
-		m, i := machines[i], i
+		i := i
+		m := machines[i]
 		status := group.Start()
 		status.Print("waiting for machine to boot")
 		wg.Add(1)
