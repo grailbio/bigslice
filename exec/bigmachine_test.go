@@ -255,10 +255,10 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 	for _, task := range tasks[3:] {
 		go x.Run(task)
 		func() {
-			ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+			stateCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 			defer cancel()
-			state, err := task.WaitState(ctx, TaskRunning)
-			if ctx.Err() != nil {
+			state, err := task.WaitState(stateCtx, TaskRunning)
+			if stateCtx.Err() != nil {
 				// We expect some tasks to not reach TaskRunning, as there are
 				// not enough procs to service them.
 				return
