@@ -103,11 +103,11 @@ func TestMergeReader(t *testing.T) {
 		f := fuzzFrame(fz, N, typeOfString, typeOfString, typeOfSliceOfString)
 		// Replace the third column with a slice of of the two first
 		// columns so we can verify that the full rows are swapped.
-		for i := 0; i < f.Len(); i++ {
+		for j := 0; j < f.Len(); j++ {
 			s := reflect.MakeSlice(typeOfSliceOfString, 2, 2)
-			s.Index(0).Set(f.Index(0, i))
-			s.Index(1).Set(f.Index(1, i))
-			f.Index(2, i).Set(s)
+			s.Index(0).Set(f.Index(0, j))
+			s.Index(1).Set(f.Index(1, j))
+			f.Index(2, j).Set(s)
 		}
 		sort.Sort(f)
 		frames[i] = f
