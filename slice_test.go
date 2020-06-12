@@ -32,12 +32,6 @@ func init() {
 	log.AddFlags() // so they can be used in tests
 }
 
-var (
-	typeOfInt     = reflect.TypeOf(int(0))
-	typeOfInt64   = reflect.TypeOf(int64(0))
-	typeOfFloat64 = reflect.TypeOf(float64(0))
-)
-
 func sortColumns(columns []reflect.Value) {
 	s := new(columnSlice)
 	s.keys = columns[0].Interface().([]string)

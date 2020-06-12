@@ -15,12 +15,7 @@ import (
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-type testStruct struct{ A, B, C int }
-
-var (
-	typeOfTestStruct = reflect.TypeOf((*testStruct)(nil)).Elem()
-	typeOfString     = reflect.TypeOf("")
-)
+var typeOfString = reflect.TypeOf("")
 
 func TestTaskBuffer(t *testing.T) {
 	var batches [][]string

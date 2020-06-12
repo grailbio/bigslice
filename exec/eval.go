@@ -354,12 +354,6 @@ func (s *state) add(src, dst *Task, n int) {
 	}
 }
 
-// Ready returns true if the provided task has no incoming
-// dependencies.
-func (s *state) ready(task *Task) bool {
-	return s.counts[task] == 0
-}
-
 // Done marks the provided task as done, and returns the set
 // of tasks that have consequently become ready for evaluation.
 func (s *state) done(src *Task) (ready []*Task) {
