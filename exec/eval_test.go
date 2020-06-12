@@ -360,8 +360,8 @@ func TestMultiPhaseEval(t *testing.T) {
 		}
 		// Make sure no other tasks are waiting or running.
 		for j := i - 1; j >= 0; j-- {
-			group := phases[j]
-			for _, task := range group {
+			otherGroup := phases[j]
+			for _, task := range otherGroup {
 				if task.State() != TaskInit {
 					t.Fatal(task, ": wrong state")
 				}
