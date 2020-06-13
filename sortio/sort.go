@@ -12,6 +12,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/internal/defaultsize"
 	"github.com/grailbio/bigslice/sliceio"
@@ -32,7 +33,13 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 	if err != nil {
 		return nil, err
 	}
-	defer spill.Cleanup()
+	defer func() {
+		if cleanupErr := spill.Cleanup(); cleanupErr != nil {
+			// Consider temporary file cleanup to be best-effort.
+			log.Debug.Printf("%s: failed to clean up temporary files: %v",
+				spill, cleanupErr)
+		}
+	}()
 	f := frame.Make(typ, *numCanaryRows, *numCanaryRows)
 	for {
 		n, err := sliceio.ReadFull(ctx, r, f)
