@@ -350,7 +350,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 			if c.env.IsCached(tasks[shard].Name) {
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := shardCache.CacheReader(shard)
-					return &sliceio.PprofReader{r, pprofLabel}
+					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
 				}
 				// Forget task dependencies for cached shards because we'll read
 				// from the cache file.
@@ -362,14 +362,14 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := reader(shard, readers)
 					r = shardCache.WritethroughReader(shard, r)
-					return &sliceio.PprofReader{r, pprofLabel}
+					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
 				}
 			} else {
 				// Subsequently, read the previous pipelined slice's output.
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := reader(shard, []sliceio.Reader{prev(readers)})
 					r = shardCache.WritethroughReader(shard, r)
-					return &sliceio.PprofReader{r, pprofLabel}
+					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
 				}
 			}
 		}
