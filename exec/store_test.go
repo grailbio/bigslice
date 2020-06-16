@@ -29,7 +29,7 @@ func testStore(t *testing.T, store Store) {
 		t.Error(err)
 		return
 	}
-	if _, err := io.Copy(wc, bytes.NewReader(data)); err != nil {
+	if _, err = io.Copy(wc, bytes.NewReader(data)); err != nil {
 		t.Error(err)
 		return
 	}
@@ -40,7 +40,7 @@ func testStore(t *testing.T, store Store) {
 	} else if !errors.Is(errors.NotExist, err) {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if err := wc.Commit(ctx, 12345); err != nil {
+	if err = wc.Commit(ctx, 12345); err != nil {
 		t.Error(err)
 		return
 	}

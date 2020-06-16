@@ -124,7 +124,7 @@ func TestCombiner(t *testing.T) {
 		[]int{0, 1, 2, 3, 4},
 	)
 	for i := 0; i < N; i++ {
-		if err := c.Combine(ctx, f); err != nil {
+		if err = c.Combine(ctx, f); err != nil {
 			t.Fatal(err)
 		}
 	}

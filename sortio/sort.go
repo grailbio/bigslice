@@ -42,14 +42,16 @@ func SortReader(ctx context.Context, spillTarget int, typ slicetype.Type, r slic
 	}()
 	f := frame.Make(typ, *numCanaryRows, *numCanaryRows)
 	for {
-		n, err := sliceio.ReadFull(ctx, r, f)
+		var n int
+		n, err = sliceio.ReadFull(ctx, r, f)
 		if err != nil && err != sliceio.EOF {
 			return nil, err
 		}
 		eof := err == sliceio.EOF
 		g := f.Slice(0, n)
 		sort.Sort(g)
-		size, err := spill.Spill(g)
+		var size int
+		size, err = spill.Spill(g)
 		if err != nil {
 			return nil, err
 		}

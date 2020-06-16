@@ -30,7 +30,7 @@ func TestSpiller(t *testing.T) {
 	if _, err = spill.Spill(f1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := spill.Spill(f1); err != nil {
+	if _, err = spill.Spill(f1); err != nil {
 		t.Fatal(err)
 	}
 

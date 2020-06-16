@@ -118,12 +118,13 @@ func (l *localExecutor) depReaders(ctx context.Context, task *Task) ([]sliceio.R
 			}
 			buf := frame.Make(dep.Task(0), *defaultChunksize, *defaultChunksize)
 			for {
-				n, err := reader.Read(ctx, buf)
+				var n int
+				n, err = reader.Read(ctx, buf)
 				if err != nil && err != sliceio.EOF {
 					return nil, errors.E("error reading %v", dep.Task(0).String(), err)
 				}
-				if err := combiner.Combine(ctx, buf.Slice(0, n)); err != nil {
-					return nil, errors.E(errors.Fatal, "failed to combine %v", dep.Task(0).String(), err)
+				if combineErr := combiner.Combine(ctx, buf.Slice(0, n)); combineErr != nil {
+					return nil, errors.E(errors.Fatal, "failed to combine %v", dep.Task(0).String(), combineErr)
 				}
 				if err == sliceio.EOF {
 					break
@@ -185,7 +186,7 @@ func (*localExecutor) HandleDebug(*http.ServeMux) {}
 // the task's partitioner in order to determine the correct partition.
 func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf taskBuffer, err error) {
 	if task.NumOut() == 0 {
-		_, err := out.Read(ctx, frame.Empty)
+		_, err = out.Read(ctx, frame.Empty)
 		if err == sliceio.EOF {
 			err = nil
 		}

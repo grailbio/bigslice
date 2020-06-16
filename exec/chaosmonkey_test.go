@@ -73,8 +73,8 @@ func TestChaosMonkey(t *testing.T) {
 		// Aggressively kill machines in the beginning, and then back off
 		// so that we have a chance to actually recover.
 		var (
-			wait  = time.Second
-			start = time.Now()
+			wait        = time.Second
+			killerStart = time.Now()
 		)
 		for {
 			select {
@@ -87,7 +87,7 @@ func TestChaosMonkey(t *testing.T) {
 			if system.Kill(nil) {
 				log.Print("the simian army claimed yet another victim!")
 			}
-			if time.Since(start) > time.Minute {
+			if time.Since(killerStart) > time.Minute {
 				return nil
 			}
 		}
