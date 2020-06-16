@@ -339,16 +339,17 @@ func TestMultiPhaseEval(t *testing.T) {
 	}
 
 	eval := func() (wait func()) {
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
+		var g errgroup.Group
+		g.Go(func() error {
 			t.Helper()
-			defer wg.Done()
-			if err := Eval(context.Background(), testExecutor{}, tasks, nil); err != nil {
+			return Eval(context.Background(), testExecutor{}, tasks, nil)
+		})
+		return func() {
+			t.Helper()
+			if err := g.Wait(); err != nil {
 				t.Fatal(err)
 			}
-		}()
-		return wg.Wait
+		}
 	}
 
 	wait := eval()

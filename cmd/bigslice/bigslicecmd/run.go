@@ -30,5 +30,4 @@ func Run(ctx context.Context, args []string) {
 	cmd.Stdin = os.Stdin
 	must.Nil(cmd.Run())
 	must.Nil(os.Remove(binary))
-	return
 }

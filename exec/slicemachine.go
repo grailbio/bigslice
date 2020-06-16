@@ -125,7 +125,7 @@ func (s *sliceMachine) Assign(task *Task) {
 
 // Go manages a sliceMachine: it polls stats at regular intervals and
 // marks tasks as lost when a machine fails.
-func (s *sliceMachine) Go(ctx context.Context) error {
+func (s *sliceMachine) Go(ctx context.Context) {
 	stopped := s.Wait(bigmachine.Stopped)
 loop:
 	for ctx.Err() == nil {
@@ -204,7 +204,6 @@ loop:
 	for _, task := range tasks {
 		task.Set(TaskLost)
 	}
-	return ctx.Err()
 }
 
 // Lost reports whether this machine is considered lost.

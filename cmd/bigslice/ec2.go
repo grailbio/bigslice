@@ -61,7 +61,7 @@ func setupEc2Cmd(args []string) {
 		securityGroup = flags.String("securitygroup", "bigslice", "name of the security group to set up")
 	)
 	flags.Usage = func() { setupEc2Usage(flags) }
-	flags.Parse(args)
+	must.Nil(flags.Parse(args), "parsing flags")
 	if flags.NArg() != 0 {
 		flags.Usage()
 	}

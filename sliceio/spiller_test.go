@@ -22,7 +22,11 @@ func TestSpiller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer spill.Cleanup()
+	defer func() {
+		if err = spill.Cleanup(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	if _, err = spill.Spill(f1); err != nil {
 		t.Fatal(err)
 	}

@@ -254,7 +254,7 @@ type graph struct {
 }
 
 func (g graph) Sort() {
-	sort.Sort(sort.StringSlice(g.nodes))
+	sort.Strings(g.nodes)
 	sort.Slice(g.edges, func(i, j int) bool {
 		if g.edges[i].src != g.edges[j].src {
 			return g.edges[i].src < g.edges[j].src

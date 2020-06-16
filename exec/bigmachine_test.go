@@ -561,7 +561,9 @@ type readSeekerOpenerAt struct {
 }
 
 func (o readSeekerOpenerAt) OpenAt(ctx context.Context, offset int64) (io.ReadCloser, error) {
-	o.r.Seek(offset, io.SeekStart)
+	if _, err := o.r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
 	return ioutil.NopCloser(o.r), nil
 }
 
@@ -594,7 +596,9 @@ func run(t *testing.T, x *bigmachineExecutor, tasks []*Task, expect TaskState) {
 		go x.Run(task)
 	}
 	for _, task := range tasks {
-		task.WaitState(context.Background(), expect)
+		if _, err := task.WaitState(context.Background(), expect); err != nil {
+			t.Fatalf("error waiting for state %v: %v", expect, err)
+		}
 		task.Lock()
 		if got, want := task.state, expect; got != want {
 			t.Fatalf("task %v: got %v, want %v", task, got, want)

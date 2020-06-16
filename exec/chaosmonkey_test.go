@@ -98,5 +98,7 @@ func TestChaosMonkey(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	g.Wait()
+	if err = g.Wait(); err != nil {
+		t.Fatal(err)
+	}
 }

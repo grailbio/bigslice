@@ -310,7 +310,14 @@ func (c *combiner) Discard() error {
 // Reader returns a reader that streams the contents of this combiner.
 // A call to Reader invalidates the combiner.
 func (c *combiner) Reader() (sliceio.Reader, error) {
-	defer c.spiller.Cleanup()
+	defer func() {
+		if cleanupErr := c.spiller.Cleanup(); cleanupErr != nil {
+			// Consider temporary file cleanup to be best-effort.
+			log.Debug.Printf(
+				"combiner %s: failed to clean up temporary files: %v",
+				c.name, cleanupErr)
+		}
+	}()
 	readers, err := c.spiller.ClosingReaders()
 	if err != nil {
 		return nil, err
