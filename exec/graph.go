@@ -14,7 +14,7 @@ import (
 
 func (s *Session) handleDebug(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("content-type", "text/html; charset=utf-8")
-	io.WriteString(w, debugIndexHtml)
+	_, _ = io.WriteString(w, debugIndexHtml)
 }
 
 var debugIndexHtml = `<!DOCTYPE html>
@@ -97,7 +97,7 @@ func (s *Session) handleTasksGraph(w http.ResponseWriter, r *http.Request) {
 
 func (s *Session) handleTasks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("content-type", "text/html; charset=utf-8")
-	io.WriteString(w, tasksGraphHtml)
+	_, _ = io.WriteString(w, tasksGraphHtml)
 }
 
 var tasksGraphHtml = `<!DOCTYPE html>

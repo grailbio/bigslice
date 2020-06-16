@@ -178,7 +178,7 @@ type fileStore struct {
 
 func (s *fileStore) path(task TaskName, partition int) string {
 	h := fnv.New32a()
-	h.Write([]byte(task.String()))
+	_, _ = h.Write([]byte(task.String()))
 	h0 := int64(h.Sum(nil)[0])
 	path := file.Join(s.Prefix, strconv.FormatInt(h0, 16), task.Op)
 	if task.IsCombiner() {
