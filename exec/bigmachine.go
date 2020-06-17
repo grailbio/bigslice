@@ -403,12 +403,8 @@ func monitorTaskStats(ctx context.Context, m *sliceMachine, task *Task) {
 		}
 	}
 	for ctx.Err() == nil {
-		req := taskStatsRequest{
-			Name:       task.Name,
-			Invocation: task.Invocation.Index,
-		}
 		var vals *stats.Values
-		err := m.RetryCall(ctx, "Worker.TaskStats", req, &vals)
+		err := m.RetryCall(ctx, "Worker.TaskStats", task.Name, &vals)
 		if err != nil {
 			log.Error.Printf("error getting task stats from %s: %v", m.Addr, err)
 			wait()
@@ -1018,23 +1014,13 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	return nil
 }
 
-// TODO(jcharumilind): TaskName now has enough information on its own; get rid
-// of this struct.
-type taskStatsRequest struct {
-	// Invocation is the invocation from which the task was compiled.
-	Invocation uint64
-
-	// Name is the name of the task compiled from Invocation.
-	Name TaskName
-}
-
 // TaskStats returns the stats for the current or most recent run of a task on
 // w. This can be polled to display task status.
-func (w *worker) TaskStats(ctx context.Context, req taskStatsRequest, vals *stats.Values) error {
+func (w *worker) TaskStats(ctx context.Context, taskName TaskName, vals *stats.Values) error {
 	w.mu.Lock()
-	namedStats := w.taskStats[req.Invocation]
+	namedStats := w.taskStats[taskName.InvIndex]
 	w.mu.Unlock()
-	taskStats := namedStats[req.Name]
+	taskStats := namedStats[taskName]
 	taskStats.AddAll(*vals)
 	return nil
 }
