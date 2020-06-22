@@ -118,15 +118,16 @@ const shakespeare = "https://ocw.mit.edu/ans7870/6"+
 
 
 func main() {
-	sess, shutdown := sliceconfig.Parse()
-	defer shutdown()
+	sess := sliceconfig.Parse()
+	defer sess.Shutdown()
 
 	ctx := context.Background()
 	tokens, err := sess.Run(ctx, wordCount, shakespeare)
 	if err != nil {
 		log.Fatal(err)
 	}
-	scan := tokens.Scan(ctx)
+	scanner := tokens.Scanner()
+	defer scanner.Close()
 	type counted struct {
 		token string
 		count int
@@ -136,10 +137,10 @@ func main() {
 		count  int
 		counts []counted
 	)
-	for scan.Scan(ctx, &token, &count) {
+	for scanner.Scan(ctx, &token, &count) {
 		counts = append(counts, counted{token, count})
 	}
-	if err := scan.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
 
