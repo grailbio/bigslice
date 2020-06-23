@@ -25,3 +25,8 @@ $ git clone https://github.com/grailbio/bigslice
 $ cd bigslice
 $ GO111MODULE=on go test
 ```
+
+If you experience errors running tests, and see `too many open files` in the logs, you can increase the maximum number of open files by running
+```
+ulimit -n 2000
+```
