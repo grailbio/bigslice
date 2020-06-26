@@ -25,3 +25,8 @@ $ git clone https://github.com/grailbio/bigslice
 $ cd bigslice
 $ GO111MODULE=on go test
 ```
+
+If tests fail with `socket: too many open files` errors, try increasing the maximum number of open files by running
+```
+$ ulimit -n 2000
+```
