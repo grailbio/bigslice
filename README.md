@@ -19,14 +19,13 @@ library to create an ad hoc cluster on a cloud provider.
 
 Bigslice uses Go modules to capture its dependencies;
 no tooling other than the base Go install is required.
-
 ```
 $ git clone https://github.com/grailbio/bigslice
 $ cd bigslice
 $ GO111MODULE=on go test
 ```
 
-If tests fail with `socket: too many open files` errors, try increasing the maximum number of open files by running
+If tests fail with `socket: too many open files` errors, try increasing the maximum number of open files.
 ```
 $ ulimit -n 2000
 ```
