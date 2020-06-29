@@ -13,7 +13,7 @@ library to create an ad hoc cluster on a cloud provider.
 - website: [bigslice.io](https://bigslice.io/)
 - API documentation: [godoc.org/github.com/grailbio/bigslice](https://godoc.org/github.com/grailbio/bigslice)
 - issue tracker: [github.com/grailbio/bigslice/issues](https://github.com/grailbio/bigslice/issues)
-- Travis CI: [![Travis CI](https://travis-ci.org/grailbio/bigslice.svg) https://travis-ci.org/grailbio/bigslice](https://travis-ci.org/grailbio/bigslice)
+- [![CI](https://github.com/grailbio/bigslice/workflows/CI/badge.svg)](https://github.com/grailbio/bigslice/actions?query=workflow%3ACI) [![Full Test](https://github.com/grailbio/bigslice/workflows/Full%20Test/badge.svg)](https://github.com/grailbio/bigslice/actions?query=workflow%3A%22Full+Test%22)
 
 # Developing Bigslice
 
