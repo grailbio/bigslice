@@ -577,8 +577,8 @@ func (w *worker) Compile(ctx context.Context, invReader io.Reader, _ *struct{}) 
 			err = errors.E(errors.Fatal, err)
 		}
 	}()
-	var inv execInvocation
 	dec := gob.NewDecoder(invReader)
+	var inv execInvocation
 	if err = dec.Decode(&inv); err != nil {
 		return errors.E(errors.Fatal, errors.Invalid, "could not decode invocation", err)
 	}
