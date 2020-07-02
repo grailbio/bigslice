@@ -203,7 +203,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 		// when sending the invocation to each worker.
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(inv); err != nil {
-			return errors.E(errors.Fatal, errors.Invalid, err)
+			return errors.E(errors.Fatal, errors.Invalid, "error gob-encoding invocation", err)
 		}
 		b.encodedInvocations[inv.Index] = buf.Bytes()
 	}
@@ -580,7 +580,7 @@ func (w *worker) Compile(ctx context.Context, invReader io.Reader, _ *struct{}) 
 	if err = gob.NewDecoder(invReader).Decode(&inv); err != nil {
 		// We may want to distinguish read errors from decode errors and
 		// consider the latter fatal.
-		return errors.E(errors.Invalid, "could not decode invocation", err)
+		return errors.E(errors.Invalid, "error gob-decoding invocation", err)
 	}
 	return w.compiles.Do(inv.Index, func() error {
 		// Substitute invocation refs for the results of the invocation.
