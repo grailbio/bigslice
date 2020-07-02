@@ -99,13 +99,13 @@ type bigmachineExecutor struct {
 	invocations    map[uint64]execInvocation
 	invocationDeps map[uint64]map[uint64]bool
 
-	// invocationBuffers holds the gob-encoded representations of the
+	// encodedInvocations holds the gob-encoded representations of the
 	// corresponding invocations. Because Func arguments, held in invocations,
 	// may be large, we memoize the encoded versions so that we don't pay the
 	// cost of gob-encoding the invocations for each worker (CPU to encode;
 	// memory for ephemeral buffers in gob). Instead, we do it once and reuse
 	// the result for each worker.
-	invocationBuffers map[uint64]bytes.Buffer
+	encodedInvocations map[uint64][]byte
 
 	// Worker is the (configured) worker service to instantiate on
 	// allocated machines.
@@ -146,7 +146,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.invocations = make(map[uint64]execInvocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
-	b.invocationBuffers = make(map[uint64]bytes.Buffer)
+	b.encodedInvocations = make(map[uint64][]byte)
 	b.worker = &worker{
 		MachineCombiners: sess.machineCombiners,
 	}
@@ -206,7 +206,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 		if err := enc.Encode(inv); err != nil {
 			return errors.E(errors.Fatal, errors.Invalid, err)
 		}
-		b.invocationBuffers[inv.Index] = invocationBuffer
+		b.encodedInvocations[inv.Index] = invocationBuffer.Bytes()
 	}
 
 	// Now traverse the invocation graph bottom-up, making sure
@@ -215,15 +215,15 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 	// TODO(marius): allow for parallel compilation as some users are
 	// performing expensive computations inside of bigslice.Funcs.
 	var (
-		todo              = []uint64{inv.Index}
-		invocations       []execInvocation
-		invocationBuffers []bytes.Buffer
+		todo               = []uint64{inv.Index}
+		invocations        []execInvocation
+		encodedInvocations [][]byte
 	)
 	for len(todo) > 0 {
 		var i uint64
 		i, todo = todo[0], todo[1:]
 		invocations = append(invocations, b.invocations[i])
-		invocationBuffers = append(invocationBuffers, b.invocationBuffers[i])
+		encodedInvocations = append(encodedInvocations, b.encodedInvocations[i])
 		for j := range b.invocationDeps[i] {
 			todo = append(todo, j)
 		}
@@ -241,7 +241,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 				args[i] = truncatef(inv.Args[i])
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
-			var invReader io.Reader = &invocationBuffers[i]
+			var invReader io.Reader = bytes.NewReader(encodedInvocations[i])
 			err := m.RetryCall(ctx, "Worker.Compile", invReader, nil)
 			if err != nil {
 				b.sess.tracer.Event(m, inv, "E", "error", err)
