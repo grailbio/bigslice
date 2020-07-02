@@ -201,12 +201,11 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 
 		// gob-encode the invocation, so we can reuse the work of gob-encoding
 		// when sending the invocation to each worker.
-		var invocationBuffer bytes.Buffer
-		enc := gob.NewEncoder(&invocationBuffer)
-		if err := enc.Encode(inv); err != nil {
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(inv); err != nil {
 			return errors.E(errors.Fatal, errors.Invalid, err)
 		}
-		b.encodedInvocations[inv.Index] = invocationBuffer.Bytes()
+		b.encodedInvocations[inv.Index] = buf.Bytes()
 	}
 
 	// Now traverse the invocation graph bottom-up, making sure
