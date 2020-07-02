@@ -580,7 +580,9 @@ func (w *worker) Compile(ctx context.Context, invReader io.Reader, _ *struct{}) 
 	dec := gob.NewDecoder(invReader)
 	var inv execInvocation
 	if err = dec.Decode(&inv); err != nil {
-		return errors.E(errors.Fatal, errors.Invalid, "could not decode invocation", err)
+		// We may want to distinguish read errors from decode errors and
+		// consider the latter fatal.
+		return errors.E(errors.Invalid, "could not decode invocation", err)
 	}
 	return w.compiles.Do(inv.Index, func() error {
 		// Substitute invocation refs for the results of the invocation.
