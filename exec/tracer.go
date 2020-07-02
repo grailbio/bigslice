@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/internal/trace"
 )
 
@@ -118,7 +117,7 @@ func (t *tracer) Event(mach *sliceMachine, subject interface{}, ph string, args 
 		event.Cat = "task"
 		t.assignTid(mach, ph, t.taskEvents[arg], &event)
 		t.taskEvents[arg] = append(t.taskEvents[arg], event)
-	case bigslice.Invocation:
+	case execInvocation:
 		var name strings.Builder
 		fmt.Fprint(&name, arg.Index)
 		if arg.Exclusive {

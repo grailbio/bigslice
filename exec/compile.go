@@ -108,9 +108,8 @@ func (p partitioner) NumPartition() int {
 // to provide each actual invocation with a "root" slice from where
 // all other slices must be derived. This simplifies the
 // implementation but may make the API a little confusing.
-func compile(env CompileEnv, slice bigslice.Slice, inv bigslice.Invocation, machineCombiners bool) (tasks []*Task, err error) {
+func compile(inv execInvocation, slice bigslice.Slice, machineCombiners bool) (tasks []*Task, err error) {
 	c := compiler{
-		env:              env,
 		namer:            make(taskNamer),
 		inv:              inv,
 		machineCombiners: machineCombiners,
@@ -172,9 +171,8 @@ func (e CompileEnv) IsWritable() bool {
 }
 
 type compiler struct {
-	env              CompileEnv
 	namer            taskNamer
-	inv              bigslice.Invocation
+	inv              execInvocation
 	machineCombiners bool
 	memo             map[memoKey][]*Task
 }
@@ -233,7 +231,6 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 		for shard, task := range result.tasks {
 			tasks[shard] = &Task{
 				Type:       slice,
-				CompileEnv: c.env,
 				Invocation: c.inv,
 				Name: TaskName{
 					InvIndex: c.inv.Index,
@@ -270,8 +267,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	tasks = make([]*Task, slice.NumShard())
 	for i := range tasks {
 		tasks[i] = &Task{
-			Type:       slices[0],
-			CompileEnv: c.env,
+			Type: slices[0],
 			Name: TaskName{
 				InvIndex: c.inv.Index,
 				Op:       opName,
@@ -335,10 +331,10 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
-		if c.env.IsWritable() {
+		if c.inv.Env.IsWritable() {
 			for shard := range tasks {
 				if shardCache.IsCached(shard) {
-					c.env.MarkCached(tasks[shard].Name)
+					c.inv.Env.MarkCached(tasks[shard].Name)
 				}
 			}
 		}
@@ -347,7 +343,7 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 				shard = shard
 				prev  = tasks[shard].Do
 			)
-			if c.env.IsCached(tasks[shard].Name) {
+			if c.inv.Env.IsCached(tasks[shard].Name) {
 				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := shardCache.CacheReader(shard)
 					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
