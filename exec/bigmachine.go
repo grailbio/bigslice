@@ -187,15 +187,15 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 			if !ok {
 				continue
 			}
-			inv.Args[i] = invocationRef{result.inv.Index}
-			if _, ok := b.invocations[result.inv.Index]; !ok {
+			inv.Args[i] = invocationRef{result.invIndex}
+			if _, ok := b.invocations[result.invIndex]; !ok {
 				b.mu.Unlock()
-				return fmt.Errorf("invalid result invocation %x", result.inv.Index)
+				return fmt.Errorf("invalid result invocation %x", result.invIndex)
 			}
 			if b.invocationDeps[inv.Index] == nil {
 				b.invocationDeps[inv.Index] = make(map[uint64]bool)
 			}
-			b.invocationDeps[inv.Index][result.inv.Index] = true
+			b.invocationDeps[inv.Index][result.invIndex] = true
 		}
 		b.invocations[inv.Index] = inv
 

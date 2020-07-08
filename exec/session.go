@@ -344,10 +344,10 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	}
 	s.mu.Unlock()
 	return &Result{
-		Slice: slice,
-		sess:  s,
-		inv:   inv,
-		tasks: tasks,
+		Slice:    slice,
+		sess:     s,
+		invIndex: inv.Index,
+		tasks:    tasks,
 	}, Eval(ctx, s.executor, tasks, taskGroup)
 }
 
@@ -397,7 +397,7 @@ func (s *Session) HandleDebug(handler *http.ServeMux) {
 // bigslice.Func.
 type Result struct {
 	bigslice.Slice
-	inv       execInvocation
+	invIndex  uint64
 	sess      *Session
 	tasks     []*Task
 	initScope sync.Once

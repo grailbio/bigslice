@@ -472,7 +472,10 @@ func TestBigmachineCompiler(t *testing.T) {
 	firstTasks := tasks
 	run(t, x, tasks, TaskOk)
 	tasks, _, _ = compileFunc(func() bigslice.Slice {
-		return bigslice.Map(&Result{Slice: slice, inv: inv, tasks: firstTasks}, func(i int) int { return i * 2 })
+		return bigslice.Map(
+			&Result{Slice: slice, invIndex: inv.Index, tasks: firstTasks},
+			func(i int) int { return i * 2 },
+		)
 	})
 	run(t, x, tasks, TaskOk)
 }
