@@ -265,6 +265,21 @@ func (s *Session) start() {
 	})
 }
 
+// execInvocation embeds bigslice.Invocation and is augmented with fields used
+// for execution.
+type execInvocation struct {
+	bigslice.Invocation
+	// Env is the compilation environment
+	Env CompileEnv
+}
+
+func makeExecInvocation(inv bigslice.Invocation) execInvocation {
+	return execInvocation{
+		Invocation: inv,
+		Env:        makeCompileEnv(),
+	}
+}
+
 // statusMu is used to prevent interleaving of slice and task status groups.
 // Unrelated status groups may be interleaved, but we are at least internally
 // consistent.
@@ -277,7 +292,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		defer typecheck.Location(file, line)
 	}
 	var (
-		inv        bigslice.Invocation
+		inv        execInvocation
 		slice      bigslice.Slice
 		tasks      []*Task
 		sliceGroup *status.Group
@@ -291,17 +306,16 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	err := func() error {
 		statusMu.Lock()
 		defer statusMu.Unlock()
-		inv = funcv.Invocation(location, args...)
+		inv = makeExecInvocation(funcv.Invocation(location, args...))
 		slice = inv.Invoke()
-		env := makeCompileEnv()
 		var err error
-		tasks, err = compile(env, slice, inv, s.machineCombiners)
+		tasks, err = compile(inv, slice, s.machineCombiners)
 		if err != nil {
 			return err
 		}
 		// Freeze the environment to ensure that compilations are consistent
 		// (e.g. across workers).
-		env.Freeze()
+		inv.Env.Freeze()
 		// TODO(marius): give a way to provide names for these groups
 		if s.status != nil {
 			// Make the slice status group come before the more granular task
@@ -330,10 +344,10 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 	}
 	s.mu.Unlock()
 	return &Result{
-		Slice: slice,
-		sess:  s,
-		inv:   inv,
-		tasks: tasks,
+		Slice:    slice,
+		sess:     s,
+		invIndex: inv.Index,
+		tasks:    tasks,
 	}, Eval(ctx, s.executor, tasks, taskGroup)
 }
 
@@ -383,7 +397,7 @@ func (s *Session) HandleDebug(handler *http.ServeMux) {
 // bigslice.Func.
 type Result struct {
 	bigslice.Slice
-	inv       bigslice.Invocation
+	invIndex  uint64
 	sess      *Session
 	tasks     []*Task
 	initScope sync.Once

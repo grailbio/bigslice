@@ -106,10 +106,11 @@ func TestCompile(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			inv := bigslice.Func(c.f).Invocation("<unknown>")
+			f := bigslice.Func(c.f)
+			inv := makeExecInvocation(f.Invocation("<unknown>"))
 			inv.Index = 1
 			slice := inv.Invoke()
-			tasks, err := compile(makeCompileEnv(), slice, inv, false)
+			tasks, err := compile(inv, slice, false)
 			if err != nil {
 				t.Fatalf("compilation failed")
 			}
@@ -154,9 +155,7 @@ func TestCompileEnv(t *testing.T) {
 		slice = fakeCache(slice, shardIsCached)
 		return slice
 	})
-	env := makeCompileEnv()
-
-	inv := f.Invocation("<unknown>")
+	inv := makeExecInvocation(f.Invocation("<unknown>"))
 	inv.Index = 0
 
 	cachedSet0 := make(map[int]bool)
@@ -165,14 +164,14 @@ func TestCompileEnv(t *testing.T) {
 	}
 	cachedSet = cachedSet0
 	slice0 := inv.Invoke()
-	tasks, err := compile(env, slice0, inv, false)
+	tasks, err := compile(inv, slice0, false)
 	if err != nil {
 		t.Fatalf("compilation failed")
 	}
 	for _, task := range tasks {
 		cached := cachedSet0[task.Name.Shard]
 		// Verify that env has been updated with the cache state.
-		if got, want := env.IsCached(task.Name), cached; got != want {
+		if got, want := inv.Env.IsCached(task.Name), cached; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
 		// Verify that the resulting tasks reflect the cache state.
@@ -183,21 +182,21 @@ func TestCompileEnv(t *testing.T) {
 
 	// Freeze the environment, and verify that compilation uses the environment
 	// and not the current cache state.
-	env.Freeze()
+	inv.Env.Freeze()
 	cachedSet1 := make(map[int]bool)
 	for _, shard := range []int{2, 4, 7} { // different cache state from above.
 		cachedSet1[shard] = true
 	}
 	cachedSet = cachedSet1
 	slice1 := inv.Invoke()
-	tasks, err = compile(env, slice1, inv, false)
+	tasks, err = compile(inv, slice1, false)
 	if err != nil {
 		t.Fatalf("compilation failed")
 	}
 	for _, task := range tasks {
 		cached := cachedSet0[task.Name.Shard]
 		// Verify that the environment is unmodified.
-		if got, want := env.IsCached(task.Name), cached; got != want {
+		if got, want := inv.Env.IsCached(task.Name), cached; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
 		// Verify that the tasks are compiled according to the environment,

@@ -80,12 +80,12 @@ func TestBigmachineExecutorExclusive(t *testing.T) {
 	var maxIndex int
 	wg.Add(2 * N) //one for local invocation; one for remote
 	for i := 0; i < N; i++ {
-		inv := fn.Invocation("<test>", i)
+		inv := makeExecInvocation(fn.Invocation("<test>", i))
 		if ix := int(inv.Index); ix > maxIndex {
 			maxIndex = ix
 		}
 		slice := inv.Invoke()
-		tasks, err := compile(makeCompileEnv(), slice, inv, false)
+		tasks, err := compile(inv, slice, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,9 +120,9 @@ func TestBigmachineExecutorTaskExclusive(t *testing.T) {
 		}, bigslice.Exclusive)
 		return slice
 	})
-	inv := fn.Invocation("<test>")
+	inv := makeExecInvocation(fn.Invocation("<test>"))
 	slice := inv.Invoke()
-	tasks, err := compile(makeCompileEnv(), slice, inv, false)
+	tasks, err := compile(inv, slice, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,9 +218,9 @@ func TestBigmachineExecutorProcs(t *testing.T) {
 		}, bigslice.Procs(2))
 		return slice
 	})
-	inv := fn.Invocation("<test>")
+	inv := makeExecInvocation(fn.Invocation("<test>"))
 	slice := inv.Invoke()
-	tasks, err := compile(makeCompileEnv(), slice, inv, false)
+	tasks, err := compile(inv, slice, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +472,10 @@ func TestBigmachineCompiler(t *testing.T) {
 	firstTasks := tasks
 	run(t, x, tasks, TaskOk)
 	tasks, _, _ = compileFunc(func() bigslice.Slice {
-		return bigslice.Map(&Result{Slice: slice, inv: inv, tasks: firstTasks}, func(i int) int { return i * 2 })
+		return bigslice.Map(
+			&Result{Slice: slice, invIndex: inv.Index, tasks: firstTasks},
+			func(i int) int { return i * 2 },
+		)
 	})
 	run(t, x, tasks, TaskOk)
 }
@@ -621,22 +624,22 @@ func bigmachineTestExecutor(p int) (exec *bigmachineExecutor, stop func()) {
 	}
 }
 
-func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
+func compileFunc(f func() bigslice.Slice) ([]*Task, bigslice.Slice, execInvocation) {
 	fn := bigslice.Func(f)
-	inv := fn.Invocation("")
+	inv := makeExecInvocation(fn.Invocation(""))
 	slice := inv.Invoke()
-	tasks, err := compile(makeCompileEnv(), slice, inv, false)
+	tasks, err := compile(inv, slice, false)
 	if err != nil {
 		panic(err)
 	}
 	return tasks, slice, inv
 }
 
-func compileFuncExclusive(f func() bigslice.Slice) ([]*Task, bigslice.Slice, bigslice.Invocation) {
+func compileFuncExclusive(f func() bigslice.Slice) ([]*Task, bigslice.Slice, execInvocation) {
 	fn := bigslice.Func(f).Exclusive()
-	inv := fn.Invocation("")
+	inv := makeExecInvocation(fn.Invocation(""))
 	slice := inv.Invoke()
-	tasks, err := compile(makeCompileEnv(), slice, inv, false)
+	tasks, err := compile(inv, slice, false)
 	if err != nil {
 		panic(err)
 	}
