@@ -578,8 +578,6 @@ func (w *worker) Compile(ctx context.Context, invReader io.Reader, _ *struct{}) 
 	}()
 	var inv execInvocation
 	if err = gob.NewDecoder(invReader).Decode(&inv); err != nil {
-		// We may want to distinguish read errors from decode errors and
-		// consider the latter fatal.
 		return errors.E(errors.Invalid, "error gob-decoding invocation", err)
 	}
 	return w.compiles.Do(inv.Index, func() error {
