@@ -98,7 +98,7 @@ There are (at least) two use cases for `bigslice.Procs`.
 `bigslice.Exclusive()` specifies that each task compiled from a slice should
 occupy an entire instance, regardless of the type of instance. (It is
 practically equivalent to
-`bigslice.Procs(nThatIsGreaterThanNumberOfCoresPerInstance)`.)
+`bigslice.Procs(nThatIsAtLeastNumberOfProcsPerInstance)`.)
 
 Use `bigslice.Exclusive()` if your tasks will consume the entire resources of a
 machine, e.g. fully occupy a GPU.
