@@ -51,7 +51,7 @@ type Executor interface {
 	// Run runs a task. The executor sets the state of the task as it
 	// progresses. The task should enter in state TaskWaiting; by the
 	// time Run returns the task state is >= TaskOk.
-	Run(*Task)
+	Run(*Task, context.Context)
 
 	// Reader returns a locally accessible ReadCloser for the requested task.
 	Reader(*Task, int) sliceio.ReadCloser
@@ -77,9 +77,6 @@ type Executor interface {
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
 func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.Group) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	state := newState()
 	for _, task := range roots {
 		state.Enqueue(task)
@@ -120,7 +117,7 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 				task.state = TaskWaiting
 				task.Status = status
 				startRunTime = time.Now()
-				go executor.Run(task)
+				go executor.Run(task, ctx)
 			} else {
 				status.Print("running in another invocation")
 			}

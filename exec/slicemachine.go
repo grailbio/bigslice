@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
@@ -189,6 +188,8 @@ loop:
 		select {
 		case <-time.After(statsPollInterval):
 		case <-ctx.Done():
+			// Job has finished. Don't need to track this machine anymore.
+			return
 		case <-stopped:
 			break loop
 		}
@@ -636,9 +637,7 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, ma
 				Status:       status,
 				maxTaskProcs: maxTaskProcs,
 			}
-			// TODO(marius): pass a context that's tied to the evaluation
-			// lifetime, or lifetime of the machine.
-			go sm.Go(backgroundcontext.Get())
+			go sm.Go(ctx)
 			slicemachines[i] = sm
 		}()
 	}

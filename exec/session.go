@@ -287,6 +287,8 @@ var statusMu sync.Mutex
 
 func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
 	location := "<unknown>"
+	runContext, runContextCancel := context.WithCancel(ctx)
+	defer runContextCancel()
 	if _, file, line, ok := runtime.Caller(calldepth + 1); ok {
 		location = fmt.Sprintf("%s:%d", file, line)
 		defer typecheck.Location(file, line)
@@ -333,9 +335,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		return nil, err
 	}
 	if sliceGroup != nil {
-		maintainCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go maintainSliceGroup(maintainCtx, tasks, sliceGroup)
+		go maintainSliceGroup(runContext, tasks, sliceGroup)
 	}
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
@@ -348,7 +348,7 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		sess:     s,
 		invIndex: inv.Index,
 		tasks:    tasks,
-	}, Eval(ctx, s.executor, tasks, taskGroup)
+	}, Eval(runContext, s.executor, tasks, taskGroup)
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

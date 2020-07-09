@@ -11,7 +11,6 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/base/limiter"
@@ -49,8 +48,7 @@ func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	return
 }
 
-func (l *localExecutor) Run(task *Task) {
-	ctx := backgroundcontext.Get()
+func (l *localExecutor) Run(task *Task, ctx context.Context) {
 	n := 1
 	if task.Pragma.Exclusive() {
 		n = l.sess.p
