@@ -47,7 +47,6 @@ but with different aims:
 <a href="https://github.com/grailbio/bigslice">GitHub project</a> &middot;
 <a href="https://godoc.org/github.com/grailbio/bigslice">API documentation</a> &middot;
 <a href="https://github.com/grailbio/bigslice/issues">issue tracker</a> &middot;
-<a href="implementation.html">about the implementation</a> &middot;
 <a href="https://godoc.org/github.com/grailbio/bigmachine">bigmachine</a>
 </div>
 
@@ -475,6 +474,9 @@ Bigslice uses [bigmachine](https://github.com/grailbio/bigmachine)
 to manage clusters of cloud compute instances.
 See its documentation for further details.
 
+# Articles
+- <a href="implementation.html">About the implementation</a>
+- <a href="parallelism.html">Parallelism in Bigslice</a>
 
 <footer>
 The Bigslice gopher design was inspired by
