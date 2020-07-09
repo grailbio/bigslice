@@ -24,8 +24,8 @@ using EC2, each core of each instance provides a single proc.
 By default, each task occupies a single proc for its evaluation.
 
 ## Controlling parallelism
-The set of procs made available and used by a computation is subject to a few
-different factors which we'll discuss here.
+The set of procs made available and used by a computation is a function of
+configuration parameters and the computation itself.
 
 ### Proc supply
 `bigslice parallelism` specifies the number of procs that Bigslice will try to
