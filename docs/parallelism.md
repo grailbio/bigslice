@@ -64,8 +64,9 @@ instances, resulting in 18 available procs. Notice that this is more than the
 of machines necessary to provide the requested procs/parallelism.
 
 ### Proc demand
-By default, each task occupies a single proc for its evaluation. Pragmas can be
-specified on slice operations to customize this behavior.
+By default, each task occupies a single proc for its evaluation.
+Pragmas[^pragma] can be specified on slice operations to customize this
+behavior.
 
 #### `bigslice.Procs`
 `bigslice.Procs(n int)` specifies the number of procs that each task compiled
@@ -102,3 +103,9 @@ practically equivalent to
 
 Use `bigslice.Exclusive` if your tasks will consume the entire resources of a
 machine, e.g. fully occupy a GPU.
+
+[^pragma]: A pragma is a directive used to specify some intention that may
+    modify Bigslice evaluation. They are passed as optional arguments to slice
+    operations. Pragmas do not affect the results of a computation but may
+    change how machines are allocated, tasks are distributed, results are
+    materialized, etc.
