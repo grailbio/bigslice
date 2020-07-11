@@ -40,7 +40,6 @@ Available test are:
 
 	wait := flag.Bool("wait", false, "don't exit after completion")
 	sess := sliceconfig.Parse()
-	defer sess.Shutdown()
 
 	if flag.NArg() == 0 {
 		flag.Usage()
@@ -61,6 +60,7 @@ Available test are:
 	case "oom":
 		err = oomer(sess, args)
 	}
+	sess.Shutdown()
 	if *wait {
 		if err != nil {
 			log.Printf("finished with error %v: waiting", err)

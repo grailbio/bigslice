@@ -168,7 +168,7 @@ func (b *bigmachineExecutor) manager(i int, ctx context.Context) *machineManager
 			maxLoad = 0
 		}
 		b.managers[i] = newMachineManager(b.b, b.params, b.status, b.sess.Parallelism(), maxLoad, b.worker)
-		go b.managers[i].Do(ctx)
+		go b.managers[i].Do(ctx, b.isShutdown())
 	}
 	return b.managers[i]
 }
@@ -474,6 +474,10 @@ func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
 	b.b.HandleDebug(handler)
+}
+
+func (b *bigmachineExecutor) isShutdown() chan struct{} {
+	return b.sess.shutdownc
 }
 
 // Location returns the machine on which the results of the provided

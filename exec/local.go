@@ -238,6 +238,10 @@ func bufferOutput(ctx context.Context, task *Task, out sliceio.Reader) (buf task
 	return buf, nil
 }
 
+func (l *localExecutor) isShutdown() chan struct{} {
+	return l.sess.shutdownc
+}
+
 type multiReader struct {
 	q   []sliceio.Reader
 	err error

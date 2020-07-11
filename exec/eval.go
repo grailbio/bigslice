@@ -67,6 +67,9 @@ type Executor interface {
 	// http.ServeMux. This is used to serve diagnostic information relating
 	// to the executor.
 	HandleDebug(handler *http.ServeMux)
+
+	// Returns a channel which is closed when the session is shutting down
+	isShutdown() chan struct{}
 }
 
 // Eval simultaneously evaluates a set of task graphs from the

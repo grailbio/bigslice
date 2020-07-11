@@ -124,7 +124,7 @@ func (s *sliceMachine) Assign(task *Task) {
 
 // Go manages a sliceMachine: it polls stats at regular intervals and
 // marks tasks as lost when a machine fails.
-func (s *sliceMachine) Go(ctx context.Context) {
+func (s *sliceMachine) Go(ctx context.Context, shutdownc chan struct{}) {
 	stopped := s.Wait(bigmachine.Stopped)
 loop:
 	for ctx.Err() == nil {
@@ -188,7 +188,7 @@ loop:
 		select {
 		case <-time.After(statsPollInterval):
 		case <-ctx.Done():
-			// Job has finished. Don't need to track this machine anymore.
+		case <-shutdownc:
 			return
 		case <-stopped:
 			break loop
@@ -419,7 +419,7 @@ func (m *machineManager) Offer(priority, procs int) (<-chan *sliceMachine, func(
 // needed (as indicated by client's calls to Need); thus when a
 // machine is lost, it may be replaced with another should it be
 // needed.
-func (m *machineManager) Do(ctx context.Context) {
+func (m *machineManager) Do(ctx context.Context, shutdownc chan struct{}) {
 	var (
 		need, pending  int
 		startc         = make(chan startResult)
@@ -549,7 +549,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/m.machprocs, have, pending/m.machprocs, pending)
 			go func() {
-				machines := startMachines(ctx, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
+				machines := startMachines(ctx, shutdownc, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
 				startc <- startResult{
 					machines:  machines,
 					nFailures: needMachines - len(machines),
@@ -590,7 +590,7 @@ func removeMachine(ms []*sliceMachine, m *sliceMachine) []*sliceMachine {
 // on each of them. StartMachines returns a slice of successfully started
 // machines when all of them are in bigmachine.Running state. If a machine
 // fails to start, it is not included.
-func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, maxTaskProcs int, n int, worker *worker, params ...bigmachine.Param) []*sliceMachine {
+func startMachines(ctx context.Context, shutdownc chan struct{}, b *bigmachine.B, group *status.Group, maxTaskProcs int, n int, worker *worker, params ...bigmachine.Param) []*sliceMachine {
 	params = append([]bigmachine.Param{bigmachine.Services{"Worker": worker}}, params...)
 	machines, err := b.Start(ctx, n, params...)
 	if err != nil {
@@ -637,7 +637,7 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, ma
 				Status:       status,
 				maxTaskProcs: maxTaskProcs,
 			}
-			go sm.Go(ctx)
+			go sm.Go(ctx, shutdownc)
 			slicemachines[i] = sm
 		}()
 	}

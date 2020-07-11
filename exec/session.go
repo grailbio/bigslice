@@ -83,14 +83,18 @@ type Session struct {
 	// roots stores all task roots compiled by this session;
 	// used for debugging.
 	roots map[*Task]struct{}
+
+	// Channel to indicate that the session is shutting down
+	shutdownc chan struct{}
 }
 
 func newSession() *Session {
 	return &Session{
-		Context: backgroundcontext.Get(),
-		index:   atomic.AddInt32(&nextSessionIndex, 1) - 1,
-		roots:   make(map[*Task]struct{}),
-		eventer: eventlog.Nop{},
+		Context:   backgroundcontext.Get(),
+		index:     atomic.AddInt32(&nextSessionIndex, 1) - 1,
+		roots:     make(map[*Task]struct{}),
+		eventer:   eventlog.Nop{},
+		shutdownc: make(chan struct{}),
 	}
 }
 
@@ -287,8 +291,8 @@ var statusMu sync.Mutex
 
 func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncValue, args ...interface{}) (*Result, error) {
 	location := "<unknown>"
-	runContext, runContextCancel := context.WithCancel(ctx)
-	defer runContextCancel()
+	runContext, runCancel := context.WithCancel(ctx)
+	defer runCancel()
 	if _, file, line, ok := runtime.Caller(calldepth + 1); ok {
 		location = fmt.Sprintf("%s:%d", file, line)
 		defer typecheck.Location(file, line)
@@ -367,6 +371,7 @@ func (s *Session) Shutdown() {
 	if s.shutdown != nil {
 		s.shutdown()
 	}
+	close(s.shutdownc)
 	if s.tracePath != "" {
 		writeTraceFile(s.tracer, s.tracePath)
 	}
