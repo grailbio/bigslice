@@ -48,7 +48,7 @@ func (l *localExecutor) Start(sess *Session) (shutdown func()) {
 	return
 }
 
-func (l *localExecutor) Run(task *Task, ctx context.Context) {
+func (l *localExecutor) Run(ctx context.Context, task *Task) {
 	n := 1
 	if task.Pragma.Exclusive() {
 		n = l.sess.p

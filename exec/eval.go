@@ -51,7 +51,7 @@ type Executor interface {
 	// Run runs a task. The executor sets the state of the task as it
 	// progresses. The task should enter in state TaskWaiting; by the
 	// time Run returns the task state is >= TaskOk.
-	Run(*Task, context.Context)
+	Run(context.Context, *Task)
 
 	// Reader returns a locally accessible ReadCloser for the requested task.
 	Reader(*Task, int) sliceio.ReadCloser
@@ -120,7 +120,7 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 				task.state = TaskWaiting
 				task.Status = status
 				startRunTime = time.Now()
-				go executor.Run(task, ctx)
+				go executor.Run(ctx, task)
 			} else {
 				status.Print("running in another invocation")
 			}
