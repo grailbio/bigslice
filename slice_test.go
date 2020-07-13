@@ -942,7 +942,7 @@ func ExampleCache() {
 		return x
 	})
 	// The first evaluation causes the map to be evaluated.
-	slice0 := bigslice.Cache(context.Background(), slice, dir)
+	slice0 := bigslice.Cache(context.Background(), slice, dir+"/")
 	fmt.Println("# first evaluation")
 	slicetest.Print(slice0)
 	fmt.Printf("computed: %t\n", computed.Load().(bool))
@@ -951,7 +951,7 @@ func ExampleCache() {
 	// will read from the cache that was written by the first evaluation, so the
 	// map will not be evaluated.
 	computed.Store(false)
-	slice1 := bigslice.Cache(context.Background(), slice, dir)
+	slice1 := bigslice.Cache(context.Background(), slice, dir+"/")
 	fmt.Println("# second evaluation")
 	slicetest.Print(slice1)
 	fmt.Printf("computed: %t\n", computed.Load().(bool))
