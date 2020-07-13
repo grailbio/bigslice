@@ -1013,3 +1013,68 @@ func ExampleMap() {
 	// 2 4 two.squared
 	// 3 9 three.squared
 }
+
+func ExampleReaderFunc() {
+	const numShards = 6
+	const alphabet = "abcdefghijklmnopqrstuvwxyz"
+	type state struct {
+		index int
+	}
+	// Our reader will produce a slice of the alphabet in two columns:
+	// - the (1-indexed) index of the letter in the alphabet
+	// - the letter itself
+	slice := bigslice.ReaderFunc(numShards,
+		func(shard int, s *state, is []int, ss []string) (int, error) {
+			// Each shard will handle a portion of the alphabet.
+			// Shard 0 reads letters 1, 7, 13, ....
+			// Shard 1 reads letters 2, 8, 14, ....
+			// ...
+			// Shard 5 reads letters 6, 12, 18, ....
+			if s.index == 0 {
+				// This is the first call, so we initialize our state.
+				s.index = shard + 1
+			}
+			for n := 0; ; n++ {
+				if len(alphabet) < s.index {
+					// Our shard is complete, so return EOF.
+					return n, sliceio.EOF
+				}
+				if n == len(is) {
+					// We have filled the passed buffers, so there is nothing
+					// left to do in this invocation.
+					return n, nil
+				}
+				is[n] = s.index
+				ss[n] = string(alphabet[s.index-1])
+				s.index += numShards
+			}
+		})
+	slicetest.Print(slice)
+	// Output:
+	// 1 a
+	// 2 b
+	// 3 c
+	// 4 d
+	// 5 e
+	// 6 f
+	// 7 g
+	// 8 h
+	// 9 i
+	// 10 j
+	// 11 k
+	// 12 l
+	// 13 m
+	// 14 n
+	// 15 o
+	// 16 p
+	// 17 q
+	// 18 r
+	// 19 s
+	// 20 t
+	// 21 u
+	// 22 v
+	// 23 w
+	// 24 x
+	// 25 y
+	// 26 z
+}
