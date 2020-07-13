@@ -5,9 +5,13 @@
 package bigslice_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
@@ -1077,4 +1081,79 @@ func ExampleReaderFunc() {
 	// 24 x
 	// 25 y
 	// 26 z
+}
+
+func ExampleScan() {
+	const numShards = 3
+	slice := bigslice.Const(numShards, []string{"a", "b", "c", "d", "e", "f"})
+	// Our scan function will write a file for each shard into this temp
+	// directory.
+	dir, err := ioutil.TempDir("", "example-scan")
+	if err != nil {
+		log.Fatalf("could not create temp directory: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	slice = bigslice.Scan(slice,
+		func(shard int, scanner *sliceio.Scanner) error {
+			// We write a file for each shard, e.g. "2-of-3", with the elements
+			// of the shard. Because shards are processed in parallel, we
+			// process them independently.
+			var (
+				name = fmt.Sprintf("%d-of-%d", shard+1, numShards)
+				path = filepath.Join(dir, name)
+				s    string
+				ctx  = context.Background()
+			)
+			f, err := os.Create(path)
+			if err != nil {
+				return fmt.Errorf("could not create %s: %v", path, err)
+			}
+			for scanner.Scan(ctx, &s) {
+				f.WriteString(fmt.Sprintf("element: %s\n", s))
+			}
+			err = f.Close()
+			if err != nil {
+				return fmt.Errorf("error closing %s: %v", path, err)
+			}
+			return scanner.Err()
+		})
+	// Print the resulting slice. This forces (local) evaluation of the slice.
+	// Notice that this prints no output because slice is empty. Scanning
+	// consumes the slice.
+	fmt.Println("# slice")
+	slicetest.Print(slice)
+	// Now print the side-effects of our scanning. We wrote a file for each
+	// shard. Grab the lines of those files, sort them to get a deterministic
+	// order, and print them.
+	fmt.Println("# scan state")
+	var lines []string
+	infos, err := ioutil.ReadDir(dir)
+	if err != nil {
+		log.Fatalf("error reading temp dir %s: %v", dir, err)
+	}
+	for _, info := range infos {
+		path := filepath.Join(dir, info.Name())
+		f, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("error opening %s: %v", path, err)
+		}
+		lineScanner := bufio.NewScanner(f)
+		for lineScanner.Scan() {
+			lines = append(lines, lineScanner.Text())
+		}
+		_ = f.Close()
+	}
+	sort.Strings(lines)
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	// Output:
+	// # slice
+	// # scan state
+	// element: a
+	// element: b
+	// element: c
+	// element: d
+	// element: e
+	// element: f
 }
