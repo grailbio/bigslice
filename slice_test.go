@@ -1018,6 +1018,25 @@ func ExampleMap() {
 	// 3 9 three.squared
 }
 
+func ExamplePrefixed() {
+	slice := bigslice.Const(2,
+		[]string{"a", "a", "a", "a", "a", "b", "b", "b", "b", "c", "c"},
+		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
+		[]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+	)
+	slice = bigslice.Prefixed(slice, 2)
+	slice = bigslice.Reduce(slice, func(a, b int) int { return a + b })
+	slicetest.Print(slice)
+	// Output:
+	// a a 1
+	// a b 1
+	// a c 3
+	// b a 3
+	// b b 1
+	// c a 1
+	// c c 1
+}
+
 func ExampleReaderFunc() {
 	const numShards = 6
 	const alphabet = "abcdefghijklmnopqrstuvwxyz"
