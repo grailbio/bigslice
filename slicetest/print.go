@@ -14,7 +14,9 @@ import (
 
 // Print prints slice to stdout in a deterministic order. This is useful for use
 // in slice function examples, as we can rely on the deterministic order in our
-// expected output.
+// expected output. Print uses local evaluation, so all user functions are
+// executed within the same process. This makes it safe and convenient to use
+// shared memory in slice operations.
 func Print(slice bigslice.Slice) {
 	fn := bigslice.Func(func() bigslice.Slice { return slice })
 	sess := exec.Start(exec.Local)

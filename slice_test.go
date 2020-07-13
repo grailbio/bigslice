@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"text/tabwriter"
 
@@ -923,6 +924,52 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 
+}
+
+func ExampleCache() {
+	dir, err := ioutil.TempDir("", "example-cache")
+	if err != nil {
+		log.Fatalf("could not create temp directory: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3},
+	)
+	// slicetest.Print uses local evaluation, so we can use shared memory across
+	// all shard computations.
+	var computed atomic.Value
+	computed.Store(false)
+	slice = bigslice.Map(slice, func(x int) int {
+		computed.Store(true)
+		return x
+	})
+	// The first evaluation causes the map to be evaluated.
+	slice0 := bigslice.Cache(context.Background(), slice, dir)
+	fmt.Println("# first evaluation")
+	slicetest.Print(slice0)
+	fmt.Printf("computed: %t\n", computed.Load().(bool))
+
+	// Reset the computed state for our second evaluation. The second evaluation
+	// will read from the cache that was written by the first evaluation, so the
+	// map will not be evaluated.
+	computed.Store(false)
+	slice1 := bigslice.Cache(context.Background(), slice, dir)
+	fmt.Println("# second evaluation")
+	slicetest.Print(slice1)
+	fmt.Printf("computed: %t\n", computed.Load().(bool))
+	// Output:
+	// # first evaluation
+	// 0
+	// 1
+	// 2
+	// 3
+	// computed: true
+	// # second evaluation
+	// 0
+	// 1
+	// 2
+	// 3
+	// computed: false
 }
 
 func ExampleConst() {
