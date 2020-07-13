@@ -948,3 +948,38 @@ func ExampleFilter() {
 	// 2 two
 	// 4 four
 }
+
+func ExampleFlatmap() {
+	slice := bigslice.Const(2,
+		[]string{
+			"Lorem ipsum dolor sit amet",
+			"consectetur:adipiscing",
+			"elit",
+			"sed.do.eiusmod.tempor.incididunt",
+		},
+		[]string{" ", ":", ";", "."}, // Separators.
+	)
+	slice = bigslice.Flatmap(slice, func(s, sep string) ([]string, []int) {
+		split := strings.Split(s, sep)
+		lengths := make([]int, len(split))
+		for i := range lengths {
+			lengths[i] = len(split[i])
+		}
+		return split, lengths
+	})
+	slicetest.Print(slice)
+	// Output:
+	// Lorem 5
+	// adipiscing 10
+	// amet 4
+	// consectetur 11
+	// do 2
+	// dolor 5
+	// eiusmod 7
+	// elit 4
+	// incididunt 10
+	// ipsum 5
+	// sed 3
+	// sit 3
+	// tempor 6
+}
