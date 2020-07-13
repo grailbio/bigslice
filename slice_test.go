@@ -932,9 +932,7 @@ func ExampleCache() {
 		log.Fatalf("could not create temp directory: %v", err)
 	}
 	defer os.RemoveAll(dir)
-	slice := bigslice.Const(2,
-		[]int{0, 1, 2, 3},
-	)
+	slice := bigslice.Const(2, []int{0, 1, 2, 3})
 	// slicetest.Print uses local evaluation, so we can use shared memory across
 	// all shard computations.
 	var computed atomic.Value
