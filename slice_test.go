@@ -1094,6 +1094,52 @@ func ExampleFlatmap() {
 	// tempor 6
 }
 
+func ExampleFold() {
+	slice := bigslice.Const(2,
+		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
+		[]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+		[]string{
+			"Lorem",
+			"ipsum",
+			"dolor",
+			"sit",
+			"amet",
+			"consectetur",
+			"adipiscing",
+			"elit",
+			"sed",
+			"do",
+			"eiusmod",
+		},
+	)
+	type accum struct {
+		ready bool
+		// sum is the sum of integers in the second column.
+		sum int
+		// product is the prouct of integers in the second column.
+		prod int
+		// longest is the longest string in the third column.
+		longest string
+	}
+	slice = bigslice.Fold(slice, func(acc accum, i int, s string) accum {
+		if !acc.ready {
+			acc.prod = 1
+			acc.ready = true
+		}
+		acc.sum += i
+		acc.prod *= i
+		if len(acc.longest) < len(s) {
+			acc.longest = s
+		}
+		return acc
+	})
+	slicetest.Print(slice)
+	// Output:
+	// a {true 36 10080 adipiscing}
+	// b {true 9 18 consectetur}
+	// c {true 21 220 eiusmod}
+}
+
 func ExampleHead() {
 	// Use one shard, as Head operates per shard.
 	slice := bigslice.Const(1,
