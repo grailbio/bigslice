@@ -983,3 +983,17 @@ func ExampleFlatmap() {
 	// sit 3
 	// tempor 6
 }
+
+func ExampleHead() {
+	// Use one shard, as Head operates per shard.
+	slice := bigslice.Const(1,
+		[]int{0, 1, 2, 3, 4, 5},
+		[]string{"zero", "one", "two", "three", "four", "five"},
+	)
+	slice = bigslice.Head(slice, 3)
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 1 one
+	// 2 two
+}
