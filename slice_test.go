@@ -997,3 +997,19 @@ func ExampleHead() {
 	// 1 one
 	// 2 two
 }
+
+func ExampleMap() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3},
+		[]string{"zero", "one", "two", "three"},
+	)
+	slice = bigslice.Map(slice, func(x int, s string) (int, int, string) {
+		return x, x * x, fmt.Sprintf("%s.squared", s)
+	})
+	slicetest.Print(slice)
+	// Output:
+	// 0 0 zero.squared
+	// 1 1 one.squared
+	// 2 4 two.squared
+	// 3 9 three.squared
+}
