@@ -25,6 +25,7 @@ import (
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetest"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -918,4 +919,17 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 
+}
+
+func ExampleConst() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3},
+		[]string{"zero", "one", "two", "three"},
+	)
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 1 one
+	// 2 two
+	// 3 three
 }
