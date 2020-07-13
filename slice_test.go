@@ -933,3 +933,18 @@ func ExampleConst() {
 	// 2 two
 	// 3 three
 }
+
+func ExampleFilter() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 4, 5},
+		[]string{"zero", "one", "two", "three", "four", "five"},
+	)
+	slice = bigslice.Filter(slice, func(x int, s string) bool {
+		return x%2 == 0
+	})
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 2 two
+	// 4 four
+}
