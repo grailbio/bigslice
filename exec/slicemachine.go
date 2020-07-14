@@ -533,7 +533,7 @@ func (m *machineManager) Do(ctx context.Context, shutdownc chan struct{}) {
 			}
 			mach.health = machineLost
 			mach.Status.Done()
-		case <-ctx.Done():
+		case <-shutdownc:
 			return
 		}
 
