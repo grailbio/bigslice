@@ -80,6 +80,9 @@ type Executor interface {
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
 func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.Group) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	state := newState()
 	for _, task := range roots {
 		state.Enqueue(task)
