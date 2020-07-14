@@ -5,6 +5,7 @@
 package bigslice_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -1254,35 +1255,34 @@ func ExampleReaderFunc() {
 }
 
 func ExampleScan() {
-	slice := bigslice.Const(2,
+	const numShards = 2
+	slice := bigslice.Const(numShards,
 		[]string{"a", "b", "c", "a", "b", "c"},
 		[]int{3, 3, 2, 2, 1, 1},
 	)
-	// Our Scan will just build up the contents of the slice in memory. Note
-	// that this relies on local (in-process) evaluation.
-	type element struct {
-		shard int
-		s     string
-		x     int
-	}
-	var (
-		elementsMu sync.Mutex
-		elements   []element
-	)
+	// The side effect of our scan function will be to write a file for each
+	// shard. This file will contain a line for each row in the shard. We store
+	// the paths to these files in shardPaths.
+	shardPaths := make([]string, numShards)
 	slice = bigslice.Scan(slice,
 		func(shard int, scanner *sliceio.Scanner) error {
+			file, err := ioutil.TempFile("", "example-scan")
+			if err != nil {
+				return fmt.Errorf("could not open temp file: %v", err)
+			}
+			shardPaths[shard] = file.Name()
 			var (
 				s string
 				x int
 			)
 			for scanner.Scan(context.Background(), &s, &x) {
-				// Note that each shard is processed independently. We're
-				// merging all the shards together into the shared elements
-				// slice.
-				e := element{shard: shard, s: s, x: x}
-				elementsMu.Lock()
-				elements = append(elements, e)
-				elementsMu.Unlock()
+				line := fmt.Sprintf("s:%s x:%d\n", s, x)
+				if _, err := file.WriteString(line); err != nil {
+					return fmt.Errorf("error writing file %s: %v", file.Name(), err)
+				}
+			}
+			if err = file.Close(); err != nil {
+				return fmt.Errorf("error closing file: %v", err)
 			}
 			return scanner.Err()
 		},
@@ -1293,39 +1293,131 @@ func ExampleScan() {
 	fmt.Println("# slice")
 	slicetest.Print(slice)
 
-	// Print the elements. The building of the elements is the side effect of
-	// our scan.
-	fmt.Println("# elements")
-	// Sort the elements to get a deterministic order, as shards can be scanned
-	// concurrently.
-	sort.Slice(elements, func(i, j int) bool {
-		switch {
-		case elements[i].shard < elements[j].shard:
-			return true
-		case elements[j].shard < elements[i].shard:
-			return false
-		case elements[i].s < elements[j].s:
-			return true
-		case elements[j].s < elements[i].s:
-			return false
-		case elements[i].x < elements[j].x:
-			return true
-		case elements[j].x < elements[i].x:
-			return false
-		default:
-			return false
+	// slicetest.Print evaluates the slice, so we now make sure to clean up
+	// after ourselves.
+	for _, path := range shardPaths {
+		defer os.Remove(path)
+	}
+	fmt.Println("# lines by shard")
+	for shard, path := range shardPaths {
+		fmt.Printf("## shard %d\n", shard)
+		// Read and sort the lines for deterministic output.
+		var lines []string
+		file, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("error opening %s for reading: %v", path, err)
 		}
-	})
-	for _, e := range elements {
-		fmt.Printf("%+v\n", e)
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if scannerErr := scanner.Err(); scannerErr != nil {
+			log.Fatalf("error scanning %s: %v", path, scannerErr)
+		}
+		sort.Strings(lines)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
 	}
 	// Output:
 	// # slice
-	// # elements
-	// {shard:0 s:a x:2}
-	// {shard:0 s:a x:3}
-	// {shard:0 s:b x:3}
-	// {shard:0 s:c x:2}
-	// {shard:1 s:b x:1}
-	// {shard:1 s:c x:1}
+	// # lines by shard
+	// ## shard 0
+	// s:a x:2
+	// s:a x:3
+	// s:b x:3
+	// s:c x:2
+	// ## shard 1
+	// s:b x:1
+	// s:c x:1
+}
+
+func ExampleWriterFunc() {
+	const numShards = 2
+	slice := bigslice.Const(numShards,
+		[]string{"a", "b", "c", "a", "b", "c"},
+		[]int{3, 3, 2, 2, 1, 1},
+	)
+	// The side effect of our write function will be to write a file for each
+	// shard. This file will contain a line for each row in the shard. We store
+	// the paths to these files in shardPaths.
+	shardPaths := make([]string, numShards)
+	type writeState struct {
+		file *os.File
+	}
+	slice = bigslice.WriterFunc(slice,
+		func(shard int, state *writeState, readErr error, ss []string, xs []int) error {
+			if state.file == nil {
+				// First call; initialize state.
+				var err error
+				if state.file, err = ioutil.TempFile("", "example-writer-func"); err != nil {
+					return fmt.Errorf("could not open temp file: %v", err)
+				}
+				shardPaths[shard] = state.file.Name()
+			}
+			for i := range ss {
+				// We can safely assume that ss and xs are of equal length.
+				s := ss[i]
+				x := xs[i]
+				line := fmt.Sprintf("s:%s x:%d\n", s, x)
+				if _, err := state.file.WriteString(line); err != nil {
+					return fmt.Errorf("error writing file: %v", err)
+				}
+			}
+			if readErr != nil {
+				// No more data is coming, so we close our file.
+				if err := state.file.Close(); err != nil {
+					return fmt.Errorf("error closing file: %v", err)
+				}
+			}
+			return nil
+		},
+	)
+	// Note that the slice passes through unadulterated.
+	fmt.Println("# slice")
+	slicetest.Print(slice)
+
+	// slicetest.Print evaluates the slice, so we now make sure to clean up
+	// after ourselves.
+	for _, path := range shardPaths {
+		defer os.Remove(path)
+	}
+	fmt.Println("# lines by shard")
+	for shard, path := range shardPaths {
+		fmt.Printf("## shard %d\n", shard)
+		// Read and sort the lines for deterministic output.
+		var lines []string
+		file, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("error opening %s for reading: %v", path, err)
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if scannerErr := scanner.Err(); scannerErr != nil {
+			log.Fatalf("error scanning %s: %v", path, scannerErr)
+		}
+		sort.Strings(lines)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
+	}
+	// Output:
+	// # slice
+	// a 2
+	// a 3
+	// b 1
+	// b 3
+	// c 1
+	// c 2
+	// # lines by shard
+	// ## shard 0
+	// s:a x:2
+	// s:a x:3
+	// s:b x:3
+	// s:c x:2
+	// ## shard 1
+	// s:b x:1
+	// s:c x:1
 }
