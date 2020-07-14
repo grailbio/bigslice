@@ -367,6 +367,23 @@ func TestDiscardStress(t *testing.T) {
 	}
 }
 
+// TestSessionShutdownChannel tests that the channel indicating session channel is only closed after a call to
+// Session.Shutdown()
+func TestSessionShutdownChannel(t *testing.T) {
+	testSession(t, func(t *testing.T, sess *Session) {
+		select {
+			case <-sess.shutdownc:
+				t.Error("shutdownc is closed too early")
+			default:
+		}
+		sess.Shutdown()
+		_, ok := <- sess.shutdownc
+		if ok {
+			t.Error("shutdownc should be closed")
+		}
+	})
+}
+
 var executors = map[string]Option{
 	"Local":           Local,
 	"Bigmachine.Test": Bigmachine(testsystem.New()),
