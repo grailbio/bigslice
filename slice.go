@@ -415,6 +415,10 @@ type writerFuncSlice struct {
 // the internal frame of the read. Do not modify the data in them, and assume
 // that they will be modified once write returns.
 //
+// The write function should return a non-nil error if there is a problem
+// writing, e.g. the write function encounters and error while writing to a
+// file. It should otherwise return nil.
+//
 // Any error from the read, including EOF, will be passed as err to the write
 // function. Note that err may be EOF when column lengths are >0, similar to
 // the semantics of sliceio.Reader.Read.
