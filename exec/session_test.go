@@ -372,12 +372,12 @@ func TestDiscardStress(t *testing.T) {
 func TestSessionShutdownChannel(t *testing.T) {
 	testSession(t, func(t *testing.T, sess *Session) {
 		select {
-			case <-sess.shutdownc:
-				t.Error("shutdownc is closed too early")
-			default:
+		case <-sess.shutdownc:
+			t.Error("shutdownc is closed too early")
+		default:
 		}
 		sess.Shutdown()
-		_, ok := <- sess.shutdownc
+		_, ok := <-sess.shutdownc
 		if ok {
 			t.Error("shutdownc should be closed")
 		}
