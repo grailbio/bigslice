@@ -31,7 +31,7 @@ func (testExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (t testExecutor) Run(ctx context.Context, task *Task) {
+func (t testExecutor) Run(task *Task) {
 	task.Lock()
 	task.state = TaskRunning
 	task.Broadcast()
@@ -466,7 +466,7 @@ func (benchExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (b benchExecutor) Run(ctx context.Context, task *Task) {
+func (b benchExecutor) Run(task *Task) {
 	task.Lock()
 	task.state = TaskOk
 	task.Broadcast()

@@ -535,6 +535,8 @@ func (m *machineManager) Do(ctx context.Context, shutdownc chan struct{}) {
 			mach.Status.Done()
 		case <-shutdownc:
 			return
+		case <-ctx.Done():
+			return
 		}
 
 		// TODO(marius): consider scaling down when we don't need as many

@@ -154,7 +154,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	return b.b.Shutdown
 }
 
-func (b *bigmachineExecutor) manager(ctx context.Context, i int) *machineManager {
+func (b *bigmachineExecutor) manager(i int) *machineManager {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for i >= len(b.managers) {
@@ -264,7 +264,7 @@ func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key st
 	})
 }
 
-func (b *bigmachineExecutor) Run(ctx context.Context, task *Task) {
+func (b *bigmachineExecutor) Run(task *Task) {
 	task.Status.Print("waiting for a machine")
 
 	// Use the default/shared cluster unless the func is exclusive.
@@ -272,12 +272,13 @@ func (b *bigmachineExecutor) Run(ctx context.Context, task *Task) {
 	if task.Invocation.Exclusive {
 		cluster = int(task.Invocation.Index)
 	}
-	mgr := b.manager(ctx, cluster)
+	mgr := b.manager(cluster)
 	procs := task.Pragma.Procs()
 	if task.Pragma.Exclusive() || procs > mgr.machprocs {
 		procs = mgr.machprocs
 	}
 	var (
+		ctx            = backgroundcontext.Get()
 		offerc, cancel = mgr.Offer(int(task.Invocation.Index), procs)
 		m              *sliceMachine
 	)

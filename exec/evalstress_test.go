@@ -66,7 +66,7 @@ func delay() {
 	<-time.After(delayMS * time.Millisecond)
 }
 
-func (e *stressExecutor) Run(ctx context.Context, task *Task) {
+func (e *stressExecutor) Run(task *Task) {
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
