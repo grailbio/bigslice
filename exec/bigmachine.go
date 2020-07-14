@@ -168,7 +168,7 @@ func (b *bigmachineExecutor) manager(ctx context.Context, i int) *machineManager
 			maxLoad = 0
 		}
 		b.managers[i] = newMachineManager(b.b, b.params, b.status, b.sess.Parallelism(), maxLoad, b.worker)
-		go b.managers[i].Do(ctx, b.isShutdown())
+		go b.managers[i].Do(backgroundcontext.Get(), b.isShutdown())
 	}
 	return b.managers[i]
 }
