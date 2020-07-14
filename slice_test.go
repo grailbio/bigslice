@@ -5,7 +5,6 @@
 package bigslice_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -1255,76 +1254,78 @@ func ExampleReaderFunc() {
 }
 
 func ExampleScan() {
-	const numShards = 3
-	slice := bigslice.Const(numShards, []string{"a", "b", "c", "d", "e", "f"})
-	// Our scan function will write a file for each shard into this temp
-	// directory.
-	dir, err := ioutil.TempDir("", "example-scan")
-	if err != nil {
-		log.Fatalf("could not create temp directory: %v", err)
+	slice := bigslice.Const(2,
+		[]string{"a", "b", "c", "a", "b", "c"},
+		[]int{3, 3, 2, 2, 1, 1},
+	)
+	// Our Scan will just build up the contents of the slice in memory. Note
+	// that this relies on local (in-process) evaluation.
+	type element struct {
+		shard int
+		s     string
+		x     int
 	}
-	defer os.RemoveAll(dir)
+	var (
+		elementsMu sync.Mutex
+		elements   []element
+	)
 	slice = bigslice.Scan(slice,
 		func(shard int, scanner *sliceio.Scanner) error {
-			// We write a file for each shard, e.g. "2-of-3", with the elements
-			// of the shard. Because shards are processed in parallel, we
-			// process them independently.
 			var (
-				name = fmt.Sprintf("%d-of-%d", shard+1, numShards)
-				path = filepath.Join(dir, name)
-				s    string
-				ctx  = context.Background()
+				s string
+				x int
 			)
-			f, err := os.Create(path)
-			if err != nil {
-				return fmt.Errorf("could not create %s: %v", path, err)
-			}
-			for scanner.Scan(ctx, &s) {
-				f.WriteString(fmt.Sprintf("element: %s\n", s))
-			}
-			err = f.Close()
-			if err != nil {
-				return fmt.Errorf("error closing %s: %v", path, err)
+			for scanner.Scan(context.Background(), &s, &x) {
+				// Note that each shard is processed independently. We're
+				// merging all the shards together into the shared elements
+				// slice.
+				e := element{shard: shard, s: s, x: x}
+				elementsMu.Lock()
+				elements = append(elements, e)
+				elementsMu.Unlock()
 			}
 			return scanner.Err()
-		})
-	// Print the resulting slice. This forces (local) evaluation of the slice.
-	// Notice that this prints no output because slice is empty. Scanning
-	// consumes the slice.
+		},
+	)
+	// Print the resulting slice. This forces evaluation of the slice. Notice
+	// that this prints no output because slice is empty. Scanning consumes the
+	// slice.
 	fmt.Println("# slice")
 	slicetest.Print(slice)
-	// Now print the side-effects of our scanning. We wrote a file for each
-	// shard. Grab the lines of those files, sort them to get a deterministic
-	// order, and print them.
-	fmt.Println("# scan state")
-	var lines []string
-	infos, err := ioutil.ReadDir(dir)
-	if err != nil {
-		log.Fatalf("error reading temp dir %s: %v", dir, err)
-	}
-	for _, info := range infos {
-		path := filepath.Join(dir, info.Name())
-		f, err := os.Open(path)
-		if err != nil {
-			log.Fatalf("error opening %s: %v", path, err)
+
+	// Print the elements. The building of the elements is the side effect of
+	// our scan.
+	fmt.Println("# elements")
+	// Sort the elements to get a deterministic order, as shards can be scanned
+	// concurrently.
+	sort.Slice(elements, func(i, j int) bool {
+		switch {
+		case elements[i].shard < elements[j].shard:
+			return true
+		case elements[j].shard < elements[i].shard:
+			return false
+		case elements[i].s < elements[j].s:
+			return true
+		case elements[j].s < elements[i].s:
+			return false
+		case elements[i].x < elements[j].x:
+			return true
+		case elements[j].x < elements[i].x:
+			return false
+		default:
+			return false
 		}
-		lineScanner := bufio.NewScanner(f)
-		for lineScanner.Scan() {
-			lines = append(lines, lineScanner.Text())
-		}
-		_ = f.Close()
-	}
-	sort.Strings(lines)
-	for _, line := range lines {
-		fmt.Println(line)
+	})
+	for _, e := range elements {
+		fmt.Printf("%+v\n", e)
 	}
 	// Output:
 	// # slice
-	// # scan state
-	// element: a
-	// element: b
-	// element: c
-	// element: d
-	// element: e
-	// element: f
+	// # elements
+	// {shard:0 s:a x:2}
+	// {shard:0 s:a x:3}
+	// {shard:0 s:b x:3}
+	// {shard:0 s:c x:2}
+	// {shard:1 s:b x:1}
+	// {shard:1 s:c x:1}
 }
