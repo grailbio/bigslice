@@ -31,7 +31,7 @@ func (testExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (t testExecutor) Run(task *Task) {
+func (t testExecutor) Run(ctx context.Context, task *Task) {
 	task.Lock()
 	task.state = TaskRunning
 	task.Broadcast()
@@ -49,6 +49,10 @@ func (testExecutor) Eventer() eventlog.Eventer {
 }
 
 func (testExecutor) HandleDebug(handler *http.ServeMux) {
+	panic("not implemented")
+}
+
+func (testExecutor) isShutdown() chan struct{} {
 	panic("not implemented")
 }
 
@@ -462,7 +466,7 @@ func (benchExecutor) Start(*Session) (shutdown func()) {
 	return func() {}
 }
 
-func (b benchExecutor) Run(task *Task) {
+func (b benchExecutor) Run(ctx context.Context, task *Task) {
 	task.Lock()
 	task.state = TaskOk
 	task.Broadcast()
@@ -480,6 +484,10 @@ func (benchExecutor) Eventer() eventlog.Eventer {
 }
 
 func (benchExecutor) HandleDebug(handler *http.ServeMux) {
+	panic("not implemented")
+}
+
+func (benchExecutor) isShutdown() chan struct{} {
 	panic("not implemented")
 }
 

@@ -66,7 +66,7 @@ func delay() {
 	<-time.After(delayMS * time.Millisecond)
 }
 
-func (e *stressExecutor) Run(task *Task) {
+func (e *stressExecutor) Run(ctx context.Context, task *Task) {
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
@@ -97,6 +97,10 @@ func (*stressExecutor) Eventer() eventlog.Eventer {
 }
 
 func (*stressExecutor) HandleDebug(handler *http.ServeMux) {
+	panic("not implemented")
+}
+
+func (*stressExecutor) isShutdown() chan struct{} {
 	panic("not implemented")
 }
 
