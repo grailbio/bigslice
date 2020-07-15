@@ -237,18 +237,16 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	system.KeepalivePeriod = time.Second
 	system.KeepaliveTimeout = 5 * time.Second
 	system.KeepaliveRpcTimeout = time.Second
-	shutdownc := make(chan struct{})
 	b = bigmachine.Start(system)
 	ctx, ctxcancel := context.WithCancel(context.Background())
 	m = newMachineManager(b, nil, nil, maxp, maxLoad, &worker{MachineCombiners: false})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		m.Do(ctx, shutdownc)
+		m.Do(ctx)
 		wg.Done()
 	}()
 	cancel = func() {
-		close(shutdownc)
 		ctxcancel()
 		wg.Wait()
 	}

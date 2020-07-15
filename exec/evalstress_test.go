@@ -100,10 +100,6 @@ func (*stressExecutor) HandleDebug(handler *http.ServeMux) {
 	panic("not implemented")
 }
 
-func (*stressExecutor) isShutdown() chan struct{} {
-	panic("not implemented")
-}
-
 func (e *stressExecutor) loop(ctx context.Context) {
 	for {
 		select {

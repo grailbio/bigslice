@@ -122,6 +122,9 @@ type bigmachineExecutor struct {
 	// If the task is marked as exclusive, then one is added to their
 	// manager index.
 	managers []*machineManager
+
+	shutdownc chan struct{}
+	managersWG sync.WaitGroup
 }
 
 func newBigmachineExecutor(system bigmachine.System, params ...bigmachine.Param) *bigmachineExecutor {
@@ -150,13 +153,24 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	b.worker = &worker{
 		MachineCombiners: sess.machineCombiners,
 	}
+	b.shutdownc = make(chan struct{})
 
-	return b.b.Shutdown
+
+	return func(){
+		close(b.shutdownc)
+		b.managersWG.Wait()
+		b.b.Shutdown()
+	}
 }
 
 func (b *bigmachineExecutor) manager(i int) *machineManager {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	ctx, cancel := context.WithCancel(backgroundcontext.Get())
+	go func() {
+		<-b.shutdownc
+		cancel()
+	}()
 	for i >= len(b.managers) {
 		b.managers = append(b.managers, nil)
 	}
@@ -168,7 +182,13 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 			maxLoad = 0
 		}
 		b.managers[i] = newMachineManager(b.b, b.params, b.status, b.sess.Parallelism(), maxLoad, b.worker)
-		go b.managers[i].Do(backgroundcontext.Get(), b.isShutdown())
+
+		b.managersWG.Add(1)
+		go func() {
+			defer b.managersWG.Done()
+			b.managers[i].Do(ctx)
+			b.managers[i].machinesWG.Wait()
+		}()
 	}
 	return b.managers[i]
 }
@@ -475,10 +495,6 @@ func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
 
 func (b *bigmachineExecutor) HandleDebug(handler *http.ServeMux) {
 	b.b.HandleDebug(handler)
-}
-
-func (b *bigmachineExecutor) isShutdown() chan struct{} {
-	return b.sess.shutdownc
 }
 
 // Location returns the machine on which the results of the provided

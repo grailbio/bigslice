@@ -83,18 +83,14 @@ type Session struct {
 	// roots stores all task roots compiled by this session;
 	// used for debugging.
 	roots map[*Task]struct{}
-
-	// Channel to indicate that the session is shutting down
-	shutdownc chan struct{}
 }
 
 func newSession() *Session {
 	return &Session{
-		Context:   backgroundcontext.Get(),
-		index:     atomic.AddInt32(&nextSessionIndex, 1) - 1,
-		roots:     make(map[*Task]struct{}),
-		eventer:   eventlog.Nop{},
-		shutdownc: make(chan struct{}),
+		Context: backgroundcontext.Get(),
+		index:   atomic.AddInt32(&nextSessionIndex, 1) - 1,
+		roots:   make(map[*Task]struct{}),
+		eventer: eventlog.Nop{},
 	}
 }
 
@@ -371,7 +367,6 @@ func (s *Session) Shutdown() {
 	if s.shutdown != nil {
 		s.shutdown()
 	}
-	close(s.shutdownc)
 	if s.tracePath != "" {
 		writeTraceFile(s.tracer, s.tracePath)
 	}

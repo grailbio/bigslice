@@ -52,10 +52,6 @@ func (testExecutor) HandleDebug(handler *http.ServeMux) {
 	panic("not implemented")
 }
 
-func (testExecutor) isShutdown() chan struct{} {
-	panic("not implemented")
-}
-
 // SimpleEvalTest sets up a simple, 2-node task graph.
 type simpleEvalTest struct {
 	Tasks []*Task
@@ -484,10 +480,6 @@ func (benchExecutor) Eventer() eventlog.Eventer {
 }
 
 func (benchExecutor) HandleDebug(handler *http.ServeMux) {
-	panic("not implemented")
-}
-
-func (benchExecutor) isShutdown() chan struct{} {
 	panic("not implemented")
 }
 
