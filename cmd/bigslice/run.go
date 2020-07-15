@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/grailbio/bigslice/cmd/bigslice/bigslicecmd"
 )
@@ -19,15 +18,11 @@ func runCmdUsage() {
 }
 
 func runCmd(args []string) {
-	var buildIndex int
-	for _, arg := range args {
-		if arg == "-help" || arg == "--help" {
-			runCmdUsage()
-		}
-		if strings.HasPrefix(arg, "-") {
-			break
-		}
-		buildIndex++
+	if len(args) == 0 {
+		runCmdUsage()
 	}
-	bigslicecmd.Run(context.Background(), args[buildIndex:])
+	if args[0] == "-help" || args[0] == "--help" {
+		runCmdUsage()
+	}
+	bigslicecmd.Run(context.Background(), args)
 }
