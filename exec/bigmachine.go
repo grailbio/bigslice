@@ -240,8 +240,10 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 				args[i] = truncatef(inv.Args[i])
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
-			var invReader io.Reader = bytes.NewReader(encodedInvocations[i])
-			err := m.RetryCall(ctx, "Worker.Compile", invReader, nil)
+			makeInvReader := func() io.Reader {
+				return bytes.NewReader(encodedInvocations[i])
+			}
+			err := m.RetryCall(ctx, "Worker.Compile", makeInvReader, nil)
 			if err != nil {
 				b.sess.tracer.Event(m, inv, "E", "error", err)
 			} else {
