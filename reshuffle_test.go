@@ -17,6 +17,7 @@ import (
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/frame"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetest"
 )
 
 func reshuffleTest(t *testing.T, transform func(bigslice.Slice) bigslice.Slice) {
@@ -112,4 +113,73 @@ func TestRepartitionType(t *testing.T) {
 	expectTypeError(t, "repartiton: expected func(int, int, string) int, got func(int, int, string)", func() {
 		bigslice.Repartition(slice, func(_ int, _ int, _ string) {})
 	})
+}
+
+func ExampleRepartition() {
+	const numShards = 2
+	// countRowsPerShard is a utility that counts the number of rows per shard
+	// and stores it in rowsPerShard.
+	rowsPerShard := make([]int, numShards)
+	countRowsPerShard := func(slice bigslice.Slice) bigslice.Slice {
+		for shard := range rowsPerShard {
+			rowsPerShard[shard] = 0
+		}
+		return bigslice.WriterFunc(slice,
+			func(shard int, _ struct{}, _ error, xs []int) error {
+				rowsPerShard[shard] += len(xs)
+				return nil
+			},
+		)
+	}
+
+	slice := bigslice.Const(numShards, []int{1, 2, 3, 4, 5, 6})
+
+	slice0 := countRowsPerShard(slice)
+	fmt.Println("# default partitioning")
+	fmt.Println("## slice contents")
+	slicetest.Print(slice0)
+	fmt.Println("## row count per shard")
+	for shard, count := range rowsPerShard {
+		fmt.Printf("shard:%d count:%d\n", shard, count)
+	}
+
+	slice1 := countRowsPerShard(slice)
+	slice1 = bigslice.Repartition(slice, func(nshard, x int) int {
+		// We know our slice keys are sequential integers, so we partition
+		// perfectly with mod.
+		return x % nshard
+	})
+	slice1 = countRowsPerShard(slice1)
+	fmt.Println("# repartitioned")
+	// Note that the slice contents are unchanged.
+	fmt.Println("## slice contents")
+	slicetest.Print(slice1)
+	// Note that the partitioning has changed.
+	fmt.Println("## row count per shard")
+	for shard, count := range rowsPerShard {
+		fmt.Printf("shard:%d count:%d\n", shard, count)
+	}
+	// Output:
+	// # default partitioning
+	// ## slice contents
+	// 1
+	// 2
+	// 3
+	// 4
+	// 5
+	// 6
+	// ## row count per shard
+	// shard:0 count:4
+	// shard:1 count:2
+	// # repartitioned
+	// ## slice contents
+	// 1
+	// 2
+	// 3
+	// 4
+	// 5
+	// 6
+	// ## row count per shard
+	// shard:0 count:3
+	// shard:1 count:3
 }
