@@ -11,13 +11,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"text/tabwriter"
 
@@ -924,111 +922,6 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 
-}
-
-func ExampleCache() {
-	dir, err := ioutil.TempDir("", "example-cache")
-	if err != nil {
-		log.Fatalf("could not create temp directory: %v", err)
-	}
-	defer os.RemoveAll(dir)
-	slice := bigslice.Const(2, []int{0, 1, 2, 3})
-	// slicetest.Print uses local evaluation, so we can use shared memory across
-	// all shard computations.
-	var computed atomic.Value
-	computed.Store(false)
-	slice = bigslice.Map(slice, func(x int) int {
-		computed.Store(true)
-		return x
-	})
-	// The first evaluation causes the map to be evaluated.
-	slice0 := bigslice.Cache(context.Background(), slice, dir+"/")
-	fmt.Println("# first evaluation")
-	slicetest.Print(slice0)
-	fmt.Printf("computed: %t\n", computed.Load().(bool))
-
-	// Reset the computed state for our second evaluation. The second evaluation
-	// will read from the cache that was written by the first evaluation, so the
-	// map will not be evaluated.
-	computed.Store(false)
-	slice1 := bigslice.Cache(context.Background(), slice, dir+"/")
-	fmt.Println("# second evaluation")
-	slicetest.Print(slice1)
-	fmt.Printf("computed: %t\n", computed.Load().(bool))
-	// Output:
-	// # first evaluation
-	// 0
-	// 1
-	// 2
-	// 3
-	// computed: true
-	// # second evaluation
-	// 0
-	// 1
-	// 2
-	// 3
-	// computed: false
-}
-
-func ExampleCachePartial() {
-	dir, err := ioutil.TempDir("", "example-cache-partial")
-	if err != nil {
-		log.Fatalf("could not create temp directory: %v", err)
-	}
-	defer os.RemoveAll(dir)
-	slice := bigslice.Const(2, []int{0, 1, 2, 3})
-	// slicetest.Print uses local evaluation, so we can use shared memory across
-	// all shard computations.
-	var computed int32
-	slice = bigslice.Map(slice, func(x int) int {
-		atomic.AddInt32(&computed, 1)
-		return x
-	})
-	// The first evaluation causes the map to be evaluated.
-	slice0 := bigslice.CachePartial(context.Background(), slice, dir+"/")
-	fmt.Println("# first evaluation")
-	slicetest.Print(slice0)
-	fmt.Printf("computed: %d\n", computed)
-
-	// Remove one of the cache files. This will leave us with a partial cache,
-	// i.e. a cache with only some shards cached.
-	infos, err := ioutil.ReadDir(dir)
-	if err != nil {
-		log.Fatalf("error reading temp dir %s: %v", dir, err)
-	}
-	path := filepath.Join(dir, infos[0].Name())
-	if err = os.Remove(path); err != nil {
-		log.Fatalf("error removing cache file %s: %v", path, err)
-	}
-
-	// Reset the computed state for our second evaluation. The second evaluation
-	// will read from the partial cache that was written by the first
-	// evaluation, so only some rows will need recomputation.
-	computed = 0
-	slice1 := bigslice.CachePartial(context.Background(), slice, dir+"/")
-	fmt.Println("# second evaluation")
-	slicetest.Print(slice1)
-	fmt.Printf("computed: %d\n", computed)
-
-	// Note that this example is fragile for a couple of reasons. First, it
-	// relies on how the cache is stored in files. If that changes, we may need
-	// to change how we construct a partial cache. Second, it relies on the
-	// stability of the shard allocation. If that changes, we may end up with
-	// different sharding and a different number of rows needing computation.
-
-	// Output:
-	// # first evaluation
-	// 0
-	// 1
-	// 2
-	// 3
-	// computed: 4
-	// # second evaluation
-	// 0
-	// 1
-	// 2
-	// 3
-	// computed: 3
 }
 
 func ExampleConst() {
