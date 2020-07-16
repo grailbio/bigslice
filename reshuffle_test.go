@@ -116,14 +116,11 @@ func TestRepartitionType(t *testing.T) {
 }
 
 func ExampleRepartition() {
-	const numShards = 2
 	// countRowsPerShard is a utility that counts the number of rows per shard
 	// and stores it in rowsPerShard.
-	rowsPerShard := make([]int, numShards)
-	countRowsPerShard := func(slice bigslice.Slice) bigslice.Slice {
-		for shard := range rowsPerShard {
-			rowsPerShard[shard] = 0
-		}
+	var rowsPerShard []int
+	countRowsPerShard := func(numShards int, slice bigslice.Slice) bigslice.Slice {
+		rowsPerShard = make([]int, numShards)
 		return bigslice.WriterFunc(slice,
 			func(shard int, _ struct{}, _ error, xs []int) error {
 				rowsPerShard[shard] += len(xs)
@@ -132,9 +129,10 @@ func ExampleRepartition() {
 		)
 	}
 
+	const numShards = 2
 	slice := bigslice.Const(numShards, []int{1, 2, 3, 4, 5, 6})
 
-	slice0 := countRowsPerShard(slice)
+	slice0 := countRowsPerShard(numShards, slice)
 	fmt.Println("# default partitioning")
 	fmt.Println("## slice contents")
 	slicetest.Print(slice0)
@@ -143,13 +141,12 @@ func ExampleRepartition() {
 		fmt.Printf("shard:%d count:%d\n", shard, count)
 	}
 
-	slice1 := countRowsPerShard(slice)
-	slice1 = bigslice.Repartition(slice, func(nshard, x int) int {
+	slice1 := bigslice.Repartition(slice, func(nshard, x int) int {
 		// We know our slice keys are sequential integers, so we partition
 		// perfectly with mod.
 		return x % nshard
 	})
-	slice1 = countRowsPerShard(slice1)
+	slice1 = countRowsPerShard(numShards, slice1)
 	fmt.Println("# repartitioned")
 	// Note that the slice contents are unchanged.
 	fmt.Println("## slice contents")
