@@ -500,3 +500,31 @@ func ExampleCachePartial() {
 	// 3
 	// computed: 3
 }
+
+func ExampleReadCache() {
+	const numShards = 2
+	dir, err := ioutil.TempDir("", "example-cache")
+	if err != nil {
+		log.Fatalf("could not create temp directory: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	slice0 := bigslice.Const(numShards, []int{0, 1, 2, 3})
+	slice0 = bigslice.Cache(context.Background(), slice0, dir+"/")
+	fmt.Println("# build cache")
+	slicetest.Print(slice0)
+
+	slice1 := bigslice.ReadCache(context.Background(), slice0, numShards, dir+"/")
+	fmt.Println("# use ReadCache to read cache")
+	slicetest.Print(slice1)
+	// Output:
+	// # build cache
+	// 0
+	// 1
+	// 2
+	// 3
+	// # use ReadCache to read cache
+	// 0
+	// 1
+	// 2
+	// 3
+}
