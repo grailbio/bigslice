@@ -244,3 +244,66 @@ func ExampleReshard() {
 	// shard:2 count:1
 	// shard:3 count:2
 }
+
+func ExampleReshuffle() {
+	// countRowsPerShard is a utility that counts the number of rows per shard
+	// and stores it in rowsPerShard.
+	var rowsPerShard []int
+	countRowsPerShard := func(numShards int, slice bigslice.Slice) bigslice.Slice {
+		rowsPerShard = make([]int, numShards)
+		return bigslice.WriterFunc(slice,
+			func(shard int, _ struct{}, _ error, xs []int) error {
+				rowsPerShard[shard] += len(xs)
+				return nil
+			},
+		)
+	}
+
+	const numShards = 2
+	slice := bigslice.Const(numShards, []int{1, 2, 3, 4, 5, 6})
+	slice = bigslice.Map(slice, func(_ int) int { return 0 })
+
+	before := countRowsPerShard(numShards, slice)
+	fmt.Println("# before")
+	fmt.Println("## slice contents")
+	slicetest.Print(before)
+	fmt.Println("## row count per shard")
+	for shard, count := range rowsPerShard {
+		fmt.Printf("shard:%d count:%d\n", shard, count)
+	}
+
+	after := bigslice.Reshuffle(slice)
+	after = countRowsPerShard(numShards, after)
+	fmt.Println("# after")
+	// We set all our keys to 0. After reshuffling, all rows will be in the same
+	// shard.
+	fmt.Println("## slice contents")
+	slicetest.Print(after)
+	fmt.Println("## row count per shard")
+	for shard, count := range rowsPerShard {
+		fmt.Printf("shard:%d count:%d\n", shard, count)
+	}
+	// Output:
+	// # before
+	// ## slice contents
+	// 0
+	// 0
+	// 0
+	// 0
+	// 0
+	// 0
+	// ## row count per shard
+	// shard:0 count:4
+	// shard:1 count:2
+	// # after
+	// ## slice contents
+	// 0
+	// 0
+	// 0
+	// 0
+	// 0
+	// 0
+	// ## row count per shard
+	// shard:0 count:6
+	// shard:1 count:0
+}
