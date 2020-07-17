@@ -1066,15 +1066,15 @@ func ExampleMap() {
 		[]int{0, 1, 2, 3},
 		[]string{"zero", "one", "two", "three"},
 	)
-	slice = bigslice.Map(slice, func(x int, s string) (int, int, string) {
-		return x, x * x, fmt.Sprintf("%s.squared", s)
+	slice = bigslice.Map(slice, func(x int, s string) (int, string, int, string) {
+		return x, s, x * x, s + ".squared"
 	})
 	slicetest.Print(slice)
 	// Output:
-	// 0 0 zero.squared
-	// 1 1 one.squared
-	// 2 4 two.squared
-	// 3 9 three.squared
+	// 0 zero 0 zero.squared
+	// 1 one 1 one.squared
+	// 2 two 4 two.squared
+	// 3 three 9 three.squared
 }
 
 func ExamplePrefixed() {
