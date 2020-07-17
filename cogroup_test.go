@@ -163,3 +163,17 @@ func ExampleCogroup() {
 	// 5 [] [25]
 	// 6 [] [36]
 }
+
+func ExampleCogroup_one() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 0, 1},
+		[]string{"zero", "one", "two", "three", "cero", "uno"},
+	)
+	slice = bigslice.Cogroup(slice)
+	slicetest.Print(slice)
+	// Output:
+	// 0 [cero zero]
+	// 1 [one uno]
+	// 2 [two]
+	// 3 [three]
+}
