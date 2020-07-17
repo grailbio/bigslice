@@ -1139,6 +1139,7 @@ func ExampleReaderFunc() {
 	const numShards = 6
 	const alphabet = "abcdefghijklmnopqrstuvwxyz"
 	type state struct {
+		// next is the index of the next element of the alphabet to be read.
 		next int
 	}
 	slice := bigslice.ReaderFunc(numShards,
