@@ -182,6 +182,9 @@ func ExampleRepartition() {
 }
 
 func ExampleReshard() {
+	// Count rows per shard before and after using Reshard to change the number
+	// of shards from 2 to 4.
+
 	// countRowsPerShard is a utility that counts the number of rows per shard
 	// and stores it in rowsPerShard.
 	var rowsPerShard []int
