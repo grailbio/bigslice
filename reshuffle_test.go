@@ -249,6 +249,9 @@ func ExampleReshard() {
 }
 
 func ExampleReshuffle() {
+	// Count rows per shard before and after a Reshuffle, showing same-keyed
+	// rows all go to the same shard.
+
 	// countRowsPerShard is a utility that counts the number of rows per shard
 	// and stores it in rowsPerShard.
 	var rowsPerShard []int
