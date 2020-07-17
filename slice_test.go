@@ -1170,7 +1170,7 @@ func ExampleScan() {
 			)
 			for scanner.Scan(context.Background(), &s, &x) {
 				line := fmt.Sprintf("s:%s x:%d\n", s, x)
-				if _, err := file.WriteString(line); err != nil {
+				if _, err = file.WriteString(line); err != nil {
 					return fmt.Errorf("error writing file %s: %v", file.Name(), err)
 				}
 			}
