@@ -953,6 +953,14 @@ func ExampleFilter() {
 }
 
 func ExampleFlatmap() {
+	// Flatmap to split strings into words using different separators. The input
+	// is of type Slice<string, string>:
+	// - col0: the string
+	// - col1: the separator
+	//
+	// The output is of type Slice<string, int>:
+	// - col0: a word from the input strings
+	// - col1: the length of the word
 	slice := bigslice.Const(2,
 		[]string{
 			"Lorem ipsum dolor sit amet",
