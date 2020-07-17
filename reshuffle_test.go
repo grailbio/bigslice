@@ -116,6 +116,10 @@ func TestRepartitionType(t *testing.T) {
 }
 
 func ExampleRepartition() {
+	// Count rows per shard before and after using Repartition to get ideal
+	// partitioning by taking advantage of the knowledge that our keys are
+	// sequential integers.
+
 	// countRowsPerShard is a utility that counts the number of rows per shard
 	// and stores it in rowsPerShard.
 	var rowsPerShard []int
