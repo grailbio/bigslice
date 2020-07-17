@@ -445,6 +445,12 @@ func ExampleCache() {
 }
 
 func ExampleCachePartial() {
+	// Compute a slice that performs a mapping computation and uses Cache to
+	// cache the result, showing that we had to execute the mapping computation
+	// for each row. Manually remove only part of the cached data. Compute
+	// another slice that uses the cache, showing that we produced the same
+	// result, only executing the mapping computation on the rows whose data we
+	// removed from the cache.
 	dir, err := ioutil.TempDir("", "example-cache-partial")
 	if err != nil {
 		log.Fatalf("could not create temp directory: %v", err)
