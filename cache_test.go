@@ -512,6 +512,8 @@ func ExampleCachePartial() {
 }
 
 func ExampleReadCache() {
+	// Compute a slice that uses Cache to cache the result. Use ReadCache to
+	// read from that same cache. Observe that we get the same data.
 	const numShards = 2
 	dir, err := ioutil.TempDir("", "example-cache")
 	if err != nil {
