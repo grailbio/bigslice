@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/slicetest"
 )
 
 func TestReduce(t *testing.T) {
@@ -42,4 +43,17 @@ func TestReducePrefix(t *testing.T) {
 		slice = bigslice.Reduce(slice, func(x, y int) int { return x + y })
 		assertEqual(t, slice, true, []string{"x", "x", "x"}, []int{0, 1, 2}, []int{1683, 1617, 1650})
 	}
+}
+
+func ExampleReduce() {
+	slice := bigslice.Const(2,
+		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
+		[]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+	)
+	slice = bigslice.Reduce(slice, func(a, b int) int { return a + b })
+	slicetest.Print(slice)
+	// Output:
+	// a 5
+	// b 2
+	// c 4
 }

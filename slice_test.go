@@ -5,9 +5,12 @@
 package bigslice_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"reflect"
 	"runtime"
 	"sort"
@@ -25,6 +28,7 @@ import (
 	"github.com/grailbio/bigslice/exec"
 	"github.com/grailbio/bigslice/metrics"
 	"github.com/grailbio/bigslice/sliceio"
+	"github.com/grailbio/bigslice/slicetest"
 	"github.com/grailbio/bigslice/typecheck"
 )
 
@@ -918,4 +922,458 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 
+}
+
+func ExampleConst() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3},
+		[]string{"zero", "one", "two", "three"},
+	)
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 1 one
+	// 2 two
+	// 3 three
+}
+
+func ExampleFilter() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 4, 5},
+		[]string{"zero", "one", "two", "three", "four", "five"},
+	)
+	slice = bigslice.Filter(slice, func(x int, s string) bool {
+		return x%2 == 0
+	})
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 2 two
+	// 4 four
+}
+
+func ExampleFlatmap() {
+	// Flatmap to split strings into words using different separators. The input
+	// is of type Slice<string, string>:
+	// - col0: the string
+	// - col1: the separator
+	//
+	// The output is of type Slice<string, int>:
+	// - col0: a word from the input strings
+	// - col1: the length of the word
+	slice := bigslice.Const(2,
+		[]string{
+			"Lorem ipsum dolor sit amet",
+			"consectetur:adipiscing",
+			"elit",
+			"sed.do.eiusmod.tempor.incididunt",
+		},
+		[]string{" ", ":", ";", "."}, // Separators.
+	)
+	slice = bigslice.Flatmap(slice, func(s, sep string) ([]string, []int) {
+		split := strings.Split(s, sep)
+		lengths := make([]int, len(split))
+		for i := range lengths {
+			lengths[i] = len(split[i])
+		}
+		return split, lengths
+	})
+	slicetest.Print(slice)
+	// Output:
+	// Lorem 5
+	// adipiscing 10
+	// amet 4
+	// consectetur 11
+	// do 2
+	// dolor 5
+	// eiusmod 7
+	// elit 4
+	// incididunt 10
+	// ipsum 5
+	// sed 3
+	// sit 3
+	// tempor 6
+}
+
+func ExampleFold() {
+	// Fold over the input Slice<string, int, string> to accumulate a struct
+	// holding:
+	// - the sum of the integers in col1.
+	// - the product of the integers in col1.
+	// - the longest string encountered in col2.
+	slice := bigslice.Const(2,
+		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
+		[]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+		[]string{
+			"Lorem",
+			"ipsum",
+			"dolor",
+			"sit",
+			"amet",
+			"consectetur",
+			"adipiscing",
+			"elit",
+			"sed",
+			"do",
+			"eiusmod",
+		},
+	)
+	type accum struct {
+		ready bool
+		// sum is the sum of integers in the second column.
+		sum int
+		// product is the product of integers in the second column.
+		product int
+		// longest is the longest string in the third column.
+		longest string
+	}
+	slice = bigslice.Fold(slice, func(acc accum, i int, s string) accum {
+		if !acc.ready {
+			// Initialize product as the multiplicative identity, 1.
+			acc.product = 1
+			acc.ready = true
+		}
+		acc.sum += i
+		acc.product *= i
+		if len(acc.longest) < len(s) {
+			acc.longest = s
+		}
+		return acc
+	})
+	slicetest.Print(slice)
+	// Output:
+	// a {true 36 10080 adipiscing}
+	// b {true 9 18 consectetur}
+	// c {true 21 220 eiusmod}
+}
+
+func ExampleHead() {
+	// Use one shard, as Head operates per shard.
+	slice := bigslice.Const(1,
+		[]int{0, 1, 2, 3, 4, 5},
+		[]string{"zero", "one", "two", "three", "four", "five"},
+	)
+	slice = bigslice.Head(slice, 3)
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero
+	// 1 one
+	// 2 two
+}
+
+func ExampleMap() {
+	// Map an input of Slice<int, string>...:
+	// - col0: an integer
+	// - col1: a label for that integer
+	//
+	// ... to a Slice<int, string, int, string>:
+	// - col0: original integer
+	// - col1: original label
+	// - col2: square of original integer
+	// - col3: original label with ".squared" appended
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3},
+		[]string{"zero", "one", "two", "three"},
+	)
+	slice = bigslice.Map(slice, func(x int, s string) (int, string, int, string) {
+		return x, s, x * x, s + ".squared"
+	})
+	slicetest.Print(slice)
+	// Output:
+	// 0 zero 0 zero.squared
+	// 1 one 1 one.squared
+	// 2 two 4 two.squared
+	// 3 three 9 three.squared
+}
+
+func ExamplePrefixed() {
+	// Count the number of pets of the same type and name by using Prefixed to
+	// make a slice with the type and name columns as the key, then using Reduce
+	// to count the number of elements that have that key.
+	slice := bigslice.Const(2,
+		[]string{
+			"dog",
+			"dog",
+			"cat",
+			"cat",
+			"cat",
+			"fish",
+			"dog",
+			"dog",
+			"cat",
+			"fish",
+			"fish",
+		},
+		[]string{
+			"spot",
+			"spot",
+			"mittens",
+			"socks",
+			"socks",
+			"nemo",
+			"lassie",
+			"spot",
+			"mittens",
+			"nemo",
+			"dory",
+		},
+		[]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+	)
+	slice = bigslice.Prefixed(slice, 2)
+	slice = bigslice.Reduce(slice, func(a, b int) int { return a + b })
+	slicetest.Print(slice)
+	// Output:
+	// cat mittens 2
+	// cat socks 2
+	// dog lassie 1
+	// dog spot 3
+	// fish dory 1
+	// fish nemo 2
+}
+
+func ExampleReaderFunc() {
+	// Use ReaderFunc to make an evenly sharded Slice<int, string> from the
+	// alphabet:
+	// - col0: the 1-indexed index of the letter in the alphabet
+	// - col1: the letter
+	const numShards = 6
+	const alphabet = "abcdefghijklmnopqrstuvwxyz"
+	type state struct {
+		// next is the index of the next element of the alphabet to be read.
+		next int
+	}
+	slice := bigslice.ReaderFunc(numShards,
+		func(shard int, s *state, is []int, ss []string) (int, error) {
+			// Each shard will handle a portion of the alphabet.
+			// Shard 0 reads letters 1, 7, 13, ....
+			// Shard 1 reads letters 2, 8, 14, ....
+			// ...
+			// Shard 5 reads letters 6, 12, 18, ....
+			if s.next == 0 {
+				// This is the first call, so we initialize our state.
+				s.next = shard + 1
+			}
+			for n := 0; ; n++ {
+				if len(alphabet) < s.next {
+					// Our shard is complete, so return EOF.
+					return n, sliceio.EOF
+				}
+				if n == len(is) {
+					// We have filled the passed buffers, so there is nothing
+					// left to do in this invocation.
+					return n, nil
+				}
+				is[n] = s.next
+				ss[n] = string(alphabet[s.next-1])
+				s.next += numShards
+			}
+		})
+	slicetest.Print(slice)
+	// Output:
+	// 1 a
+	// 2 b
+	// 3 c
+	// 4 d
+	// 5 e
+	// 6 f
+	// 7 g
+	// 8 h
+	// 9 i
+	// 10 j
+	// 11 k
+	// 12 l
+	// 13 m
+	// 14 n
+	// 15 o
+	// 16 p
+	// 17 q
+	// 18 r
+	// 19 s
+	// 20 t
+	// 21 u
+	// 22 v
+	// 23 w
+	// 24 x
+	// 25 y
+	// 26 z
+}
+
+func ExampleScan() {
+	// Use Scan to write a file for each shard of the input shard. Each file
+	// will contain a line for each row in the shard.
+	const numShards = 2
+	slice := bigslice.Const(numShards,
+		[]string{"a", "b", "c", "a", "b", "c"},
+		[]int{3, 3, 2, 2, 1, 1},
+	)
+	// For this simple example, use shared memory to store the paths to these
+	// files so that we can easily aggregate the files for output. If we were
+	// distributing this computation across machines without access to shared
+	// memory, we'd need to use a different mechanism, e.g. write files to a
+	// common backing store with a known prefix.
+	shardPaths := make([]string, numShards)
+	slice = bigslice.Scan(slice,
+		func(shard int, scanner *sliceio.Scanner) error {
+			file, err := ioutil.TempFile("", "example-scan")
+			if err != nil {
+				return fmt.Errorf("could not open temp file: %v", err)
+			}
+			shardPaths[shard] = file.Name()
+			var (
+				s string
+				x int
+			)
+			for scanner.Scan(context.Background(), &s, &x) {
+				// Write a line in the file with the labeled elements of the
+				// row.
+				line := fmt.Sprintf("s:%s x:%d\n", s, x)
+				if _, err = file.WriteString(line); err != nil {
+					return fmt.Errorf("error writing file %s: %v", file.Name(), err)
+				}
+			}
+			if err = file.Close(); err != nil {
+				return fmt.Errorf("error closing file: %v", err)
+			}
+			return scanner.Err()
+		},
+	)
+	// Print the resulting slice. This forces evaluation of the slice. Notice
+	// that this prints no output because slice is empty. Scanning consumes the
+	// slice.
+	fmt.Println("# slice")
+	slicetest.Print(slice)
+
+	// slicetest.Print evaluates the slice, so we now make sure to clean up
+	// after ourselves.
+	for _, path := range shardPaths {
+		defer os.Remove(path)
+	}
+	fmt.Println("# lines by shard")
+	for shard, path := range shardPaths {
+		fmt.Printf("## shard %d\n", shard)
+		// Read and sort the lines for deterministic output.
+		var lines []string
+		file, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("error opening %s for reading: %v", path, err)
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if scannerErr := scanner.Err(); scannerErr != nil {
+			log.Fatalf("error scanning %s: %v", path, scannerErr)
+		}
+		sort.Strings(lines)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
+	}
+	// Output:
+	// # slice
+	// # lines by shard
+	// ## shard 0
+	// s:a x:2
+	// s:a x:3
+	// s:b x:3
+	// s:c x:2
+	// ## shard 1
+	// s:b x:1
+	// s:c x:1
+}
+
+func ExampleWriterFunc() {
+	// Use WriterFunc to write a file for each shard of the input shard. Each
+	// file will contain a line for each row in the shard.
+	const numShards = 2
+	slice := bigslice.Const(numShards,
+		[]string{"a", "b", "c", "a", "b", "c"},
+		[]int{3, 3, 2, 2, 1, 1},
+	)
+	// For this simple example, use shared memory to store the paths to these
+	// files so that we can easily aggregate the files for output. If we were
+	// distributing this computation across machines without access to shared
+	// memory, we'd need to use a different mechanism, e.g. write files to a
+	// common backing store with a known prefix.
+	shardPaths := make([]string, numShards)
+	type writeState struct {
+		file *os.File
+	}
+	slice = bigslice.WriterFunc(slice,
+		func(shard int, state *writeState, readErr error, ss []string, xs []int) error {
+			if state.file == nil {
+				// First call; initialize state.
+				var err error
+				if state.file, err = ioutil.TempFile("", "example-writer-func"); err != nil {
+					return fmt.Errorf("could not open temp file: %v", err)
+				}
+				shardPaths[shard] = state.file.Name()
+			}
+			for i := range ss {
+				// We can safely assume that ss and xs are of equal length.
+				s := ss[i]
+				x := xs[i]
+				// Write a line in the file with the labeled elements of the
+				// row.
+				line := fmt.Sprintf("s:%s x:%d\n", s, x)
+				if _, err := state.file.WriteString(line); err != nil {
+					return fmt.Errorf("error writing file: %v", err)
+				}
+			}
+			if readErr != nil {
+				// No more data is coming, so we close our file.
+				if err := state.file.Close(); err != nil {
+					return fmt.Errorf("error closing file: %v", err)
+				}
+			}
+			return nil
+		},
+	)
+	// Note that the slice passes through unadulterated.
+	fmt.Println("# slice")
+	slicetest.Print(slice)
+
+	// slicetest.Print evaluates the slice, so we now make sure to clean up
+	// after ourselves.
+	for _, path := range shardPaths {
+		defer os.Remove(path)
+	}
+	fmt.Println("# lines by shard")
+	for shard, path := range shardPaths {
+		fmt.Printf("## shard %d\n", shard)
+		// Read and sort the lines for deterministic output.
+		var lines []string
+		file, err := os.Open(path)
+		if err != nil {
+			log.Fatalf("error opening %s for reading: %v", path, err)
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if scannerErr := scanner.Err(); scannerErr != nil {
+			log.Fatalf("error scanning %s: %v", path, scannerErr)
+		}
+		sort.Strings(lines)
+		for _, line := range lines {
+			fmt.Println(line)
+		}
+	}
+	// Output:
+	// # slice
+	// a 2
+	// a 3
+	// b 1
+	// b 3
+	// c 1
+	// c 2
+	// # lines by shard
+	// ## shard 0
+	// s:a x:2
+	// s:a x:3
+	// s:b x:3
+	// s:c x:2
+	// ## shard 1
+	// s:b x:1
+	// s:c x:1
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/slicetest"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
@@ -140,4 +141,39 @@ func TestCogroupPrefixed(t *testing.T) {
 			break
 		}
 	}
+}
+
+func ExampleCogroup() {
+	slice0 := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 0, 1},
+		[]string{"zero", "one", "two", "three", "cero", "uno"},
+	)
+	slice1 := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 4, 5, 6},
+		[]int{0, 1, 4, 9, 16, 25, 36},
+	)
+	slice := bigslice.Cogroup(slice0, slice1)
+	slicetest.Print(slice)
+	// Output:
+	// 0 [cero zero] [0]
+	// 1 [one uno] [1]
+	// 2 [two] [4]
+	// 3 [three] [9]
+	// 4 [] [16]
+	// 5 [] [25]
+	// 6 [] [36]
+}
+
+func ExampleCogroup_one() {
+	slice := bigslice.Const(2,
+		[]int{0, 1, 2, 3, 0, 1},
+		[]string{"zero", "one", "two", "three", "cero", "uno"},
+	)
+	slice = bigslice.Cogroup(slice)
+	slicetest.Print(slice)
+	// Output:
+	// 0 [cero zero]
+	// 1 [one uno]
+	// 2 [two]
+	// 3 [three]
 }

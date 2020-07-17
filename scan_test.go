@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/grailbio/bigslice"
+	"github.com/grailbio/bigslice/slicetest"
 )
 
 func TestScanReader(t *testing.T) {
@@ -34,4 +35,26 @@ func TestScanReader(t *testing.T) {
 	slice = bigslice.Reduce(slice, func(a, e int) int { return a + e })
 	slice = bigslice.Map(slice, func(k struct{}, v int) int { return v })
 	assertEqual(t, slice, false, []int{499500})
+}
+
+func ExampleScanReader() {
+	var b bytes.Buffer
+	for i := 0; i < 10; i++ {
+		fmt.Fprint(&b, i, "\n")
+	}
+	slice := bigslice.ScanReader(2, func() (io.ReadCloser, error) {
+		return ioutil.NopCloser(bytes.NewReader(b.Bytes())), nil
+	})
+	slicetest.Print(slice)
+	// Output:
+	// 0
+	// 1
+	// 2
+	// 3
+	// 4
+	// 5
+	// 6
+	// 7
+	// 8
+	// 9
 }
