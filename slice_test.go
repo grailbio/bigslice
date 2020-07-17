@@ -1029,6 +1029,7 @@ func ExampleFold() {
 	}
 	slice = bigslice.Fold(slice, func(acc accum, i int, s string) accum {
 		if !acc.ready {
+			// Initialize product as the multiplicative identity, 1.
 			acc.product = 1
 			acc.ready = true
 		}
