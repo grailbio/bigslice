@@ -1283,14 +1283,18 @@ func ExampleScan() {
 }
 
 func ExampleWriterFunc() {
+	// Use WriterFunc to write a file for each shard of the input shard. Each
+	// file will contain a line for each row in the shard.
 	const numShards = 2
 	slice := bigslice.Const(numShards,
 		[]string{"a", "b", "c", "a", "b", "c"},
 		[]int{3, 3, 2, 2, 1, 1},
 	)
-	// The side effect of our write function will be to write a file for each
-	// shard. This file will contain a line for each row in the shard. We store
-	// the paths to these files in shardPaths.
+	// For this simple example, use shared memory to store the paths to these
+	// files so that we can easily aggregate the files for output. If we were
+	// distributing this computation across machines without access to shared
+	// memory, we'd need to use a different mechanism, e.g. write files to a
+	// common backing store with a known prefix.
 	shardPaths := make([]string, numShards)
 	type writeState struct {
 		file *os.File
@@ -1309,6 +1313,8 @@ func ExampleWriterFunc() {
 				// We can safely assume that ss and xs are of equal length.
 				s := ss[i]
 				x := xs[i]
+				// Write a line in the file with the labeled elements of the
+				// row.
 				line := fmt.Sprintf("s:%s x:%d\n", s, x)
 				if _, err := state.file.WriteString(line); err != nil {
 					return fmt.Errorf("error writing file: %v", err)
