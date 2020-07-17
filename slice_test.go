@@ -1088,21 +1088,44 @@ func ExampleMap() {
 
 func ExamplePrefixed() {
 	slice := bigslice.Const(2,
-		[]string{"a", "a", "a", "a", "a", "b", "b", "b", "b", "c", "c"},
-		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
+		[]string{
+			"dog",
+			"dog",
+			"cat",
+			"cat",
+			"cat",
+			"fish",
+			"dog",
+			"dog",
+			"cat",
+			"fish",
+			"fish",
+		},
+		[]string{
+			"spot",
+			"spot",
+			"mittens",
+			"socks",
+			"socks",
+			"nemo",
+			"lassie",
+			"spot",
+			"mittens",
+			"nemo",
+			"dory",
+		},
 		[]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
 	)
 	slice = bigslice.Prefixed(slice, 2)
 	slice = bigslice.Reduce(slice, func(a, b int) int { return a + b })
 	slicetest.Print(slice)
 	// Output:
-	// a a 1
-	// a b 1
-	// a c 3
-	// b a 3
-	// b b 1
-	// c a 1
-	// c c 1
+	// cat mittens 2
+	// cat socks 2
+	// dog lassie 1
+	// dog spot 3
+	// fish dory 1
+	// fish nemo 2
 }
 
 func ExampleReaderFunc() {
