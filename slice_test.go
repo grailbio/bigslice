@@ -1139,7 +1139,7 @@ func ExampleReaderFunc() {
 	const numShards = 6
 	const alphabet = "abcdefghijklmnopqrstuvwxyz"
 	type state struct {
-		index int
+		next int
 	}
 	slice := bigslice.ReaderFunc(numShards,
 		func(shard int, s *state, is []int, ss []string) (int, error) {
@@ -1148,12 +1148,12 @@ func ExampleReaderFunc() {
 			// Shard 1 reads letters 2, 8, 14, ....
 			// ...
 			// Shard 5 reads letters 6, 12, 18, ....
-			if s.index == 0 {
+			if s.next == 0 {
 				// This is the first call, so we initialize our state.
-				s.index = shard + 1
+				s.next = shard + 1
 			}
 			for n := 0; ; n++ {
-				if len(alphabet) < s.index {
+				if len(alphabet) < s.next {
 					// Our shard is complete, so return EOF.
 					return n, sliceio.EOF
 				}
@@ -1162,9 +1162,9 @@ func ExampleReaderFunc() {
 					// left to do in this invocation.
 					return n, nil
 				}
-				is[n] = s.index
-				ss[n] = string(alphabet[s.index-1])
-				s.index += numShards
+				is[n] = s.next
+				ss[n] = string(alphabet[s.next-1])
+				s.next += numShards
 			}
 		})
 	slicetest.Print(slice)
