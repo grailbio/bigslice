@@ -1062,6 +1062,15 @@ func ExampleHead() {
 }
 
 func ExampleMap() {
+	// Map an input of Slice<int, string>...:
+	// - col0: an integer
+	// - col1: a label for that integer
+	//
+	// ... to a Slice<int, string, int, string>:
+	// - col0: original integer
+	// - col1: original label
+	// - col2: square of original integer
+	// - col3: original label with ".squared" appended
 	slice := bigslice.Const(2,
 		[]int{0, 1, 2, 3},
 		[]string{"zero", "one", "two", "three"},
