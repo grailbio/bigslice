@@ -996,6 +996,11 @@ func ExampleFlatmap() {
 }
 
 func ExampleFold() {
+	// Fold over the input Slice<string, int, string> to accumulate a struct
+	// holding:
+	// - the sum of the integers in col1.
+	// - the product of the integers in col1.
+	// - the longest string encountered in col2.
 	slice := bigslice.Const(2,
 		[]string{"c", "a", "b", "c", "c", "b", "a", "a", "a", "a", "c"},
 		[]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
