@@ -1009,7 +1009,7 @@ func ExampleFold() {
 		ready bool
 		// sum is the sum of integers in the second column.
 		sum int
-		// product is the prouct of integers in the second column.
+		// product is the product of integers in the second column.
 		prod int
 		// longest is the longest string in the third column.
 		longest string
