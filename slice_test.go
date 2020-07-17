@@ -1087,6 +1087,9 @@ func ExampleMap() {
 }
 
 func ExamplePrefixed() {
+	// Count the number of pets of the same type and name by using Prefixed to
+	// make a slice with the type and name columns as the key, then using Reduce
+	// to count the number of elements that have that key.
 	slice := bigslice.Const(2,
 		[]string{
 			"dog",
