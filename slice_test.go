@@ -1023,17 +1023,17 @@ func ExampleFold() {
 		// sum is the sum of integers in the second column.
 		sum int
 		// product is the product of integers in the second column.
-		prod int
+		product int
 		// longest is the longest string in the third column.
 		longest string
 	}
 	slice = bigslice.Fold(slice, func(acc accum, i int, s string) accum {
 		if !acc.ready {
-			acc.prod = 1
+			acc.product = 1
 			acc.ready = true
 		}
 		acc.sum += i
-		acc.prod *= i
+		acc.product *= i
 		if len(acc.longest) < len(s) {
 			acc.longest = s
 		}
