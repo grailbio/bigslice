@@ -397,6 +397,10 @@ func scanInts(ctx context.Context, t *testing.T, scan *sliceio.Scanner) []int {
 }
 
 func ExampleCache() {
+	// Compute a slice that performs a mapping computation and uses Cache to
+	// cache the result, showing that we had to execute the mapping computation.
+	// Compute another slice that uses the cache, showing that we produced the
+	// same result without executing the mapping computation again.
 	dir, err := ioutil.TempDir("", "example-cache")
 	if err != nil {
 		log.Fatalf("could not create temp directory: %v", err)
