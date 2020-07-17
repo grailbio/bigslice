@@ -1132,14 +1132,15 @@ func ExamplePrefixed() {
 }
 
 func ExampleReaderFunc() {
+	// Use ReaderFunc to make an evenly sharded Slice<int, string> from the
+	// alphabet:
+	// - col0: the 1-indexed index of the letter in the alphabet
+	// - col1: the letter
 	const numShards = 6
 	const alphabet = "abcdefghijklmnopqrstuvwxyz"
 	type state struct {
 		index int
 	}
-	// Our reader will produce a slice of the alphabet in two columns:
-	// - the (1-indexed) index of the letter in the alphabet
-	// - the letter itself
 	slice := bigslice.ReaderFunc(numShards,
 		func(shard int, s *state, is []int, ss []string) (int, error) {
 			// Each shard will handle a portion of the alphabet.
