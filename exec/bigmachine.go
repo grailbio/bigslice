@@ -184,9 +184,9 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 
 		b.managersWG.Add(1)
 		go func() {
-			defer b.managersWG.Done()
 			b.managers[i].Do(ctx)
 			b.managers[i].machinesWG.Wait()
+			b.managersWG.Done()
 		}()
 	}
 	return b.managers[i]
