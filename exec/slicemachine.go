@@ -551,12 +551,12 @@ func (m *machineManager) Do(ctx context.Context) {
 				have/m.machprocs, have, pending/m.machprocs, pending)
 			go func() {
 				machines := startMachines(ctx, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
-				for _, machine := range machines {
+				for _, mach := range machines {
 					m.machinesWG.Add(1)
-					go func() {
-						defer m.machinesWG.Done()
+					go func(machine *sliceMachine) {
 						machine.Go(ctx)
-					}()
+						m.machinesWG.Done()
+					}(mach)
 				}
 				startc <- startResult{
 					machines:  machines,

@@ -123,7 +123,7 @@ type bigmachineExecutor struct {
 	// manager index.
 	managers []*machineManager
 
-	shutdownc chan struct{}
+	shutdownc  chan struct{}
 	managersWG sync.WaitGroup
 }
 
@@ -155,8 +155,7 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.shutdownc = make(chan struct{})
 
-
-	return func(){
+	return func() {
 		close(b.shutdownc)
 		b.managersWG.Wait()
 		b.b.Shutdown()
