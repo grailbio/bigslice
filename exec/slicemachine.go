@@ -188,7 +188,6 @@ loop:
 		select {
 		case <-time.After(statsPollInterval):
 		case <-ctx.Done():
-			return
 		case <-stopped:
 			break loop
 		}
