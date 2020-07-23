@@ -21,8 +21,6 @@ jobs:
         go-version: ${{ matrix.go }}
     - name: Check out
       uses: actions/checkout@v2
-    - name: Build
-      run: go build -v ./...
     - name: Test
       run: go test -v -short ./...
   golangci:
