@@ -10,9 +10,10 @@ jobs:
   build:
     strategy:
       matrix:
-        go: [1.12, 1.13]
+        go: [1.12, 1.13, 1.14]
+        os: [ubuntu-latest, macos-latest]
     name: Build & Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
     - name: Set up Go ${{ matrix.go }}
       uses: actions/setup-go@v2
