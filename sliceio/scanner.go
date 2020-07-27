@@ -46,7 +46,8 @@ func NewScanner(typ slicetype.Type, r ReadCloser) *Scanner {
 // Scan the next record into the provided columns. Scanning fails if
 // the columns do not match arity and type with the underlying data
 // set. Scan returns true while no errors are encountered and there
-// remains data to be scanned.
+// remains data to be scanned. Once Scan returns false, call Err to
+// check for errors.
 func (s *Scanner) Scan(ctx context.Context, out ...interface{}) bool {
 	if s.err != nil {
 		return false
@@ -104,7 +105,8 @@ func (s *Scanner) Close() error {
 // when the type or arity of the column vectors do not match the
 // underlying dataset. The number of records scanned is returned
 // together with a boolean indicating whether scanning should
-// continue, as in Scan.
+// continue, as in Scan. Once Scan returns false, call Err to
+// check for errors.
 func (s *Scanner) Scanv(ctx context.Context, out ...interface{}) (int, bool) {
 	// TODO(marius): vectorize this all the way down
 	if s.err != nil {
