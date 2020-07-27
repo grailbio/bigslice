@@ -451,7 +451,7 @@ to build and run Bigslice jobs.
 This is needed only to build "fat" binaries that include binaries
 for both the host operating system and architecture
 as well as linux/amd64,
-which is used by the cluster nodes.
+which is used by the cluster nodes[^cluster-arch].
 If your host operating system is already linux/amd64,
 then `bigslice build` and `bigslice run`
 are equivalent to `go build` and `go run`;
@@ -477,6 +477,9 @@ See its documentation for further details.
 # Articles
 - <a href="implementation.html">About the implementation</a>
 - <a href="parallelism.html">Parallelism in Bigslice</a>
+
+[^cluster-arch]: Bigslice, by way of Bigmachine, currently only supports
+    linux/amd64 remote cluster instances.
 
 <footer>
 The Bigslice gopher design was inspired by
