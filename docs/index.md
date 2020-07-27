@@ -441,7 +441,7 @@ Scanning in Bigslice follows the general pattern for scanning in Go:
 First, we extract a scanner (3)
 which has a `Scan` (4) that returns a boolean indicating whether to continue scanning
 (and also populates the value for each column in the scanned row),
-while the `Err` method (5) returns any error that occurred while scanning.'
+while the `Err` method (5) returns any error that occurred while scanning.
 
 # Some more details to keep you going
 
@@ -454,7 +454,7 @@ as well as linux/amd64,
 which is used by the cluster nodes.
 If your host operating system is already linux/amd64,
 then `bigslice build` and `bigslice run`
-are equivalent to `go build` and `go run`;
+are equivalent to `go build` and `go run`.
 
 Bigslice
 uses package [github.com/grailbio/base/config](https://godoc.org/github.com/grailbio/base/config)
