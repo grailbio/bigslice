@@ -237,7 +237,11 @@ func TestReduceReader(t *testing.T) {
 	for i := range readers {
 		readers[i] = sliceio.FrameReader(f)
 	}
-	reducer := Reduce(f, "testreduce", readers, slicefunc.Of(func(x, y int) int { return x + y }))
+	fn, ok := slicefunc.Of(func(x, y int) int { return x + y })
+	if !ok {
+		t.Fatal("unexpected bad func")
+	}
+	reducer := Reduce(f, "testreduce", readers, fn)
 	var (
 		outIntsKey []int
 		outStrsKey []string

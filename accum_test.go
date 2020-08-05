@@ -26,7 +26,10 @@ outer:
 			t.Errorf("expected to be able to make accumulator for %s", typ)
 			continue
 		}
-		step := slicefunc.Of(func(a, e int) int { return a + e })
+		step, ok := slicefunc.Of(func(a, e int) int { return a + e })
+		if !ok {
+			t.Fatal("unexpected bad func")
+		}
 		accum := makeAccumulator(typ, typeOfInt, step)
 		const N = 100
 		for i := 0; i < N; i++ {

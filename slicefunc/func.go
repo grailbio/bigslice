@@ -11,7 +11,6 @@ import (
 	"reflect"
 
 	"github.com/grailbio/bigslice/slicetype"
-	"github.com/grailbio/bigslice/typecheck"
 )
 
 // Nil is a nil Func.
@@ -41,22 +40,51 @@ var typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
 type Func struct {
 	// In and Out represent the slicetype of the function's input and output,
 	// respectively.
-	In, Out     slicetype.Type
+	In, Out slicetype.Type
+	// IsVariadic is whether the function's final parameter is variadic. If it
+	// is, In.Out(In.NumOut()-1) returns the parameter's implicit actual slice
+	// type. For example, if this represents func(x int, y ...string):
+	//
+	//  fn.In.NumOut() == 2
+	//  fn.In.Out(0) is the reflect.Type for "int"
+	//  fn.In.Out(1) is the reflect.Type for "[]string"
+	//  fn.IsVariadic == true
+	IsVariadic  bool
 	fn          reflect.Value
 	contextFunc bool
 }
 
-// Of creates a Func from the provided function. Of panics if fn is not a
-// func.
-func Of(fn interface{}) Func {
-	in, out, ok := typecheck.Func(fn)
-	if !ok {
-		panic("slicefunc.New: invalid func")
+type funcSliceType struct {
+	reflect.Type
+}
+
+func (funcSliceType) Prefix() int { return 1 }
+
+// Of creates a Func from the provided function, along with a bool indicating
+// whether fn is a valid function. If it is not, the returned Func is invalid.
+func Of(fn interface{}) (Func, bool) {
+	t := reflect.TypeOf(fn)
+	if t == nil {
+		return Func{}, false
 	}
-	v := reflect.ValueOf(fn)
-	t := v.Type()
-	context := t.NumIn() > 0 && t.In(0) == typeOfContext
-	return Func{in, out, v, context}
+	if t.Kind() != reflect.Func {
+		return Func{}, false
+	}
+	in := make([]reflect.Type, t.NumIn())
+	for i := range in {
+		in[i] = t.In(i)
+	}
+	context := len(in) > 0 && in[0] == typeOfContext
+	if context {
+		in = in[1:]
+	}
+	return Func{
+		In:          slicetype.New(in...),
+		Out:         funcSliceType{t},
+		IsVariadic:  t.IsVariadic(),
+		fn:          reflect.ValueOf(fn),
+		contextFunc: context,
+	}, true
 }
 
 // Call invokes the function with the provided arguments, and returns the

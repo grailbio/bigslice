@@ -49,19 +49,18 @@ func Reshuffle(slice Slice) Slice {
 // Schematically:
 //
 //	Repartition(Slice<t1, t2, ..., tn> func(nshard int, v1 t1, ..., vn tn) int)  Slice<t1, t2, ..., tn>
-func Repartition(slice Slice, fn interface{}) Slice {
+func Repartition(slice Slice, partition interface{}) Slice {
 	var (
 		expectArg = slicetype.Append(sliceTypeInt, slice)
 		expectRet = sliceTypeInt
 	)
-	arg, ret, ok := typecheck.Func(fn)
+	fn, ok := slicefunc.Of(partition)
 	if !ok {
-		typecheck.Panicf(1, "repartition: not a function: %T", fn)
+		typecheck.Panicf(1, "repartition: not a function: %T", partition)
 	}
-	if !typecheck.Equal(arg, expectArg) || !typecheck.Equal(ret, expectRet) {
-		typecheck.Panicf(1, "repartiton: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
+	if !typecheck.Equal(fn.In, expectArg) || !typecheck.Equal(fn.Out, expectRet) {
+		typecheck.Panicf(1, "repartition: expected %s, got %T", slicetype.Signature(expectArg, expectRet), partition)
 	}
-	fval := slicefunc.Of(fn)
 	part := func(ctx context.Context, frame frame.Frame, nshard int, shards []int) {
 		args := make([]reflect.Value, slice.NumOut()+1)
 		args[0] = reflect.ValueOf(nshard)
@@ -69,7 +68,7 @@ func Repartition(slice Slice, fn interface{}) Slice {
 			for j := 0; j < slice.NumOut(); j++ {
 				args[j+1] = frame.Index(j, i)
 			}
-			result := fval.Call(ctx, args)
+			result := fn.Call(ctx, args)
 			shards[i] = int(result[0].Int())
 		}
 	}

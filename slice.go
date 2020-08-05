@@ -313,19 +313,19 @@ func ReaderFunc(nshard int, read interface{}, prags ...Pragma) Slice {
 	s := new(readerFuncSlice)
 	s.name = MakeName("reader")
 	s.nshard = nshard
-	arg, ret, ok := typecheck.Func(read)
-	if !ok || arg.NumOut() < 3 || arg.Out(0).Kind() != reflect.Int {
+	fn, ok := slicefunc.Of(read)
+	if !ok || fn.In.NumOut() < 3 || fn.In.Out(0).Kind() != reflect.Int {
 		typecheck.Panicf(1, "readerfunc: invalid reader function type %T", read)
 	}
-	s.read = slicefunc.Of(read)
-	if ret.Out(0).Kind() != reflect.Int || ret.Out(1) != typeOfError {
+	if fn.Out.Out(0).Kind() != reflect.Int || fn.Out.Out(1) != typeOfError {
 		typecheck.Panicf(1, "readerfunc: function %T does not return (int, error)", read)
 	}
-	s.stateType = arg.Out(1)
-	arg = slicetype.Slice(arg, 2, arg.NumOut())
+	s.stateType = fn.In.Out(1)
+	arg := slicetype.Slice(fn.In, 2, fn.In.NumOut())
 	if s.Type, ok = typecheck.Devectorize(arg); !ok {
 		typecheck.Panicf(1, "readerfunc: function %T is not vectorized", read)
 	}
+	s.read = fn
 	s.Pragma = Pragmas(prags)
 	return s
 }
@@ -449,23 +449,23 @@ func WriterFunc(slice Slice, write interface{}) Slice {
 		typecheck.Panicf(2, "writerfunc: invalid writer function type %T; %s", write, msg)
 	}
 
-	arg, ret, ok := typecheck.Func(write)
+	fn, ok := slicefunc.Of(write)
 	if !ok ||
-		arg.NumOut() != 3+slice.NumOut() ||
-		arg.Out(0).Kind() != reflect.Int ||
-		arg.Out(2) != typeOfError {
+		fn.In.NumOut() != 3+slice.NumOut() ||
+		fn.In.Out(0).Kind() != reflect.Int ||
+		fn.In.Out(2) != typeOfError {
 		die(fmt.Sprintf("must be %s", expectTyp))
 	}
-	s.stateType = arg.Out(1)
+	s.stateType = fn.In.Out(1)
 	for i := 0; i < slice.NumOut(); i++ {
-		if reflect.SliceOf(slice.Out(i)) != arg.Out(i+3) {
+		if reflect.SliceOf(slice.Out(i)) != fn.In.Out(i+3) {
 			die(fmt.Sprintf("must be %s", expectTyp))
 		}
 	}
-	if ret.NumOut() != 1 || ret.Out(0) != typeOfError {
+	if fn.Out.NumOut() != 1 || fn.Out.Out(0) != typeOfError {
 		die("must return error")
 	}
-	s.write = slicefunc.Of(write)
+	s.write = fn
 	return s
 }
 
@@ -543,7 +543,6 @@ type mapSlice struct {
 	Pragma
 	Slice
 	fval slicefunc.Func
-	out  slicetype.Type
 }
 
 // Map transforms a slice by invoking a function for each record. The
@@ -559,25 +558,24 @@ func Map(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	m := new(mapSlice)
 	m.name = MakeName("map")
 	m.Slice = slice
-	arg, ret, ok := typecheck.Func(fn)
+	sliceFn, ok := slicefunc.Of(fn)
 	if !ok {
 		typecheck.Panicf(1, "map: invalid map function %T", fn)
 	}
-	if !typecheck.Equal(slice, arg) {
+	if !typecheck.CanApply(sliceFn, slice) {
 		typecheck.Panicf(1, "map: function %T does not match input slice type %s", fn, slicetype.String(slice))
 	}
-	if ret.NumOut() == 0 {
+	if sliceFn.Out.NumOut() == 0 {
 		typecheck.Panicf(1, "map: need at least one output column")
 	}
-	m.fval = slicefunc.Of(fn)
-	m.out = ret
+	m.fval = sliceFn
 	m.Pragma = Pragmas(prags)
 	return m
 }
 
 func (m *mapSlice) Name() Name             { return m.name }
-func (m *mapSlice) NumOut() int            { return m.out.NumOut() }
-func (m *mapSlice) Out(c int) reflect.Type { return m.out.Out(c) }
+func (m *mapSlice) NumOut() int            { return m.fval.Out.NumOut() }
+func (m *mapSlice) Out(c int) reflect.Type { return m.fval.Out.Out(c) }
 func (*mapSlice) ShardType() ShardType     { return HashShard }
 func (*mapSlice) NumDep() int              { return 1 }
 func (m *mapSlice) Dep(i int) Dep          { return singleDep(i, m.Slice, false) }
@@ -652,17 +650,17 @@ func Filter(slice Slice, pred interface{}, prags ...Pragma) Slice {
 	f.name = MakeName("filter")
 	f.Slice = slice
 	f.Pragma = Pragmas(prags)
-	arg, ret, ok := typecheck.Func(pred)
+	fn, ok := slicefunc.Of(pred)
 	if !ok {
 		typecheck.Panicf(1, "filter: invalid predicate function %T", pred)
 	}
-	if !typecheck.Equal(slice, arg) {
+	if !typecheck.CanApply(fn, slice) {
 		typecheck.Panicf(1, "filter: function %T does not match input slice type %s", pred, slicetype.String(slice))
 	}
-	if ret.NumOut() != 1 || ret.Out(0).Kind() != reflect.Bool {
+	if fn.Out.NumOut() != 1 || fn.Out.Out(0).Kind() != reflect.Bool {
 		typecheck.Panic(1, "filter: predicate must return a single boolean value")
 	}
-	f.pred = slicefunc.Of(pred)
+	f.pred = fn
 	return f
 }
 
@@ -740,18 +738,18 @@ func Flatmap(slice Slice, fn interface{}, prags ...Pragma) Slice {
 	f.name = MakeName("flatmap")
 	f.Slice = slice
 	f.Pragma = Pragmas(prags)
-	arg, ret, ok := typecheck.Func(fn)
+	sliceFn, ok := slicefunc.Of(fn)
 	if !ok {
 		typecheck.Panicf(1, "flatmap: invalid flatmap function %T", fn)
 	}
-	if !typecheck.Equal(slice, arg) {
+	if !typecheck.CanApply(sliceFn, slice) {
 		typecheck.Panicf(1, "flatmap: flatmap function %T does not match input slice type %s", fn, slicetype.String(slice))
 	}
-	f.out, ok = typecheck.Devectorize(ret)
+	f.out, ok = typecheck.Devectorize(sliceFn.Out)
 	if !ok {
 		typecheck.Panicf(1, "flatmap: flatmap function %T is not vectorized", fn)
 	}
-	f.fval = slicefunc.Of(fn)
+	f.fval = sliceFn
 	return f
 }
 
@@ -877,20 +875,20 @@ func Fold(slice Slice, fold interface{}) Slice {
 	// TODO(marius): allow deps to express shuffling by other columns.
 	f.dep = Dep{slice, true, nil, false}
 
-	arg, ret, ok := typecheck.Func(fold)
+	fn, ok := slicefunc.Of(fold)
 	if !ok {
 		typecheck.Panicf(1, "fold: invalid fold function %T", fold)
 	}
-	if ret.NumOut() != 1 {
+	if fn.Out.NumOut() != 1 {
 		typecheck.Panicf(1, "fold: fold functions must return exactly one value")
 	}
 	// func(acc, t2, t3, ..., tn)
-	if got, want := arg, slicetype.Append(ret, slicetype.Slice(slice, 1, slice.NumOut())); !typecheck.Equal(got, want) {
+	if got, want := fn.In, slicetype.Append(fn.Out, slicetype.Slice(slice, 1, slice.NumOut())); !typecheck.Equal(got, want) {
 		typecheck.Panicf(1, "fold: expected func(acc, t2, t3, ..., tn), got %T", fold)
 	}
-	f.fval = slicefunc.Of(fold)
+	f.fval = fn
 	// output: key, accumulator
-	f.out = slicetype.New(slice.Out(0), ret.Out(0))
+	f.out = slicetype.New(slice.Out(0), fn.Out.Out(0))
 	return f
 }
 

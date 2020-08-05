@@ -5,34 +5,92 @@
 package typecheck
 
 import (
-	"context"
+	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-func TestFunc(t *testing.T) {
-	arg, ret, ok := Func(func(int, string) string { return "" })
+type testStringer struct{}
+
+func (testStringer) String() string {
+	return "testStringer"
+}
+
+var typeOfTestStringer = reflect.TypeOf(testStringer{})
+
+// TestCanApply verifies basic handling of function and argument types.
+func TestCanApply(t *testing.T) {
+	fn, ok := slicefunc.Of(func(int, string) string { return "" })
 	if !ok {
-		t.Fatal("!ok")
+		t.Fatal("not a func")
 	}
-	if got, want := arg, slicetype.New(typeOfInt, typeOfString); !Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-	if got, want := ret, slicetype.New(typeOfString); !Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	for _, c := range []struct {
+		args     []reflect.Type
+		canApply bool
+	}{
+		{[]reflect.Type{}, false},
+		{[]reflect.Type{typeOfInt}, false},
+		{[]reflect.Type{typeOfString}, false},
+		{[]reflect.Type{typeOfInt, typeOfString}, true},
+		{[]reflect.Type{typeOfInt, typeOfString, typeOfString}, false},
+		{[]reflect.Type{typeOfInt, typeOfString, typeOfBool}, false},
+	} {
+		argTyp := slicetype.New(c.args...)
+		if got, want := CanApply(fn, argTyp), c.canApply; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
 	}
 }
 
-func TestFuncContext(t *testing.T) {
-	arg, ret, ok := Func(func(ctx context.Context, x int) bool { return false })
+// TestCanApplyVariadic verifies the ability to apply a variadic function is
+// properly evaluated.
+func TestCanApplyVariadic(t *testing.T) {
+	fn, ok := slicefunc.Of(func(int, ...string) string { return "" })
 	if !ok {
-		t.Fatal("!ok")
+		t.Fatal("not a func")
 	}
-	if got, want := arg, slicetype.New(typeOfInt); !Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	for _, c := range []struct {
+		args     []reflect.Type
+		canApply bool
+	}{
+		{[]reflect.Type{}, false},
+		{[]reflect.Type{typeOfInt}, true},
+		{[]reflect.Type{typeOfString}, false},
+		{[]reflect.Type{typeOfInt, typeOfString}, true},
+		{[]reflect.Type{typeOfInt, typeOfString, typeOfString}, true},
+		{[]reflect.Type{typeOfInt, typeOfString, typeOfBool}, false},
+	} {
+		argTyp := slicetype.New(c.args...)
+		if got, want := CanApply(fn, argTyp), c.canApply; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
 	}
-	if got, want := ret, slicetype.New(typeOfBool); !Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+}
+
+// TestCanApplyInterface verifies that types that implement interfaces can be
+// passed as their interface types.
+func TestCanApplyInterface(t *testing.T) {
+	fn, ok := slicefunc.Of(func(int, fmt.Stringer) string { return "" })
+	if !ok {
+		t.Fatal("not a func")
+	}
+	for _, c := range []struct {
+		args     []reflect.Type
+		canApply bool
+	}{
+		{[]reflect.Type{}, false},
+		{[]reflect.Type{typeOfInt}, false},
+		{[]reflect.Type{typeOfString}, false},
+		{[]reflect.Type{typeOfInt, typeOfString}, false},
+		{[]reflect.Type{typeOfInt, typeOfTestStringer}, true},
+	} {
+		argTyp := slicetype.New(c.args...)
+		if got, want := CanApply(fn, argTyp), c.canApply; got != want {
+			t.Logf("fn.In: %v, arg: %v", fn.In, argTyp)
+			t.Errorf("got %v, want %v", got, want)
+		}
 	}
 }
