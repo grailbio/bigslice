@@ -107,10 +107,10 @@ func TestRepartition(t *testing.T) {
 
 func TestRepartitionType(t *testing.T) {
 	slice := bigslice.Const(1, []int{}, []string{})
-	expectTypeError(t, "repartiton: expected func(int, int, string) int, got func() int", func() {
+	expectTypeError(t, "repartition: expected func(int, int, string) int, got func() int", func() {
 		bigslice.Repartition(slice, func() int { return 0 })
 	})
-	expectTypeError(t, "repartiton: expected func(int, int, string) int, got func(int, int, string)", func() {
+	expectTypeError(t, "repartition: expected func(int, int, string) int, got func(int, int, string)", func() {
 		bigslice.Repartition(slice, func(_ int, _ int, _ string) {})
 	})
 }
