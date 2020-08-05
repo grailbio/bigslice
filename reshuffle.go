@@ -59,7 +59,7 @@ func Repartition(slice Slice, fn interface{}) Slice {
 		typecheck.Panicf(1, "repartition: not a function: %T", fn)
 	}
 	if !typecheck.Equal(arg, expectArg) || !typecheck.Equal(ret, expectRet) {
-		typecheck.Panicf(1, "repartiton: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
+		typecheck.Panicf(1, "repartition: expected %s, got %T", slicetype.Signature(expectArg, expectRet), fn)
 	}
 	fval := slicefunc.Of(fn)
 	part := func(ctx context.Context, frame frame.Frame, nshard int, shards []int) {
