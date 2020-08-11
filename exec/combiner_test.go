@@ -37,7 +37,11 @@ func deepEqual(f, g frame.Frame) bool {
 
 func TestCombiningFrame(t *testing.T) {
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, slicefunc.Of(func(n, m int) int { return n + m }), 2, 1)
+	fn, ok := slicefunc.Of(func(n, m int) int { return n + m })
+	if !ok {
+		t.Fatal("unexpected bad func")
+	}
+	f := makeCombiningFrame(typ, fn, 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}
@@ -65,7 +69,11 @@ func TestCombiningFrame(t *testing.T) {
 func TestCombiningFrameManyKeys(t *testing.T) {
 	const N = 100000
 	typ := slicetype.New(typeOfString, typeOfInt)
-	f := makeCombiningFrame(typ, slicefunc.Of(func(n, m int) int { return n + m }), 2, 1)
+	fn, ok := slicefunc.Of(func(n, m int) int { return n + m })
+	if !ok {
+		t.Fatal("unexpected bad func")
+	}
+	f := makeCombiningFrame(typ, fn, 2, 1)
 	if f == nil {
 		t.Fatal("nil frame")
 	}
@@ -113,8 +121,12 @@ func TestCombiningFrameManyKeys(t *testing.T) {
 func TestCombiner(t *testing.T) {
 	const N = 100
 	typ := slicetype.New(typeOfString, typeOfInt)
+	fn, ok := slicefunc.Of(func(n, m int) int { return n + m })
+	if !ok {
+		t.Fatal("unexpected bad func")
+	}
 	// Set a small target value to ensure spilling.
-	c, err := newCombiner(typ, "test", slicefunc.Of(func(n, m int) int { return n + m }), 2)
+	c, err := newCombiner(typ, "test", fn, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,40 +5,39 @@
 package typecheck
 
 import (
-	"context"
-	"reflect"
-
+	"github.com/grailbio/bigslice/slicefunc"
 	"github.com/grailbio/bigslice/slicetype"
 )
 
-var typeOfContext = reflect.TypeOf((*context.Context)(nil)).Elem()
-
-type funcSliceType struct {
-	reflect.Type
-}
-
-func (funcSliceType) Prefix() int { return 1 }
-
-// Func deconstructs a function's argument and return types into
-// slicetypes. If x is not a function, Func returns false.
-//
-// If the type of the first argument to the provided function
-// is context.Context, then it is ignored: the returned type
-// contains only the remainder of the arguments.
-func Func(x interface{}) (arg, ret slicetype.Type, ok bool) {
-	t := reflect.TypeOf(x)
-	if t == nil {
-		return nil, nil, false
+// CanApply returns whether fn can be applied to arg.
+func CanApply(fn slicefunc.Func, arg slicetype.Type) bool {
+	if fn.IsVariadic {
+		if arg.NumOut() < fn.In.NumOut()-1 {
+			// Not enough arguments.
+			return false
+		}
+		for i := 0; i < fn.In.NumOut()-1; i++ {
+			if !arg.Out(i).AssignableTo(fn.In.Out(i)) {
+				// Non-variadic mismatch.
+				return false
+			}
+		}
+		variadicType := fn.In.Out(fn.In.NumOut() - 1).Elem()
+		for i := fn.In.NumOut() - 1; i < arg.NumOut(); i++ {
+			if !arg.Out(i).AssignableTo(variadicType) {
+				// Variadic mismatch.
+				return false
+			}
+		}
+		return true
 	}
-	if t.Kind() != reflect.Func {
-		return nil, nil, false
+	if arg.NumOut() != fn.In.NumOut() {
+		return false
 	}
-	in := make([]reflect.Type, t.NumIn())
-	for i := range in {
-		in[i] = t.In(i)
+	for i := 0; i < fn.In.NumOut(); i++ {
+		if !arg.Out(i).AssignableTo(fn.In.Out(i)) {
+			return false
+		}
 	}
-	if len(in) > 0 && in[0] == typeOfContext {
-		in = in[1:]
-	}
-	return slicetype.New(in...), funcSliceType{t}, true
+	return true
 }
