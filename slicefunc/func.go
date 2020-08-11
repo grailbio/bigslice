@@ -65,10 +65,10 @@ func (funcSliceType) Prefix() int { return 1 }
 func Of(fn interface{}) (Func, bool) {
 	t := reflect.TypeOf(fn)
 	if t == nil {
-		return Func{}, false
+		return Nil, false
 	}
 	if t.Kind() != reflect.Func {
-		return Func{}, false
+		return Nil, false
 	}
 	in := make([]reflect.Type, t.NumIn())
 	for i := range in {
