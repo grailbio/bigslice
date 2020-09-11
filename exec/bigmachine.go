@@ -1504,16 +1504,14 @@ type statsReader struct {
 	readDurationNs *stats.Int
 }
 
-func (s *statsReader) Read(ctx context.Context, f frame.Frame) (n int, err error) {
-	n, err = s.reader.Read(ctx, f)
+func (s *statsReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 	start := time.Now()
-	defer func() {
-		s.readDurationNs.Add(time.Since(start).Nanoseconds())
-	}()
+	n, err := s.reader.Read(ctx, f)
+	s.readDurationNs.Add(time.Since(start).Nanoseconds())
 	for _, istat := range s.numRead {
 		istat.Add(int64(n))
 	}
-	return
+	return n, err
 }
 
 func truncatef(v interface{}) string {
@@ -1529,8 +1527,7 @@ type statsWriter struct {
 
 func (s *statsWriter) Write(ctx context.Context, f frame.Frame) error {
 	start := time.Now()
-	defer func() {
-		s.writeDurationNs.Add(time.Since(start).Nanoseconds())
-	}()
-	return s.writer.Write(ctx, f)
+	err := s.writer.Write(ctx, f)
+	s.writeDurationNs.Add(time.Since(start).Nanoseconds())
+	return err
 }
