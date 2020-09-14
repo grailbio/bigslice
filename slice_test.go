@@ -810,6 +810,23 @@ func TestHead(t *testing.T) {
 	assertEqual(t, slice, false, []int{1, 2, 7, 8})
 }
 
+// TestPrefixedPragma verifies that Prefixed slices properly adopt pragmas from
+// their underlying slices.
+func TestPrefixedPragma(t *testing.T) {
+	slice := bigslice.Const(2, []int{0, 1, 2}, []string{"a", "b", "c"})
+	slice = bigslice.Map(slice, func(i int, s string) (int, string) {
+		return i, s
+	}, bigslice.Exclusive)
+	slice = bigslice.Prefixed(slice, 2)
+	pragma, ok := slice.(bigslice.Pragma)
+	if !ok {
+		t.Fatal("Prefixed does not implement Pragma")
+	}
+	if !pragma.Exclusive() {
+		t.Error("Prefixed not Exclusive")
+	}
+}
+
 func TestScan(t *testing.T) {
 	const (
 		N      = 10000
