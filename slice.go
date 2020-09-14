@@ -1023,6 +1023,7 @@ func (s scanSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
 }
 
 type prefixSlice struct {
+	Pragma
 	Slice
 	prefix int
 }
@@ -1037,7 +1038,11 @@ func Prefixed(slice Slice, prefix int) Slice {
 	if prefix > slice.NumOut() {
 		typecheck.Panicf(1, "prefixed: prefix %d is greater than number of columns %d", prefix, slice.NumOut())
 	}
-	return &prefixSlice{slice, prefix}
+	var pragma Pragma = Pragmas{}
+	if slicePragma, ok := slice.(Pragma); ok {
+		pragma = slicePragma
+	}
+	return &prefixSlice{pragma, slice, prefix}
 }
 
 func (p *prefixSlice) Prefix() int { return p.prefix }
