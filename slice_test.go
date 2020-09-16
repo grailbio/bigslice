@@ -325,7 +325,7 @@ func TestReaderFunc(t *testing.T) {
 			t.Errorf("%d (of %d) nonzero rows", nnonzero, len(strings))
 		}
 		if state.Fuzzer == nil {
-			state.Fuzzer = fuzz.New()
+			state.Fuzzer = fuzz.NewWithSeed(1)
 		}
 		state.NumElements(1, len(strings))
 		var (
