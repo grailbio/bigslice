@@ -913,10 +913,10 @@ func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunRepl
 	case task.NumOut() == 0:
 		// If there are no output columns, just drive the computation.
 		_, err := out.Read(ctx, frame.Empty)
-		if err == sliceio.EOF {
-			err = nil
+		if err != nil && err != sliceio.EOF {
+			return maybeTaskFatalErr{err}
 		}
-		return maybeTaskFatalErr{err}
+		return nil
 	case task.NumPartition > 1:
 		var psize = *defaultChunksize / 100
 		var (
