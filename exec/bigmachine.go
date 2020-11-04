@@ -6,7 +6,6 @@ package exec
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/gob"
 	"fmt"
@@ -105,7 +104,7 @@ type bigmachineExecutor struct {
 	// cost of gob-encoding the invocations for each worker (CPU to encode;
 	// memory for ephemeral buffers in gob). Instead, we do it once and reuse
 	// the result for each worker.
-	encodedInvocations map[uint64][]byte
+	encodedInvocations *invDiskCache
 
 	// Worker is the (configured) worker service to instantiate on
 	// allocated machines.
@@ -146,12 +145,15 @@ func (b *bigmachineExecutor) Start(sess *Session) (shutdown func()) {
 	}
 	b.invocations = make(map[uint64]execInvocation)
 	b.invocationDeps = make(map[uint64]map[uint64]bool)
-	b.encodedInvocations = make(map[uint64][]byte)
+	b.encodedInvocations = newInvDiskCache()
 	b.worker = &worker{
 		MachineCombiners: sess.machineCombiners,
 	}
 
-	return b.b.Shutdown
+	return func() {
+		b.b.Shutdown()
+		b.encodedInvocations.close()
+	}
 }
 
 func (b *bigmachineExecutor) manager(i int) *machineManager {
@@ -198,14 +200,6 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 			b.invocationDeps[inv.Index][result.invIndex] = true
 		}
 		b.invocations[inv.Index] = inv
-
-		// gob-encode the invocation, so we can reuse the work of gob-encoding
-		// when sending the invocation to each worker.
-		var buf bytes.Buffer
-		if err := gob.NewEncoder(&buf).Encode(inv); err != nil {
-			return errors.E(errors.Fatal, errors.Invalid, "error gob-encoding invocation", err)
-		}
-		b.encodedInvocations[inv.Index] = buf.Bytes()
 	}
 
 	// Now traverse the invocation graph bottom-up, making sure
@@ -214,15 +208,13 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 	// TODO(marius): allow for parallel compilation as some users are
 	// performing expensive computations inside of bigslice.Funcs.
 	var (
-		todo               = []uint64{inv.Index}
-		invocations        []execInvocation
-		encodedInvocations [][]byte
+		todo        = []uint64{inv.Index}
+		invocations []execInvocation
 	)
 	for len(todo) > 0 {
 		var i uint64
 		i, todo = todo[0], todo[1:]
 		invocations = append(invocations, b.invocations[i])
-		encodedInvocations = append(encodedInvocations, b.encodedInvocations[i])
 		for j := range b.invocationDeps[i] {
 			todo = append(todo, j)
 		}
@@ -240,8 +232,18 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 				args[i] = truncatef(inv.Args[i])
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
+			// TODO(jcharum): Consider modifying bigmachine/rpc to allow returning an immediate error here.
 			makeInvReader := func() io.Reader {
-				return bytes.NewReader(encodedInvocations[i])
+				rc, err := b.encodedInvocations.getOrCreate(inv.Index, func(w io.Writer) error {
+					if err := gob.NewEncoder(w).Encode(inv); err != nil {
+						return errors.E(errors.Fatal, errors.Invalid, "error gob-encoding invocation", err)
+					}
+					return nil
+				})
+				if err != nil {
+					return errReader{err}
+				}
+				return rc
 			}
 			err := m.RetryCall(ctx, "Worker.Compile", makeInvReader, nil)
 			if err != nil {
@@ -256,6 +258,12 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 		}
 	}
 	return nil
+}
+
+type errReader struct{ error }
+
+func (r errReader) Read([]byte) (n int, err error) {
+	return 0, r.error
 }
 
 func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
