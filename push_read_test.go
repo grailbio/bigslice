@@ -2,9 +2,9 @@ package bigslice_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
-	"strconv"
 	"testing"
 
 	fuzz "github.com/google/gofuzz"
@@ -16,8 +16,8 @@ import (
 
 func TestPushReader(t *testing.T) {
 	const (
-		N      = 3
-		Nshard = 1
+		N      = 1000
+		Nshard = 10
 	)
 	slice := bigslice.PushReader(Nshard, func(shard int, sink func(string, int)) error {
 		fuzzer := fuzz.NewWithSeed(1)
@@ -41,62 +41,76 @@ func TestPushReader(t *testing.T) {
 //   goos: linux
 //   goarch: amd64
 //   pkg: github.com/grailbio/bigslice
-//   BenchmarkReaders/10/pushreader-8                     110          10705539 ns/op
-//   BenchmarkReaders/10/readerfunc-8                     100          10036689 ns/op
-//   BenchmarkReaders/1000/pushreader-8                     8         131828675 ns/op
-//   BenchmarkReaders/1000/readerfunc-8                    12          97414219 ns/op
-//   BenchmarkReaders/100000/pushreader-8                   1        11181803529 ns/op
-//   BenchmarkReaders/100000/readerfunc-8                   1        8714653324 ns/op
+//   BenchmarkReaders/heavy=false/n=10/standard-8                 100          10641845 ns/op
+//   BenchmarkReaders/heavy=false/n=10/push-8                     100          11062321 ns/op
+//   BenchmarkReaders/heavy=false/n=1000/standard-8                12          98823548 ns/op
+//   BenchmarkReaders/heavy=false/n=1000/push-8                     9         117393717 ns/op
+//   BenchmarkReaders/heavy=true/n=10/standard-8                   20          55009760 ns/op
+//   BenchmarkReaders/heavy=true/n=10/push-8                       20          56645978 ns/op
+//   BenchmarkReaders/heavy=true/n=1000/standard-8                  1        4544902923 ns/op
+//   BenchmarkReaders/heavy=true/n=1000/push-8                      1        4555043499 ns/op
 //   PASS
 //   ok      github.com/grailbio/bigslice    26.135s
 func BenchmarkReaders(b *testing.B) {
 	ctx := context.Background()
 	sess := exec.Start(exec.Local)
-	for _, rowsPerShard := range []int{10, 1000, 100000} {
-		lastResult := -1
-		checkResult := func(sliceResult *exec.Result) {
-			scanner := sliceResult.Scanner()
-			var result int
-			must.True(scanner.Scan(ctx, &result))
-			if lastResult < 0 {
-				lastResult = result
+	for _, heavyWork := range []bool{false, true} {
+		for _, rowsPerShard := range []int{10, 1000} {
+			lastResult := -1
+			checkResult := func(sliceResult *exec.Result) {
+				scanner := sliceResult.Scanner()
+				var result int
+				must.True(scanner.Scan(ctx, &result))
+				if lastResult < 0 {
+					lastResult = result
+				}
+				must.True(lastResult == result)
 			}
-			must.True(lastResult == result)
+			opts := benchmarkOpts{
+				Seed:         1,
+				RowsPerShard: rowsPerShard,
+				HeavyWork:    heavyWork,
+			}
+			b.Run(fmt.Sprintf("heavy=%t/n=%d/standard", heavyWork, rowsPerShard), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					checkResult(sess.Must(ctx, benchmarkPushReader, opts))
+				}
+			})
+			opts.PushReader = true
+			b.Run(fmt.Sprintf("heavy=%t/n=%d/push", heavyWork, rowsPerShard), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					checkResult(sess.Must(ctx, benchmarkPushReader, opts))
+				}
+			})
 		}
-
-		b.Run(strconv.Itoa(rowsPerShard), func(b *testing.B) {
-			b.Run("pushreader", func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					checkResult(sess.Must(ctx, benchmarkPushReader, int64(1), rowsPerShard, true))
-				}
-			})
-			b.Run("readerfunc", func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					checkResult(sess.Must(ctx, benchmarkPushReader, int64(1), rowsPerShard, false))
-				}
-			})
-		})
 	}
 	sess.Shutdown()
 }
 
-var benchmarkPushReader = bigslice.Func(func(
-	seed int64,
-	rowsPerShard int,
-	usePush bool,
-) bigslice.Slice {
+type benchmarkOpts struct {
+	Seed         int64
+	RowsPerShard int
+	PushReader   bool
+	HeavyWork    bool
+}
+
+var benchmarkPushReader = bigslice.Func(func(opts benchmarkOpts) bigslice.Slice {
 	const nShards = 100
 	shardSeeds := make([]int64, nShards)
-	rnd := rand.New(rand.NewSource(seed))
+	rnd := rand.New(rand.NewSource(opts.Seed))
 	for i := range shardSeeds {
 		shardSeeds[i] = rnd.Int63()
 	}
 	var slice bigslice.Slice
-	if usePush {
+	if opts.PushReader {
 		slice = bigslice.PushReader(nShards, func(shard int, row func(int32)) error {
 			shardRnd := rand.New(rand.NewSource(shardSeeds[shard]))
-			for i := 0; i < rowsPerShard; i++ {
-				row(shardRnd.Int31())
+			for i := 0; i < opts.RowsPerShard; i++ {
+				if opts.HeavyWork {
+					row(heavyWork(shardRnd))
+				} else {
+					row(lightWork(shardRnd))
+				}
 			}
 			return nil
 		})
@@ -109,12 +123,16 @@ var benchmarkPushReader = bigslice.Func(func(
 			if state.Rand == nil {
 				state.Rand = rand.New(rand.NewSource(shardSeeds[shard]))
 			}
-			if state.doneRows == rowsPerShard {
+			if state.doneRows == opts.RowsPerShard {
 				return 0, sliceio.EOF
 			}
 			var i int
-			for state.doneRows < rowsPerShard && i < len(nums) {
-				nums[i] = state.Rand.Int31()
+			for state.doneRows < opts.RowsPerShard && i < len(nums) {
+				if opts.HeavyWork {
+					nums[i] = heavyWork(state.Rand)
+				} else {
+					nums[i] = lightWork(state.Rand)
+				}
 				state.doneRows++
 				i++
 			}
@@ -134,3 +152,14 @@ var benchmarkPushReader = bigslice.Func(func(
 		return accum
 	})
 })
+
+func heavyWork(r *rand.Rand) int32 {
+	for i := 0; i < 10000; i++ {
+		_ = r.Int()
+	}
+	return lightWork(r)
+}
+
+func lightWork(r *rand.Rand) int32 {
+	return r.Int31()
+}
