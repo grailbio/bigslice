@@ -14,12 +14,7 @@ func PushReader(nshard int, sinkRead interface{}, prags ...Pragma) Slice {
 	if !ok || fn.In.NumOut() != 2 || fn.In.Out(0).Kind() != reflect.Int {
 		typecheck.Panicf(1, "pushreader: invalid reader function type %T", sinkRead)
 	}
-
-	var (
-		sinkType      = fn.In.Out(1)
-		errorType     = reflect.TypeOf((*error)(nil)).Elem()
-		errorNilValue = reflect.Zero(errorType)
-	)
+	sinkType := fn.In.Out(1)
 
 	type chunkResult struct {
 		n   int
@@ -82,18 +77,14 @@ func PushReader(nshard int, sinkRead interface{}, prags ...Pragma) Slice {
 		}
 		state.emptyC <- chunk
 		result := <-state.doneC
-		errValue := errorNilValue
-		if result.err != nil {
-			errValue = reflect.ValueOf(result.err)
-		}
-		return []reflect.Value{reflect.ValueOf(result.n), errValue}
+		return []reflect.Value{reflect.ValueOf(result.n), reflect.ValueOf(&result.err).Elem()}
 	}
 	readerFuncArgTypes := []reflect.Type{reflect.TypeOf(int(0)), reflect.TypeOf(&state{})}
 	for i := 0; i < sinkType.NumIn(); i++ {
 		readerFuncArgTypes = append(readerFuncArgTypes, reflect.SliceOf(sinkType.In(i)))
 	}
 	readerFuncType := reflect.FuncOf(readerFuncArgTypes,
-		[]reflect.Type{reflect.TypeOf(int(0)), errorType}, false)
+		[]reflect.Type{reflect.TypeOf(int(0)), reflect.TypeOf((*error)(nil)).Elem()}, false)
 	readerFunc := reflect.MakeFunc(readerFuncType, readerFuncImpl)
 
 	return ReaderFunc(nshard, readerFunc.Interface(), prags...)
