@@ -10,7 +10,7 @@ jobs:
   build:
     strategy:
       matrix:
-        go: [1.12, 1.13, 1.14]
+        go: [1.12, 1.13, 1.14, 1.15]
         os: [ubuntu-latest, macos-latest]
     name: Build & Test
     runs-on: ${{ matrix.os }}
