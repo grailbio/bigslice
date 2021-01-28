@@ -251,6 +251,7 @@ func (s *Session) Discard(ctx context.Context, roots []*Task) {
 
 func (s *Session) start() {
 	s.shutdown = s.executor.Start(s)
+	log.Printf("eventlog: %s", s.eventer)
 	s.eventer.Event("bigslice:sessionStart",
 		"command", command(),
 		"executorType", s.executor.Name(),
