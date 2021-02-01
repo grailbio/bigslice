@@ -97,7 +97,7 @@ func maintainSliceGroup(ctx context.Context, tasks []*Task, group *status.Group)
 	})
 	group.Printf("count: %d", len(sliceToStatusTask))
 	statusc := make(chan sliceStatus)
-	go monitorSliceStatus(ctx, tasks, group, statusc)
+	go monitorSliceStatus(ctx, tasks, statusc)
 	for status := range statusc {
 		status.printTo(sliceToStatusTask[status.sliceName])
 	}
@@ -110,7 +110,7 @@ func maintainSliceGroup(ctx context.Context, tasks []*Task, group *status.Group)
 
 // monitorSliceStatus continually sends sliceStatus to statusc as the states of
 // tasks are updated. It will only return only when ctx is done.
-func monitorSliceStatus(ctx context.Context, tasks []*Task, group *status.Group, statusc chan<- sliceStatus) {
+func monitorSliceStatus(ctx context.Context, tasks []*Task, statusc chan<- sliceStatus) {
 	sub := NewTaskSubscriber()
 	taskToLastState := make(map[*Task]TaskState)
 	sliceToStatus := make(map[bigslice.Name]sliceStatus)

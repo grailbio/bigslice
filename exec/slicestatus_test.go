@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice"
 )
 
@@ -127,10 +126,8 @@ func TestMonitorSliceStatus(t *testing.T) {
 		return nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	var s status.Status
-	group := s.Group("slice status")
 	statusc := make(chan sliceStatus)
-	go monitorSliceStatus(ctx, tasks, group, statusc)
+	go monitorSliceStatus(ctx, tasks, statusc)
 	go simulateTasks(ctx, r, allTasks)
 	// Remember the last sliceStatus we saw for a slice to count how often it
 	// changes.
