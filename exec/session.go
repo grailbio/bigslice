@@ -338,18 +338,27 @@ func (s *Session) run(ctx context.Context, calldepth int, funcv *bigslice.FuncVa
 		defer cancel()
 		go maintainSliceGroup(maintainCtx, tasks, sliceGroup)
 	}
+	logInvocationCtx, logInvocationCancel := context.WithCancel(ctx)
+	defer logInvocationCancel()
+	go logInvocation(logInvocationCtx, inv, tasks)
 	// Register all the tasks so they may be used in visualization.
 	s.mu.Lock()
 	for _, task := range tasks {
 		s.roots[task] = struct{}{}
 	}
 	s.mu.Unlock()
+	err = Eval(ctx, s.executor, tasks, taskGroup)
+	errString := "success"
+	if err != nil {
+		errString = err.Error()
+	}
+	log.Printf("invocation: %s(%d) done: %s", inv.Location, inv.Index, errString)
 	return &Result{
 		Slice:    slice,
 		sess:     s,
 		invIndex: inv.Index,
 		tasks:    tasks,
-	}, Eval(ctx, s.executor, tasks, taskGroup)
+	}, err
 }
 
 // Parallelism returns the desired amount of evaluation parallelism.

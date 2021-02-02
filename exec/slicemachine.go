@@ -160,16 +160,16 @@ loop:
 		_ = g.Wait()
 		cancel()
 		if merr != nil {
-			log.Printf("meminfo %s: %v", s.Machine.Addr, merr)
+			log.Debug.Printf("meminfo %s: %v", s.Machine.Addr, merr)
 		}
 		if derr != nil {
-			log.Printf("diskinfo %s: %v", s.Machine.Addr, derr)
+			log.Debug.Printf("diskinfo %s: %v", s.Machine.Addr, derr)
 		}
 		if lerr != nil {
-			log.Printf("loadinfo %s: %v", s.Machine.Addr, lerr)
+			log.Debug.Printf("loadinfo %s: %v", s.Machine.Addr, lerr)
 		}
 		if verr != nil {
-			log.Printf("stats %s: %v", s.Machine.Addr, verr)
+			log.Debug.Printf("stats %s: %v", s.Machine.Addr, verr)
 		}
 		s.mu.Lock()
 		if merr == nil {
@@ -420,9 +420,12 @@ func (m *machineManager) Offer(priority, procs int) (<-chan *sliceMachine, func(
 // needed.
 func (m *machineManager) Do(ctx context.Context) {
 	var (
-		need, pending  int
-		startc         = make(chan startResult)
-		stoppedc       = make(chan *sliceMachine)
+		need, pending int
+		startc        = make(chan startResult)
+		stoppedc      = make(chan *sliceMachine)
+		// numStopped is the total number of machines that have stopped in the
+		// cluster.
+		numStopped     int
 		donec          = make(chan machineDone)
 		machines       []*sliceMachine
 		probation      machineFailureQ
@@ -431,7 +434,9 @@ func (m *machineManager) Do(ctx context.Context) {
 		// decide that there might be a systematic problem preventing machines
 		// from starting.
 		consecutiveStartFailures int
+		logTicker                = time.NewTicker(1 * time.Minute)
 	)
+	defer logTicker.Stop()
 	for {
 		var (
 			mach  *sliceMachine
@@ -521,6 +526,7 @@ func (m *machineManager) Do(ctx context.Context) {
 				}
 			}
 		case mach := <-stoppedc:
+			numStopped++
 			// Remove the machine from management. We let the sliceMachine
 			// instance deal with failing the tasks.
 			log.Error.Printf("machine %s stopped with error %s", mach, mach.Err())
@@ -532,6 +538,17 @@ func (m *machineManager) Do(ctx context.Context) {
 			}
 			mach.health = machineLost
 			mach.Status.Done()
+		case <-logTicker.C:
+			// pending is in procs, so we convert it to machines.
+			machPending := pending / m.machprocs
+			if len(probation) > 0 {
+				log.Printf("slicemachine: pending/running(probation)/lost: %d/%d(%d)/%d",
+					machPending, len(machines), len(probation), numStopped)
+				continue
+			}
+			log.Printf("slicemachine: pending/running/lost: %d/%d/%d",
+				machPending, len(machines), numStopped)
+			continue
 		case <-ctx.Done():
 			return
 		}

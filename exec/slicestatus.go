@@ -6,7 +6,10 @@ package exec
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/status"
 	"github.com/grailbio/bigslice"
 )
@@ -21,24 +24,23 @@ type sliceStatus struct {
 	counts [maxState]int32
 }
 
-// idleCount returns the number of tasks considered idle for status display.
-func (s sliceStatus) idleCount() int32 {
-	return s.counts[TaskInit] + s.counts[TaskWaiting]
-}
-
 // printTo prints s to t, translating our slice status information to a
 // status.Task update.
 func (s sliceStatus) printTo(t *status.Task) {
-	if s.counts[TaskLost] > 0 || s.counts[TaskErr] > 0 {
-		// Provide a more detailed view if there are tasks that are lost or in
-		// error.
-		t.Printf("tasks idle/running/done(lost)/error: %d/%d/%d(%d)/%d",
-			s.idleCount(), s.counts[TaskRunning], s.counts[TaskOk],
-			s.counts[TaskLost], s.counts[TaskErr])
-		return
+	t.Print(taskCountsString(s.counts))
+}
+
+// taskCountsString returns a human-consumable string representing counts which
+// holds the counts of tasks per state.
+func taskCountsString(counts [maxState]int32) string {
+	idleCount := counts[TaskInit] + counts[TaskWaiting]
+	if counts[TaskLost] > 0 || counts[TaskErr] > 0 {
+		return fmt.Sprintf("tasks idle/running/done(lost)/error: %d/%d/%d(%d)/%d",
+			idleCount, counts[TaskRunning], counts[TaskOk],
+			counts[TaskLost], counts[TaskErr])
 	}
-	t.Printf("tasks idle/running/done: %d/%d/%d", s.idleCount(),
-		s.counts[TaskRunning], s.counts[TaskOk])
+	return fmt.Sprintf("tasks idle/running/done: %d/%d/%d", idleCount,
+		counts[TaskRunning], counts[TaskOk])
 }
 
 // iterTasks calls f for each task in the full graph specified by tasks. It is
@@ -151,6 +153,49 @@ func monitorSliceStatus(ctx context.Context, tasks []*Task, group *status.Group,
 			}
 		case <-ctx.Done():
 			close(statusc)
+			return
+		}
+	}
+}
+
+// logInvocation periodically logs about the state of a given invocation inv
+// and its tasks.
+func logInvocation(ctx context.Context, inv execInvocation, tasks []*Task) {
+	var (
+		sub             = NewTaskSubscriber()
+		taskToLastState = make(map[*Task]TaskState)
+		counts          [maxState]int32
+	)
+	_ = iterTasks(tasks, func(t *Task) error {
+		// Subscribe to updates before we grab the initial state so that we
+		// are guaranteed to see every subsequent update.
+		t.Subscribe(sub)
+		taskState := t.State()
+		taskToLastState[t] = taskState
+		counts[taskState]++
+		return nil
+	})
+	defer func() {
+		_ = iterTasks(tasks, func(t *Task) error {
+			t.Unsubscribe(sub)
+			return nil
+		})
+	}()
+	t := time.NewTicker(1 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-sub.Ready():
+			for _, task := range sub.Tasks() {
+				lastState := taskToLastState[task]
+				counts[lastState]--
+				state := task.State()
+				taskToLastState[task] = state
+				counts[state]++
+			}
+		case <-t.C:
+			log.Printf("invocation: %s(%d): %s", inv.Location, inv.Index, taskCountsString(counts))
+		case <-ctx.Done():
 			return
 		}
 	}
