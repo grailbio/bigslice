@@ -45,8 +45,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	// TODO: ValueSpec captures top-level vars, but maybe we should include non-top-level ones, too.
 	inspect.Preorder([]ast.Node{&ast.ValueSpec{}}, func(node ast.Node) {
 		valueSpec := node.(*ast.ValueSpec)
-		for i := range valueSpec.Values {
-			call, ok := valueSpec.Values[i].(*ast.CallExpr)
+		for valueIdx, value := range valueSpec.Values {
+			call, ok := value.(*ast.CallExpr)
 			if !ok {
 				continue
 			}
@@ -60,8 +60,29 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			if len(call.Args) != 1 {
 				panic(fmt.Errorf("unexpected arguments to bigslice.Func: %v", call.Args))
 			}
+			implAst := call.Args[0]
+			implType := pass.TypesInfo.TypeOf(implAst)
+			implSig, ok := implType.(*types.Signature)
+			if !ok {
+				pass.ReportRangef(implAst, "argument to bigslice.Func must be a function, not %v", implType)
+				continue
+			}
+
+			var invalidParams bool
+			for i := 0; i < implSig.Params().Len(); i++ {
+				param := implSig.Params().At(i)
+				if err := checkValidFuncArg(param.Type()); err != nil {
+					pass.Reportf(param.Pos(),
+						"bigslice type error: Func argument %q [%d]: %v", param.Name(), i, err)
+					invalidParams = true
+				}
+			}
+			if invalidParams {
+				continue
+			}
+
 			funcType := pass.TypesInfo.TypeOf(call.Args[0]).Underlying().(*types.Signature)
-			funcTypes[valueSpec.Names[i].Name] = funcType
+			funcTypes[valueSpec.Names[valueIdx].Name] = funcType
 		}
 	})
 
@@ -108,4 +129,17 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	})
 
 	return nil, nil
+}
+
+func checkValidFuncArg(typ types.Type) error {
+	switch typ.(type) {
+	case *types.Tuple:
+		panic("Tuple not expected")
+	default:
+		// TODO: Consider investigating other types more thoroughly.
+		return nil
+
+	case *types.Chan, *types.Signature:
+		return fmt.Errorf("unsupported argument type: %s (can't be serialized)", typ.String())
+	}
 }

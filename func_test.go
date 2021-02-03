@@ -12,7 +12,7 @@ import (
 	"github.com/grailbio/testutil/h"
 )
 
-type testStruct0 struct{ field0 int }
+type testStruct0 struct{ Field0 int }
 
 // testStruct1 exists to avoid the problem of registering the same struct twice
 // with gob. As a convenience, bigslice.Func registers its argument types.
@@ -21,7 +21,7 @@ type testStruct0 struct{ field0 int }
 // "github.com/grailbio/bigslice.testStruct0" and "*bigslice.testStruct0". This
 // causes a panic in gob. Instead, we just use a different type altogether for
 // our pointer-to-struct argument.
-type testStruct1 struct{ field1 int }
+type testStruct1 struct{ Field1 int }
 
 // Disable unused checking for testInterface, as we're just using it to make
 // sure that our func typechecking works properly, and we don't need to
@@ -43,8 +43,8 @@ var fnTestNilFuncArgs = Func(
 // TestNilFuncArgs verifies that Func invocation handles untyped nil arguments
 // properly.
 func TestNilFuncArgs(t *testing.T) {
-	ts0 := testStruct0{field0: 0}
-	pts1 := &testStruct1{field1: 0}
+	ts0 := testStruct0{Field0: 0}
+	pts1 := &testStruct1{Field1: 0}
 	upts1 := unsafe.Pointer(pts1)
 	ptii := &testInterfaceImpl{}
 	for _, c := range []struct {
