@@ -508,7 +508,7 @@ func ExampleCachePartial() {
 	// 1
 	// 2
 	// 3
-	// computed: 3
+	// computed: 2
 }
 
 func ExampleReadCache() {

@@ -146,9 +146,8 @@ func ExampleRepartition() {
 	}
 
 	slice1 := bigslice.Repartition(slice, func(nshard, x int) int {
-		// We know our slice keys are sequential integers, so we partition
-		// perfectly with mod.
-		return x % nshard
+		// Put everything in partition 0 for illustration.
+		return 0
 	})
 	slice1 = countRowsPerShard(numShards, slice1)
 	fmt.Println("# repartitioned")
@@ -170,8 +169,8 @@ func ExampleRepartition() {
 	// 5
 	// 6
 	// ## row count per shard
-	// shard:0 count:4
-	// shard:1 count:2
+	// shard:0 count:3
+	// shard:1 count:3
 	// # repartitioned
 	// ## slice contents
 	// 1
@@ -181,8 +180,8 @@ func ExampleRepartition() {
 	// 5
 	// 6
 	// ## row count per shard
-	// shard:0 count:3
-	// shard:1 count:3
+	// shard:0 count:6
+	// shard:1 count:0
 }
 
 func ExampleReshard() {
@@ -235,8 +234,8 @@ func ExampleReshard() {
 	// 5
 	// 6
 	// ## row count per shard
-	// shard:0 count:4
-	// shard:1 count:2
+	// shard:0 count:3
+	// shard:1 count:3
 	// # after
 	// ## slice contents
 	// 1
@@ -303,8 +302,8 @@ func ExampleReshuffle() {
 	// 0
 	// 0
 	// ## row count per shard
-	// shard:0 count:4
-	// shard:1 count:2
+	// shard:0 count:3
+	// shard:1 count:3
 	// # after
 	// ## slice contents
 	// 0

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"reflect"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/quick"
 	"text/tabwriter"
 
 	fuzz "github.com/google/gofuzz"
@@ -281,6 +283,98 @@ func expectTypeError(t *testing.T, message string, fn func()) {
 		}
 	}()
 	fn()
+}
+
+type genNshard int
+
+func (genNshard) Generate(rand *rand.Rand, size int) reflect.Value {
+	// The number of shards must be >= 1 (guaranteed by constSlice
+	// construction).
+	return reflect.ValueOf(genNshard(rand.Intn(size) + 1))
+}
+
+type genNrow int
+
+func (genNrow) Generate(rand *rand.Rand, size int) reflect.Value {
+	return reflect.ValueOf(genNrow(rand.Intn(size)))
+}
+
+// TestConstShard verifies that the algorithm used to shard const slice data
+// behaves properly. The algorithm must provide shards that: cover the entire
+// data set, are within the bounds of data, are mutually exclusive, and are
+// distributed evenly.
+func TestConstShard(t *testing.T) {
+	f := func(gN genNrow, gNshard genNshard) bool {
+		var (
+			n       = int(gN)
+			nshard  = int(gNshard)
+			covered = make([]bool, n)
+			offsets = make([]int, nshard)
+			counts  = make([]int, nshard)
+		)
+		for shard := 0; shard < nshard; shard++ {
+			offset, count := bigslice.ConstShard(n, nshard, shard)
+			for i := offset; i < offset+count; i++ {
+				if i < 0 || i >= n {
+					// Out of bounds of data.
+					return false
+				}
+				if covered[i] {
+					// Already covered by another shard.
+					return false
+				}
+				covered[i] = true
+			}
+			offsets[shard] = offset
+			offsets[shard] = count
+		}
+		for _, c := range covered {
+			if !c {
+				// Data element that was part of no shard.
+				return false
+			}
+		}
+		if nshard == 0 {
+			return true
+		}
+		var (
+			minCount = counts[0]
+			maxCount = counts[0]
+		)
+		for _, c := range counts {
+			if c < minCount {
+				minCount = c
+			}
+			if c > maxCount {
+				maxCount = c
+			}
+		}
+		// Check even distribution.
+		return maxCount-minCount <= 1
+	}
+	// Some known edge cases.
+	for _, c := range []struct {
+		n      int
+		nshard int
+	}{
+		{0, 0},
+		{10, 10}, // Equal rows and shards.
+		{30, 10}, // Even multiple of shards.
+		{1, 10},  // More shards than elements.
+	} {
+		name := fmt.Sprintf("n:%d nshard:%d", c.n, c.nshard)
+		t.Run(name, func(t *testing.T) {
+			if !f(genNrow(c.n), genNshard(c.nshard)) {
+				t.Errorf("misbehaves")
+			}
+		})
+	}
+	// Random cases.
+	t.Run("Quick", func(t *testing.T) {
+		if err := quick.Check(f, nil); err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 func TestConst(t *testing.T) {
@@ -807,7 +901,7 @@ func TestFoldError(t *testing.T) {
 
 func TestHead(t *testing.T) {
 	slice := bigslice.Head(bigslice.Const(2, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}), 2)
-	assertEqual(t, slice, false, []int{1, 2, 7, 8})
+	assertEqual(t, slice, false, []int{1, 2, 6, 7})
 }
 
 // TestPrefixedPragma verifies that Prefixed slices properly adopt pragmas from
@@ -1216,8 +1310,8 @@ func ExampleReaderFunc() {
 }
 
 func ExampleScan() {
-	// Use Scan to write a file for each shard of the input shard. Each file
-	// will contain a line for each row in the shard.
+	// Use Scan to write a file for each shard of the input. Each file will
+	// contain a line for each row in the shard.
 	const numShards = 2
 	slice := bigslice.Const(numShards,
 		[]string{"a", "b", "c", "a", "b", "c"},
@@ -1290,18 +1384,18 @@ func ExampleScan() {
 	// # slice
 	// # lines by shard
 	// ## shard 0
-	// s:a x:2
 	// s:a x:3
 	// s:b x:3
 	// s:c x:2
 	// ## shard 1
+	// s:a x:2
 	// s:b x:1
 	// s:c x:1
 }
 
 func ExampleWriterFunc() {
-	// Use WriterFunc to write a file for each shard of the input shard. Each
-	// file will contain a line for each row in the shard.
+	// Use WriterFunc to write a file for each shard of the input. Each file
+	// will contain a line for each row in the shard.
 	const numShards = 2
 	slice := bigslice.Const(numShards,
 		[]string{"a", "b", "c", "a", "b", "c"},
@@ -1386,11 +1480,11 @@ func ExampleWriterFunc() {
 	// c 2
 	// # lines by shard
 	// ## shard 0
-	// s:a x:2
 	// s:a x:3
 	// s:b x:3
 	// s:c x:2
 	// ## shard 1
+	// s:a x:2
 	// s:b x:1
 	// s:c x:1
 }

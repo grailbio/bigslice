@@ -256,25 +256,34 @@ func (s *constReader) Read(ctx context.Context, out frame.Frame) (int, error) {
 	return n, nil
 }
 
+// constShard computes the offset to and count of rows in the const data for a
+// given shard. n is the total number of rows in the data. nshard is the total
+// number of shards. constShard distributes data evenly. The difference in
+// count between one shard and another will be at most one.
+func constShard(n, nshard, shard int) (offset, count int) {
+	var (
+		quot = n / nshard
+		rem  = n % nshard
+	)
+	offset = quot * shard
+	count = quot
+	if shard < rem {
+		offset += shard
+		count++
+	} else {
+		offset += rem
+	}
+	return offset, count
+}
+
 func (s *constSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader {
-	n := s.frame.Len()
-	if n == 0 {
+	offset, count := constShard(s.frame.Len(), s.nshard, shard)
+	if count == 0 {
 		return sliceio.EmptyReader{}
-	}
-	// The last shard gets truncated when the data cannot be split
-	// evenly.
-	shardn := (n / s.nshard) + 1
-	beg := shardn * shard
-	end := beg + shardn
-	if beg >= n {
-		return sliceio.EmptyReader{}
-	}
-	if end >= n {
-		end = n
 	}
 	r := &constReader{
 		op:    s,
-		frame: s.frame.Slice(beg, end),
+		frame: s.frame.Slice(offset, offset+count),
 		shard: shard,
 	}
 	return r
