@@ -2,19 +2,20 @@
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
-package exec_test
+package exec
 
 import (
 	"context"
 	"flag"
 	"log"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/grailbio/base/retry"
 	"github.com/grailbio/bigmachine/testsystem"
 	"github.com/grailbio/bigslice"
-	"github.com/grailbio/bigslice/exec"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -54,10 +55,10 @@ func TestChaosMonkey(t *testing.T) {
 		t.Skip("chaos monkey tests disabled; pass -chaos to enable")
 	}
 	// This test takes way too long to recover with the default probation timeouts.
-	save := exec.ProbationTimeout
-	exec.ProbationTimeout = time.Second
+	save := ProbationTimeout
+	ProbationTimeout = time.Second
 	defer func() {
-		exec.ProbationTimeout = save
+		ProbationTimeout = save
 	}()
 	system := testsystem.New()
 	system.Machineprocs = 2
@@ -67,7 +68,7 @@ func TestChaosMonkey(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	start := time.Now()
-	sess := exec.Start(exec.Bigmachine(system), exec.Parallelism(10))
+	sess := Start(Bigmachine(system), Parallelism(10))
 	var g errgroup.Group
 	g.Go(func() error {
 		// Aggressively kill machines in the beginning, and then back off
@@ -100,5 +101,135 @@ func TestChaosMonkey(t *testing.T) {
 	}
 	if err = g.Wait(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDiscardChaos verifies that execution is robust to concurrent evaluation
+// and discarding. It does this by repeatedly concurrently evaluating and
+// discarding the same task graph and verifying that a final evaluation
+// produces correct results.
+func TestDiscardChaos(t *testing.T) {
+	if testing.Short() {
+		t.Skip("chaos monkey tests disable with -short")
+	}
+	if !*chaos {
+		t.Skip("chaos monkey tests disabled; pass -chaos to enable")
+	}
+	origEnableMaxConsecutiveLost := enableMaxConsecutiveLost
+	enableMaxConsecutiveLost = false
+	origRetryPolicy := retryPolicy
+	retryPolicy = retry.MaxTries(retry.Backoff(100*time.Millisecond, 1*time.Second, 2), 5)
+	defer func() {
+		enableMaxConsecutiveLost = origEnableMaxConsecutiveLost
+		retryPolicy = origRetryPolicy
+	}()
+	const Nshard = 10
+	const N = Nshard * 100
+	// Niter is the number of stress test iterations. Each iteration
+	// concurrently runs and discards a task graph, then verifies that a final
+	// evaluation produces correct results.
+	const Niter = 5
+	f := bigslice.Func(func() bigslice.Slice {
+		vs := make([]int, N)
+		for i := range vs {
+			vs[i] = i
+		}
+		slice := bigslice.Const(Nshard, vs, append([]int{}, vs...))
+		slice = bigslice.Reduce(slice, func(x, y int) int {
+			time.Sleep(1 * time.Millisecond)
+			return x + y
+		})
+		return slice
+	})
+	id := bigslice.Func(func(result *Result) bigslice.Slice {
+		return result
+	})
+	for j := 0; j < Niter; j++ {
+		system := testsystem.New()
+		system.Machineprocs = 2
+		system.KeepalivePeriod = 500 * time.Millisecond
+		system.KeepaliveTimeout = 1 * time.Second
+		system.KeepaliveRpcTimeout = 500 * time.Millisecond
+		sess := Start(Bigmachine(system), Parallelism(8))
+		ctx := context.Background()
+		result, err := sess.Run(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctxRace, cancelRace := context.WithTimeout(ctx, 20*time.Second)
+		// Start two goroutines, one which continually evaluates and one
+		// which continually discards results.
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wait := 10 * time.Millisecond
+			for {
+				select {
+				case <-ctxRace.Done():
+					return
+				case <-time.After(wait):
+					_, runErr := sess.Run(ctxRace, id, result)
+					if runErr != nil && ctxRace.Err() == nil {
+						t.Error(runErr)
+					}
+				}
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wait := 10 * time.Millisecond
+			for {
+				select {
+				case <-ctxRace.Done():
+					return
+				case <-time.After(wait):
+					wait += time.Duration(rand.Intn(10)) * time.Millisecond
+					result.Discard(ctxRace)
+				}
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wait := time.Duration(rand.Intn(250)) * time.Millisecond
+			for {
+				select {
+				case <-ctxRace.Done():
+					return
+				case <-time.After(wait):
+					wait += time.Duration(10+rand.Intn(250)) * time.Millisecond
+					log.Printf("activating next chaos monkey in %s", wait)
+					if system.Kill(nil) {
+						log.Print("the simian army claimed yet another victim!")
+					}
+				}
+			}
+		}()
+		wg.Wait()
+		cancelRace()
+		// Do one final evaluation, the result of which we verify for
+		// correctness.
+		result, err = sess.Run(ctx, id, result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := result.Scanner()
+		x := rand.Int()
+		var count, i, j int
+		for s.Scan(ctx, &i, &j) {
+			count++
+			if i != j {
+				t.Error("result computed incorrectly")
+				break
+			}
+		}
+		if scanErr := s.Err(); scanErr != nil {
+			t.Fatal(scanErr)
+		}
+		if got, want := count, N; got != want {
+			t.Errorf("%v got %v, want %v", x, got, want)
+		}
 	}
 }

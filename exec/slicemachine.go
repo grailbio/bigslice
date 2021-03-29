@@ -84,7 +84,7 @@ type sliceMachine struct {
 
 	// Tasks is the set of tasks that have been run on this machine.
 	// It is used to mark tasks lost when a machine fails.
-	tasks []*Task
+	tasks map[*Task]struct{}
 
 	disk bigmachine.DiskInfo
 	mem  bigmachine.MemInfo
@@ -119,7 +119,25 @@ func (s *sliceMachine) Assign(task *Task) {
 	if s.lost {
 		task.Set(TaskLost)
 	} else {
-		s.tasks = append(s.tasks, task)
+		s.tasks[task] = struct{}{}
+	}
+}
+
+// Discard discards the storage resources held by task. The task will be
+// unassigned from s and considered TaskLost. If s does not own task, no-op.
+func (s *sliceMachine) Discard(ctx context.Context, task *Task) {
+	s.mu.Lock()
+	_, ok := s.tasks[task]
+	delete(s.tasks, task)
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	// s exclusively owns task's state during this time, so this does not race
+	// with anything else.
+	task.Set(TaskLost)
+	if err := s.RetryCall(ctx, "Worker.Discard", task.Name, nil); err != nil {
+		log.Error.Printf("error discarding %v: %v", task, err)
 	}
 }
 
@@ -201,7 +219,7 @@ loop:
 	s.tasks = nil
 	s.mu.Unlock()
 	log.Error.Printf("lost machine %s: marking its %d tasks as LOST", s.Machine.Addr, len(tasks))
-	for _, task := range tasks {
+	for task := range tasks {
 		task.Set(TaskLost)
 	}
 }
@@ -652,6 +670,7 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, ma
 				Stats:        stats.NewMap(),
 				Status:       status,
 				maxTaskProcs: maxTaskProcs,
+				tasks:        make(map[*Task]struct{}),
 			}
 			// TODO(marius): pass a context that's tied to the evaluation
 			// lifetime, or lifetime of the machine.

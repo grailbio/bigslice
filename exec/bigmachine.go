@@ -470,11 +470,7 @@ func (b *bigmachineExecutor) Discard(ctx context.Context, task *Task) {
 	if m == nil {
 		return
 	}
-	err := m.RetryCall(ctx, "Worker.Discard", task.Name, nil)
-	if err != nil {
-		log.Error.Printf("error discarding %v: %v", task, err)
-	}
-	task.Set(TaskLost)
+	m.Discard(ctx, task)
 }
 
 func (b *bigmachineExecutor) Eventer() eventlog.Eventer {
@@ -695,7 +691,7 @@ func reviseSeverity(err error) error {
 // Run runs an individual task as described in the request. Run returns a nil
 // error when the task was successfully run and its output deposited in a local
 // buffer. If Run returns a *errors.Error with errors.Fatal severity, the task
-// wll be marked in TaskErr, and evaluation will halt.
+// will be marked in TaskErr, and evaluation will halt.
 func (w *worker) Run(ctx context.Context, req taskRunRequest, reply *taskRunReply) (err error) {
 	var task *Task
 	defer func() {
@@ -1026,7 +1022,7 @@ func (w *worker) Discard(ctx context.Context, taskName TaskName, _ *struct{}) (e
 	for partition := 0; partition < task.NumPartition; partition++ {
 		err := w.store.Discard(ctx, taskName, partition)
 		if err != nil {
-			log.Printf("warning: failed to discard %v:%d: %v", taskName, partition, err)
+			log.Printf("warning: discarding %v:%d: %v", taskName, partition, err)
 		}
 	}
 	if !task.Combiner.IsNil() && task.CombineKey == "" {
