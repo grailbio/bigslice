@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grailbio/base/backgroundcontext"
 	"github.com/grailbio/base/data"
 	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/log"
@@ -350,6 +349,8 @@ type machineManager struct {
 	schedQ   scheduleRequestQ
 	schedc   chan scheduleRequest
 	unschedc chan scheduleRequest
+
+	machinesWG sync.WaitGroup
 }
 
 // NewMachineManager returns a new machineManager paramterized by the
@@ -549,6 +550,14 @@ func (m *machineManager) Do(ctx context.Context) {
 				have/m.machprocs, have, pending/m.machprocs, pending)
 			go func() {
 				machines := startMachines(ctx, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
+				for _, machine := range machines {
+					machine := machine
+					m.machinesWG.Add(1)
+					go func() {
+						machine.Go(ctx)
+						m.machinesWG.Done()
+					}()
+				}
 				startc <- startResult{
 					machines:  machines,
 					nFailures: needMachines - len(machines),
@@ -636,9 +645,6 @@ func startMachines(ctx context.Context, b *bigmachine.B, group *status.Group, ma
 				Status:       status,
 				maxTaskProcs: maxTaskProcs,
 			}
-			// TODO(marius): pass a context that's tied to the evaluation
-			// lifetime, or lifetime of the machine.
-			go sm.Go(backgroundcontext.Get())
 			slicemachines[i] = sm
 		}()
 	}
