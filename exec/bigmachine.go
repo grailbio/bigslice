@@ -53,7 +53,7 @@ const (
 )
 
 // RetryPolicy is the default retry policy used for machine calls.
-var retryPolicy = retry.MaxTries(retry.Backoff(5*time.Second, 60*time.Second, 2), 5)
+var retryPolicy = retry.MaxRetries(retry.Backoff(5*time.Second, 60*time.Second, 2), 5)
 
 // FatalErr is used to match fatal errors.
 var fatalErr = errors.E(errors.Fatal)

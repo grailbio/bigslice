@@ -118,7 +118,7 @@ func TestDiscardChaos(t *testing.T) {
 	origEnableMaxConsecutiveLost := enableMaxConsecutiveLost
 	enableMaxConsecutiveLost = false
 	origRetryPolicy := retryPolicy
-	retryPolicy = retry.MaxTries(retry.Backoff(100*time.Millisecond, 1*time.Second, 2), 5)
+	retryPolicy = retry.MaxRetries(retry.Backoff(100*time.Millisecond, 1*time.Second, 2), 5)
 	defer func() {
 		enableMaxConsecutiveLost = origEnableMaxConsecutiveLost
 		retryPolicy = origRetryPolicy
