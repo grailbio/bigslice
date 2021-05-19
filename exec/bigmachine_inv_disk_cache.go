@@ -8,7 +8,9 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/grailbio/base/compress/zstd"
 	"github.com/grailbio/base/errors"
+	"github.com/grailbio/base/fileio"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/base/must"
 )
@@ -59,18 +61,48 @@ func (c *invDiskCache) getOrCreate(invIndex uint64, create func(io.Writer) error
 	}
 
 	if _, ok := c.invPaths[invIndex]; !ok {
-		invPath := path.Join(c.cacheDir, strconv.Itoa(int(invIndex)))
-		f, err := os.OpenFile(invPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		err := func() (err error) {
+			invPath := path.Join(c.cacheDir, strconv.Itoa(int(invIndex)))
+			f, err := os.OpenFile(invPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+			if err != nil {
+				return err
+			}
+			defer fileio.CloseAndReport(f, &err)
+			zw, err := zstd.NewWriter(f)
+			if err != nil {
+				return err
+			}
+			defer fileio.CloseAndReport(zw, &err)
+			if err = create(zw); err != nil {
+				return err
+			}
+			c.invPaths[invIndex] = invPath
+			return nil
+		}()
 		if err != nil {
 			return nil, errors.E(err, "bigslice: could not create invocation disk cache entry")
 		}
-		if err := create(f); err != nil {
-			return nil, errors.E(err, "bigslice: could not write invocation disk cache entry")
-		}
-		if err := f.Close(); err != nil {
-			return nil, errors.E(err, "bigslice: could not complete invocation disk cache entry")
-		}
-		c.invPaths[invIndex] = invPath
 	}
-	return os.Open(c.invPaths[invIndex])
+	f, err := os.Open(c.invPaths[invIndex])
+	if err != nil {
+		return nil, errors.E(err, "bigslice: could not open invocation disk cache entry")
+	}
+	zr, err := zstd.NewReader(f)
+	if err != nil {
+		err = errors.E(err, "bigslice: could not open (zstd) invocation disk cache entry")
+		fileio.CloseAndReport(f, &err)
+		return nil, err
+	}
+	return fileReadCloser{ReadCloser: zr, file: f}, nil
+}
+
+type fileReadCloser struct {
+	io.ReadCloser
+	file *os.File
+}
+
+func (f fileReadCloser) Close() (err error) {
+	fileio.CloseAndReport(f.ReadCloser, &err)
+	fileio.CloseAndReport(f.file, &err)
+	return
 }
