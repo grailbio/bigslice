@@ -366,8 +366,8 @@ type machineManager struct {
 	// schedQ is the priority queue of scheduling requests, which determines the
 	// order in which requests are satisfied. See Offer.
 	schedQ   scheduleRequestQ
-	schedc   chan scheduleRequest
-	unschedc chan scheduleRequest
+	schedc   chan *scheduleRequest
+	unschedc chan *scheduleRequest
 }
 
 // NewMachineManager returns a new machineManager paramterized by the
@@ -403,8 +403,8 @@ func newMachineManager(b *bigmachine.B, params []bigmachine.Param, group *status
 		maxp:      maxp,
 		machprocs: machprocs,
 		worker:    worker,
-		schedc:    make(chan scheduleRequest),
-		unschedc:  make(chan scheduleRequest),
+		schedc:    make(chan *scheduleRequest),
+		unschedc:  make(chan *scheduleRequest),
 	}
 }
 
@@ -414,15 +414,18 @@ func newMachineManager(b *bigmachine.B, params []bigmachine.Param, group *status
 // request when called. If the request has already been serviced (i.e. a machine
 // has already been delivered), calling the cancel function is a no-op.
 func (m *machineManager) Offer(priority, procs int) (<-chan *sliceMachine, func()) {
+	if procs <= 0 {
+		panic("requested procs <= 0")
+	}
 	machc := make(chan *sliceMachine)
 	s := scheduleRequest{
 		procs:    procs,
 		priority: priority,
 		machc:    machc,
 	}
-	m.schedc <- s
+	m.schedc <- &s
 	cancel := func() {
-		m.unschedc <- s
+		m.unschedc <- &s
 	}
 	return machc, cancel
 }
@@ -445,7 +448,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		// cluster.
 		numStopped     int
 		donec          = make(chan machineDone)
-		machines       []*sliceMachine
+		machQ          machineQ
 		probation      machineFailureQ
 		probationTimer timer
 		// We track consecutive failures to start machines as a heuristic to
@@ -457,11 +460,13 @@ func (m *machineManager) Do(ctx context.Context) {
 	defer logTicker.Stop()
 	for {
 		var (
+			req   *scheduleRequest
 			mach  *sliceMachine
 			machc chan<- *sliceMachine
 		)
-		if len(m.schedQ) > 0 {
-			mach, machc = schedule(m.schedQ[0], machines)
+		req, mach = schedule(&m.schedQ, &machQ)
+		if req != nil {
+			machc = req.machc
 		}
 		if len(probation) == 0 {
 			probationTimer.Clear()
@@ -470,14 +475,15 @@ func (m *machineManager) Do(ctx context.Context) {
 		}
 		select {
 		case machc <- mach:
-			mach.taskProcs += m.schedQ[0].procs
-			heap.Pop(&m.schedQ)
+			mach.taskProcs += req.procs
+			heap.Fix(&machQ, mach.index)
+			heap.Remove(&m.schedQ, req.index)
 		case <-probationTimer.C():
 			mach := probation[0]
 			mach.health = machineOk
 			log.Printf("removing machine %s from probation", mach.Addr)
 			heap.Remove(&probation, 0)
-			machines = appendMachine(machines, mach)
+			heap.Push(&machQ, mach)
 			probationTimer.Clear()
 		case done := <-donec:
 			need -= done.procs
@@ -495,14 +501,14 @@ func (m *machineManager) Do(ctx context.Context) {
 				// machine A on probation.
 				log.Error.Printf("putting machine %s on probation after error: %v", mach, done.Err)
 				mach.health = machineProbation
-				machines = removeMachine(machines, mach)
+				heap.Remove(&machQ, mach.index)
 				mach.lastFailure = time.Now()
 				heap.Push(&probation, mach)
 			case done.Err == nil && mach.health == machineProbation:
 				log.Printf("machine %s returned successful result; removing probation", mach)
 				mach.health = machineOk
 				heap.Remove(&probation, mach.index)
-				machines = appendMachine(machines, mach)
+				heap.Push(&machQ, mach)
 			case mach.health == machineLost:
 				// In this case, the machine has already been removed from the heap.
 			case mach.health == machineProbation:
@@ -511,6 +517,7 @@ func (m *machineManager) Do(ctx context.Context) {
 				heap.Fix(&probation, mach.index)
 			case mach.health == machineOk:
 				// Everything continues merrily.
+				heap.Fix(&machQ, mach.index)
 			default:
 				panic("invalid machine state")
 			}
@@ -528,7 +535,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		case result := <-startc:
 			pending -= m.machprocs * (len(result.machines) + result.nFailures)
 			for _, mach := range result.machines {
-				machines = appendMachine(machines, mach)
+				heap.Push(&machQ, mach)
 				mach.donec = donec
 				go func(mach *sliceMachine) {
 					<-mach.Wait(bigmachine.Stopped)
@@ -550,7 +557,7 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Error.Printf("machine %s stopped with error %s", mach, mach.Err())
 			switch mach.health {
 			case machineOk:
-				machines = removeMachine(machines, mach)
+				heap.Remove(&machQ, mach.index)
 			case machineProbation:
 				heap.Remove(&probation, mach.index)
 			}
@@ -561,11 +568,11 @@ func (m *machineManager) Do(ctx context.Context) {
 			machPending := pending / m.machprocs
 			if len(probation) > 0 {
 				log.Printf("slicemachine: pending/running(probation)/lost: %d/%d(%d)/%d",
-					machPending, len(machines), len(probation), numStopped)
+					machPending, len(machQ), len(probation), numStopped)
 				continue
 			}
 			log.Printf("slicemachine: pending/running/lost: %d/%d/%d",
-				machPending, len(machines), numStopped)
+				machPending, len(machQ), numStopped)
 			continue
 		case <-ctx.Done():
 			return
@@ -574,7 +581,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		// TODO(marius): consider scaling down when we don't need as many
 		// resources any more; his would involve moving results to other
 		// machines or to another storage medium.
-		if have := (len(machines) + len(probation)) * m.machprocs; have+pending < need && have+pending < m.maxp {
+		if have := (len(machQ) + len(probation)) * m.machprocs; have+pending < need && have+pending < m.maxp {
 			var (
 				needProcs    = min(need, m.maxp) - have - pending
 				needMachines = min((needProcs+m.machprocs-1)/m.machprocs, maxStartMachines)
@@ -583,41 +590,70 @@ func (m *machineManager) Do(ctx context.Context) {
 			log.Printf("slicemachine: %d machines (%d procs); %d machines pending (%d procs)",
 				have/m.machprocs, have, pending/m.machprocs, pending)
 			go func() {
-				machines := startMachines(ctx, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
+				started := startMachines(ctx, m.b, m.group, m.machprocs, needMachines, m.worker, m.params...)
 				startc <- startResult{
-					machines:  machines,
-					nFailures: needMachines - len(machines),
+					machines:  started,
+					nFailures: needMachines - len(started),
 				}
 			}()
 		}
 	}
 }
 
-// schedule attempts to schedule s on a machine in machines, returning the
-// machine and the channel on which to send the machine. If no machine can
-// satisfy the request, it returns (nil, nil).
-func schedule(s scheduleRequest, machines []*sliceMachine) (*sliceMachine, chan<- *sliceMachine) {
-	// schedQ is ordered from largest to smallest proc needs, within a given
-	// priority, so this implements a first fit decreasing scheduling strategy.
-	for _, m := range machines {
-		freeProcs := m.maxTaskProcs - m.taskProcs
-		if s.procs <= freeProcs {
-			return m, s.machc
+// schedule attempts to schedule a request from schedQ to run on a machine in
+// machQ, returning the successfully scheduled request and the machine that
+// satisfies the request. If no request can be scheduled, returns (nil, nil).
+//
+// The ordering of elements of schedQ and machQ may change as a result of
+// calling schedule.
+//
+// It implements the following algorithm:
+//  - Attempt to schedule the highest priority schedule request on the
+//    least-loaded machine.
+//  - If it cannot be scheduled, reserve the machine for that request,
+//    eliminating the machine and request from further consideration.
+//  - Repeat while there are requests to schedule and machines on which they
+//    might possibly be scheduled.
+//
+// This works reasonably well for many workloads, however there are degenerate
+// cases for which this will behave poorly.
+//
+// For example, suppose we have an initial batch of small tasks that occupy a
+// small portion of each machine, followed by a single task that occupies an
+// entire machine. We'll schedule the small tasks across the machines, and the
+// full-machine task will not be able to run until one of the machines finishes
+// the mall asks scheduled on it. If we more densely packed the small tasks, we
+// would have been able to run the large task on one of the remaining machines.
+func schedule(schedQ *scheduleRequestQ, machQ *machineQ) (*scheduleRequest, *sliceMachine) {
+	// We may not be able to schedule the highest priority requests. If we
+	// can't, we shelve the requests and look further down the priority queue.
+	// We also shelve (the least loaded) machines to drain them for future
+	// scheduling.
+	var (
+		shelvedRequests []*scheduleRequest
+		shelvedMachines []*sliceMachine
+	)
+	defer func() {
+		for i := range shelvedRequests {
+			heap.Push(schedQ, shelvedRequests[i])
+			heap.Push(machQ, shelvedMachines[i])
 		}
+	}()
+	for len(*schedQ) > 0 && len(*machQ) > 0 {
+		freeProcs := (*machQ)[0].maxTaskProcs - (*machQ)[0].taskProcs
+		if freeProcs == 0 {
+			// The least-loaded machine has no free procs, so no subsequent
+			// machine in the priority queue will have free procs, so we will
+			// not be able to schedule anything.
+			return nil, nil
+		}
+		if (*schedQ)[0].procs <= freeProcs {
+			return (*schedQ)[0], (*machQ)[0]
+		}
+		shelvedRequests = append(shelvedRequests, heap.Pop(schedQ).(*scheduleRequest))
+		shelvedMachines = append(shelvedMachines, heap.Pop(machQ).(*sliceMachine))
 	}
 	return nil, nil
-}
-
-func appendMachine(ms []*sliceMachine, m *sliceMachine) []*sliceMachine {
-	m.index = len(ms)
-	return append(ms, m)
-}
-
-func removeMachine(ms []*sliceMachine, m *sliceMachine) []*sliceMachine {
-	ms[m.index] = ms[len(ms)-1]
-	ms[m.index].index = m.index
-	m.index = -1
-	return ms[:len(ms)-1]
 }
 
 // StartMachines starts a number of machines on b, installing a worker service
@@ -703,7 +739,7 @@ type scheduleRequest struct {
 
 // scheduleRequestQ is a priority queue based on request priority and proc
 // demand.
-type scheduleRequestQ []scheduleRequest
+type scheduleRequestQ []*scheduleRequest
 
 func (q scheduleRequestQ) Len() int { return len(q) }
 
@@ -724,7 +760,7 @@ func (q scheduleRequestQ) Swap(i, j int) {
 
 func (q *scheduleRequestQ) Push(x interface{}) {
 	n := len(*q)
-	s := x.(scheduleRequest)
+	s := x.(*scheduleRequest)
 	s.index = n
 	*q = append(*q, s)
 }
@@ -734,8 +770,41 @@ func (q *scheduleRequestQ) Pop() interface{} {
 	n := len(old)
 	s := old[n-1]
 	s.index = -1
-	*q = old[0 : n-1]
+	*q = old[:n-1]
 	return s
+}
+
+// machineQ is a priority queue for sliceMachines, prioritized by the machine's
+// load (by procs). We use this to hold our active machines, as we generally
+// schedule tasks to run on the least-loaded machines first. See schedule.
+type machineQ []*sliceMachine
+
+func (q machineQ) Len() int { return len(q) }
+
+func (q machineQ) Less(i, j int) bool {
+	return q[j].maxTaskProcs-q[j].taskProcs < q[i].maxTaskProcs-q[i].taskProcs
+}
+
+func (q machineQ) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
+	q[i].index = i
+	q[j].index = j
+}
+
+func (q *machineQ) Push(x interface{}) {
+	n := len(*q)
+	s := x.(*sliceMachine)
+	s.index = n
+	*q = append(*q, s)
+}
+
+func (q *machineQ) Pop() interface{} {
+	old := *q
+	n := len(old)
+	m := old[n-1]
+	m.index = -1
+	*q = old[:n-1]
+	return m
 }
 
 func min(x, y int) int {

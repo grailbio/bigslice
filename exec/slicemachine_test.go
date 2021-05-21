@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -230,6 +231,71 @@ func TestSlicemachinePriority(t *testing.T) {
 	}
 }
 
+// TestSlicemachineNonblockingExclusive verifies that the scheduling
+// algorithm does not allow an exclusive task to block progress on
+// non-exclusive tasks while we wait to schedule it.
+func TestSlicemachineNonblockingExclusive(t *testing.T) {
+	const (
+		maxp      = 128
+		machprocs = maxp / 2
+	)
+	_, _, mgr, cancel := startTestSystem(machprocs, maxp, 1.0)
+	defer cancel()
+
+	ctx, ctxcancel := context.WithCancel(context.Background())
+	defer ctxcancel()
+
+	ms := getMachines(ctx, mgr, maxp)
+	// Return about half of the machines/procs back to the pool immediately.
+	// Occupy the other half indefinitely, making it impossible to successfully
+	// schedule an "exclusive" task.
+	r := rand.New(rand.NewSource(0))
+	for _, m := range ms {
+		if r.Float64() < 0.5 {
+			m.Done(1, nil)
+			continue
+		}
+	}
+	var wg sync.WaitGroup
+	// Attempt to schedule an exclusive task. We expect this to be impossible
+	// to schedule.
+	wg.Add(1)
+	go func() {
+		offerc, _ := mgr.Offer(1, machprocs)
+		wg.Done()
+		select {
+		case <-offerc:
+			// This means that we were able to schedule the exclusive task. We
+			// shouldn't get here, as we should have been able to use one of
+			// our half-loaded machines to schedule all of our lower priority
+			// requests first.
+			panic("impossible scheduling")
+		case <-ctx.Done():
+			return
+		}
+	}()
+	wg.Wait()
+	// Schedule a bunch of lower priority (2) tasks. These should all be
+	// successfully scheduled to run on one of our machines while the other is
+	// reserved for the exclusive task.
+	wg.Add(maxp)
+	for i := 0; i < maxp; i++ {
+		go func() {
+			defer wg.Done()
+			offerc, _ := mgr.Offer(2, 1)
+			select {
+			case m := <-offerc:
+				m.Done(1, nil)
+			case <-ctx.Done():
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	// Returning means that the test passes. If we're blocked on scheduling the
+	// exclusive task, we'll never return, and the test will time out.
+}
+
 func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.System, b *bigmachine.B, m *machineManager, cancel func()) {
 	system = testsystem.New()
 	system.Machineprocs = machinep
@@ -248,6 +314,7 @@ func startTestSystem(machinep, maxp int, maxLoad float64) (system *testsystem.Sy
 	}()
 	cancel = func() {
 		ctxcancel()
+		b.Shutdown()
 		wg.Wait()
 	}
 	return
