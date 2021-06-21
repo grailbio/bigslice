@@ -44,7 +44,11 @@ func main() {
 	log.AddFlags()
 	log.SetFlags(0)
 	log.SetPrefix("bigslice: ")
-	must.Func = log.Fatal
+	must.Func = func(depth int, v ...interface{}) {
+		// Nothing to do if output fails.
+		_ = log.Output(depth+1, log.Error, fmt.Sprint(v...))
+		os.Exit(1)
+	}
 	flag.Usage = usage
 	flag.Parse()
 	if flag.NArg() == 0 {
