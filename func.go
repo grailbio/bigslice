@@ -203,6 +203,7 @@ func FuncLocations() []string {
 //
 // Invocations must be created by newInvocation.
 type Invocation struct {
+	// Index is the unique index of this invocation. Is is always >= 1.
 	Index     uint64
 	Func      uint64
 	Args      []interface{}

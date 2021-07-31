@@ -116,10 +116,7 @@ type bigmachineExecutor struct {
 	// for exclusive tasks.
 	//
 	// Thus manager selection proceeds as follows: the default manager
-	// is managers[0]. Func-exclusive tasks use managers[invocation*2].
-	//
-	// If the task is marked as exclusive, then one is added to their
-	// manager index.
+	// is managers[0]. Func-exclusive tasks use managers[invocation].
 	managers []*machineManager
 }
 
@@ -164,11 +161,6 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 	}
 	if b.managers[i] == nil {
 		maxLoad := b.sess.MaxLoad()
-		if i%2 == 1 {
-			// In this case, the maxLoad will be adjusted to the smallest
-			// feasible value; i.e., one task may run on each machine.
-			maxLoad = 0
-		}
 		b.managers[i] = newMachineManager(b.b, b.params, b.status, b.sess.Parallelism(), maxLoad, b.worker)
 		go b.managers[i].Do(backgroundcontext.Get())
 	}
