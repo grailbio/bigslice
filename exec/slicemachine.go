@@ -74,6 +74,8 @@ type sliceMachine struct {
 	// index is the machine's index in the executor's priority queue.
 	index int
 
+	// donec is the channel to which we send messages reporting that this
+	// machine is done using some procs.
 	donec chan machineDone
 
 	mu sync.Mutex
@@ -579,7 +581,7 @@ func (m *machineManager) Do(ctx context.Context) {
 		}
 
 		// TODO(marius): consider scaling down when we don't need as many
-		// resources any more; his would involve moving results to other
+		// resources any more; this would involve moving results to other
 		// machines or to another storage medium.
 		if have := (len(machQ) + len(probation)) * m.machprocs; have+pending < need && have+pending < m.maxp {
 			var (
@@ -622,7 +624,7 @@ func (m *machineManager) Do(ctx context.Context) {
 // small portion of each machine, followed by a single task that occupies an
 // entire machine. We'll schedule the small tasks across the machines, and the
 // full-machine task will not be able to run until one of the machines finishes
-// the mall asks scheduled on it. If we more densely packed the small tasks, we
+// the small tasks scheduled on it. If we more densely packed the small tasks, we
 // would have been able to run the large task on one of the remaining machines.
 func schedule(schedQ *scheduleRequestQ, machQ *machineQ) (*scheduleRequest, *sliceMachine) {
 	// We may not be able to schedule the highest priority requests. If we
