@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sort"
 	"testing"
-	"unsafe"
 
 	fuzz "github.com/google/gofuzz"
 	"github.com/grailbio/bigslice/slicetype"
@@ -226,16 +225,16 @@ func TestZerox(t *testing.T) {
 	}
 }
 
-func TestUnsafeIndexAddr(t *testing.T) {
+func TestUnsafeIndexPointer(t *testing.T) {
 	f := fuzzFrame(100)
 	c0 := f.Interface(0).([]int)
 	c1 := f.Interface(1).([]string)
 	for i := 0; i < f.Len(); i++ {
-		v0 := *(*int)(unsafe.Pointer(f.UnsafeIndexAddr(0, i)))
+		v0 := *(*int)(f.UnsafeIndexPointer(0, i))
 		if got, want := v0, c0[i]; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
-		v1 := *(*string)(unsafe.Pointer(f.UnsafeIndexAddr(1, i)))
+		v1 := *(*string)(f.UnsafeIndexPointer(1, i))
 		if got, want := v1, c1[i]; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
@@ -317,8 +316,8 @@ func benchmarkAssign(b *testing.B, assign func(dst, src Frame)) {
 
 func BenchmarkUnsafeAssign(b *testing.B) {
 	benchmarkAssign(b, func(dst, src Frame) {
-		*(*int)(unsafe.Pointer(dst.UnsafeIndexAddr(0, 0))) =
-			*(*int)(unsafe.Pointer(src.UnsafeIndexAddr(0, 0)))
+		*(*int)(dst.UnsafeIndexPointer(0, 0)) =
+			*(*int)(src.UnsafeIndexPointer(0, 0))
 	})
 }
 

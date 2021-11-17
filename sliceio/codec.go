@@ -205,9 +205,11 @@ func (d *decodingReader) decode(f frame.Frame) error {
 		// job.
 		sh := f.SliceHeader(col)
 		var p []unsafe.Pointer
-		ptr := unsafe.Pointer(&p)
-		*(*reflect.SliceHeader)(ptr) = sh
-		v := reflect.NewAt(reflect.SliceOf(f.Out(col)), ptr)
+		pHdr := (*reflect.SliceHeader)(unsafe.Pointer(&p))
+		pHdr.Data = sh.Data
+		pHdr.Len = sh.Len
+		pHdr.Cap = sh.Cap
+		v := reflect.NewAt(reflect.SliceOf(f.Out(col)), unsafe.Pointer(pHdr))
 		err := d.dec.DecodeValue(v)
 		if err != nil {
 			if err == io.EOF {
@@ -217,7 +219,7 @@ func (d *decodingReader) decode(f frame.Frame) error {
 		}
 		// This is guaranteed by gob, but it seems worthy of some defensive programming here.
 		// It's also an extra check against the correctness of the codec.
-		if (*(*reflect.SliceHeader)(ptr)).Data != sh.Data {
+		if pHdr.Data != sh.Data {
 			panic("gob reallocated a slice")
 		}
 	}

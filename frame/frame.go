@@ -42,7 +42,9 @@ type dataType struct {
 func newDataType(t reflect.Type) dataType {
 	var typ dataType
 	typ.Type = t
-	typ.ptr = unsafe.Pointer(reflect.ValueOf(&t).Elem().InterfaceData()[1])
+	// TODO(cchang): replace this with something safe.  "go vet" is correctly
+	// flagging this.
+	typ.ptr = unsafe.Pointer(reflect.ValueOf(t).Pointer())
 	typ.pointers = pointers(t)
 	typ.size = typ.Size()
 	return typ
@@ -324,16 +326,19 @@ func (f Frame) Index(col, i int) reflect.Value {
 	return f.data[col].val.Index(f.off + i)
 }
 
-// UnsafeIndexAddr returns the address of the i'th row of the col'th
+// UnsafeIndexPointer returns a pointer to the i'th row of the col'th
 // column. This can be used by advanced clients that import the
 // unsafe package. Clients are responsible for managing reference
 // lifetimes so that the underlying objects will not be garbage
 // collected while an address returned from this method may still be
 // used.
-func (f Frame) UnsafeIndexAddr(col, i int) uintptr {
+// (This function previously returned a uintptr address to force import
+// of the unsafe package, but unfortunately that didn't play well with
+// go vet.)
+func (f Frame) UnsafeIndexPointer(col, i int) unsafe.Pointer {
 	// In practice, this is safe to do: Go pads structures to be aligned,
 	// but this does not seem to be guaranteed by the spec.
-	return uintptr(f.data[col].ptr) + uintptr(f.off+i)*f.data[col].typ.size
+	return unsafe.Add(f.data[col].ptr, uintptr(f.off+i)*f.data[col].typ.size)
 }
 
 // Prefixed returns f with the given prefix.
@@ -356,7 +361,7 @@ func (f Frame) Swap(i, j int) {
 // Zero zeros the memory all columnns.
 func (f Frame) Zero() {
 	for _, col := range f.data {
-		zero.Unsafe(col.typ.Type, uintptr(col.ptr)+uintptr(f.off)*col.typ.size, f.len)
+		zero.Unsafe(col.typ.Type, unsafe.Add(col.ptr, uintptr(f.off)*col.typ.size), f.len)
 	}
 }
 

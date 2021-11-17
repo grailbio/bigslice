@@ -25,94 +25,113 @@ func SliceValue(v reflect.Value) {
 	if v.Kind() != reflect.Slice {
 		panic("zero.Slice: called on non-slice value")
 	}
-	Unsafe(v.Type().Elem(), v.Pointer(), v.Len())
+	Unsafe(v.Type().Elem(), unsafe.Pointer(v.Pointer()), v.Len())
 }
 
 // Unsafe zeroes n elements starting at the address ptr. Elements
-// must of type t.
-func Unsafe(t reflect.Type, ptr uintptr, n int) {
+// must be of type t.
+func Unsafe(t reflect.Type, ptr unsafe.Pointer, n int) {
 	zi, ok := cache.Load(t)
 	if !ok {
 		zi, _ = cache.LoadOrStore(t, slice(t))
 	}
-	z := zi.(func(ptr uintptr, n int))
+	z := zi.(func(ptr unsafe.Pointer, n int))
 	z(ptr, n)
 }
 
-func slice(elem reflect.Type) func(ptr uintptr, n int) {
+func slice(elem reflect.Type) func(ptr unsafe.Pointer, n int) {
 	switch kind := elem.Kind(); {
 	case isValueType(elem):
 		return sliceValue(elem)
 	case kind == reflect.String:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			strs := *(*[]string)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var strs []string
+			strsHdr := (*reflect.SliceHeader)(unsafe.Pointer(&strs))
+			strsHdr.Data = uintptr(ptr)
+			strsHdr.Len = n
+			strsHdr.Cap = n
 			for i := range strs {
 				strs[i] = ""
 			}
 		}
 	case kind == reflect.Slice:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			slices := *(*[]reflect.SliceHeader)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var slices []reflect.SliceHeader
+			slicesHdr := (*reflect.SliceHeader)(unsafe.Pointer(&slices))
+			slicesHdr.Data = uintptr(ptr)
+			slicesHdr.Len = n
+			slicesHdr.Cap = n
 			for i := range slices {
-				*(*unsafe.Pointer)(unsafe.Pointer(&slices[i].Data)) = unsafe.Pointer(uintptr(0))
+				slices[i].Data = uintptr(0)
 				slices[i].Len = 0
 				slices[i].Cap = 0
 			}
 		}
 	case kind == reflect.Ptr:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			ps := *(*[]unsafe.Pointer)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var ps []unsafe.Pointer
+			psHdr := (*reflect.SliceHeader)(unsafe.Pointer(&ps))
+			psHdr.Data = uintptr(ptr)
+			psHdr.Len = n
+			psHdr.Cap = n
 			for i := range ps {
-				ps[i] = unsafe.Pointer(uintptr(0))
+				ps[i] = nil
 			}
 		}
 	default:
 		// Slow case: use reflection API.
 		zero := reflect.Zero(elem)
-		sliceType := reflect.SliceOf(elem)
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			v := reflect.Indirect(reflect.NewAt(sliceType, unsafe.Pointer(&h)))
-			for i := 0; i < v.Len(); i++ {
+		return func(ptr unsafe.Pointer, n int) {
+			v := reflect.NewAt(reflect.ArrayOf(n, elem), ptr).Elem()
+			for i := 0; i < n; i++ {
 				v.Index(i).Set(zero)
 			}
 		}
 	}
 }
 
-func sliceValue(elem reflect.Type) func(ptr uintptr, n int) {
+func sliceValue(elem reflect.Type) func(ptr unsafe.Pointer, n int) {
 	switch size := elem.Size(); size {
 	case 8:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			vs := *(*[]int64)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var vs []int64
+			vsHdr := (*reflect.SliceHeader)(unsafe.Pointer(&vs))
+			vsHdr.Data = uintptr(ptr)
+			vsHdr.Len = n
+			vsHdr.Cap = n
 			for i := range vs {
 				vs[i] = 0
 			}
 		}
 	case 4:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			vs := *(*[]int32)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var vs []int32
+			vsHdr := (*reflect.SliceHeader)(unsafe.Pointer(&vs))
+			vsHdr.Data = uintptr(ptr)
+			vsHdr.Len = n
+			vsHdr.Cap = n
 			for i := range vs {
 				vs[i] = 0
 			}
 		}
 	case 2:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			vs := *(*[]int16)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var vs []int16
+			vsHdr := (*reflect.SliceHeader)(unsafe.Pointer(&vs))
+			vsHdr.Data = uintptr(ptr)
+			vsHdr.Len = n
+			vsHdr.Cap = n
 			for i := range vs {
 				vs[i] = 0
 			}
 		}
 	case 1:
-		return func(ptr uintptr, n int) {
-			h := reflect.SliceHeader{Data: ptr, Len: n, Cap: n}
-			vs := *(*[]int8)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var vs []int8
+			vsHdr := (*reflect.SliceHeader)(unsafe.Pointer(&vs))
+			vsHdr.Data = uintptr(ptr)
+			vsHdr.Len = n
+			vsHdr.Cap = n
 			for i := range vs {
 				vs[i] = 0
 			}
@@ -121,12 +140,12 @@ func sliceValue(elem reflect.Type) func(ptr uintptr, n int) {
 		// Slow case: reinterpret to []byte, and set that. Note that the
 		// compiler should be able to optimize this too. In this case
 		// it's always a value type, so this is always safe to do.
-		return func(ptr uintptr, n int) {
-			var h reflect.SliceHeader
-			h.Data = ptr
-			h.Len = int(size) * n
-			h.Cap = h.Len
-			b := *(*[]byte)(unsafe.Pointer(&h))
+		return func(ptr unsafe.Pointer, n int) {
+			var b []byte
+			bHdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+			bHdr.Data = uintptr(ptr)
+			bHdr.Len = int(size) * n
+			bHdr.Cap = bHdr.Len
 			for i := range b {
 				b[i] = 0
 			}
