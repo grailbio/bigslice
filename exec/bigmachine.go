@@ -224,8 +224,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 				args[i] = truncatef(inv.Args[i])
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
-			// TODO(jcharum): Consider modifying bigmachine/rpc to allow returning an immediate error here.
-			makeInvReader := func() io.Reader {
+			makeInvReader := func() (io.Reader, error) {
 				rc, err := b.encodedInvocations.getOrCreate(inv.Index, func(w io.Writer) error {
 					if err := gob.NewEncoder(w).Encode(inv); err != nil {
 						return errors.E(errors.Fatal, errors.Invalid, "error gob-encoding invocation", err)
@@ -233,9 +232,9 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 					return nil
 				})
 				if err != nil {
-					return errReader{err}
+					return nil, err
 				}
-				return rc
+				return rc, nil
 			}
 			err := m.RetryCall(ctx, "Worker.Compile", makeInvReader, nil)
 			if err != nil {
@@ -250,12 +249,6 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 		}
 	}
 	return nil
-}
-
-type errReader struct{ error }
-
-func (r errReader) Read([]byte) (n int, err error) {
-	return 0, r.error
 }
 
 func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key string) error {
