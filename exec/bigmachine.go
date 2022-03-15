@@ -1504,7 +1504,14 @@ func (s *statsReader) Read(ctx context.Context, f frame.Frame) (int, error) {
 }
 
 func truncatef(v interface{}) string {
-	b := limitbuf.NewLogger(512)
+	b := limitbuf.NewLogger(512,
+		// fmt.Fprint buffers the entire string in memory before writing it to b.
+		// truncatef returns a small result, as intended, but potentially uses a lot
+		// of memory transiently. This logging may inform users who are experiencing
+		// this, because they may otherwise see a lot of driver memory and CPU usage
+		// for no apparent purpose.
+		// TODO: Use O(1) space.
+		limitbuf.LogIfTruncatingMaxMultiple(100))
 	fmt.Fprint(b, v)
 	return b.String()
 }
