@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/grailbio/base/errors"
@@ -69,10 +70,10 @@ type Executor interface {
 	HandleDebug(handler *http.ServeMux)
 }
 
-// Eval simultaneously evaluates a set of task graphs from the
-// provided set of roots. Eval uses the provided executor to dispatch
-// tasks when their dependencies have been satisfied. Eval returns on
-// evaluation error or else when all roots are fully evaluated.
+// Eval simultaneously evaluates a set of task graphs from the provided set of
+// roots. Eval uses the provided executor to dispatch tasks when their
+// dependencies have been satisfied. Eval returns on evaluation error or else
+// when all roots are fully evaluated.
 //
 // TODO(marius): we can often stream across shuffle boundaries. This would
 // complicate scheduling, but may be worth doing.
@@ -85,12 +86,11 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 		state.Enqueue(task)
 	}
 	var (
-		donec   = make(chan *Task, 8)
-		errc    = make(chan error)
-		running int
+		evalStatus = newEvalStatus(group)
+		donec      = make(chan *Task, 8)
+		errc       = make(chan error)
 	)
 	for !state.Done() {
-		group.Printf("tasks: runnable: %d", running)
 		for !state.Done() && !state.Todo() {
 			select {
 			case err := <-errc:
@@ -99,8 +99,8 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 				}
 				return err
 			case task := <-donec:
-				running--
 				state.Return(task)
+				evalStatus.markDone(task)
 			}
 		}
 
@@ -113,6 +113,7 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 				task.state = TaskInit
 			}
 			status := group.Start(task.Name)
+			evalStatus.markWaiting(task)
 			// runner is true if this evaluator is going to execute the task.
 			runner := task.state == TaskInit
 			var startRunTime time.Time
@@ -124,9 +125,12 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 			} else {
 				status.Print("running in another invocation")
 			}
-			running++
 			go func(task *Task) {
 				var err error
+				for task.state < TaskRunning && err == nil {
+					err = task.Wait(ctx)
+				}
+				evalStatus.markRunning(task)
 				for task.state < TaskOk && err == nil {
 					err = task.Wait(ctx)
 				}
@@ -166,6 +170,83 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 		}
 	}
 	return state.Err()
+}
+
+type (
+	// evalStatus handles group status printing for an evaluation. We print
+	// stats on waiting and running tasks, the state for which is kept here.
+	// This is redundant with state held in the task graph itself, but it's a
+	// little simpler to piggyback on the evaluation logic: we don't
+	// have to take locks on the tasks, we already wait for state changes, etc.
+	evalStatus struct {
+		// group is the status group of the evaluation that we manipulate.
+		group *status.Group
+
+		// mu protects the task map.
+		mu sync.Mutex
+		// tasks holds the state relevant to status printing of relevant (read:
+		// scheduled) tasks.
+		tasks map[*Task]evalStatusState
+	}
+
+	// evalStatusState is the state of a task in the context of group status
+	// display.
+	evalStatusState int
+)
+
+const (
+	evalStatusWaiting evalStatusState = iota
+	evalStatusRunning
+)
+
+func newEvalStatus(group *status.Group) *evalStatus {
+	s := evalStatus{
+		group: group,
+		tasks: make(map[*Task]evalStatusState),
+	}
+	s.lockedPrint()
+	return &s
+}
+
+func (s *evalStatus) markWaiting(t *Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[t] = evalStatusWaiting
+	s.lockedPrint()
+}
+
+func (s *evalStatus) markRunning(t *Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tasks[t] = evalStatusRunning
+	s.lockedPrint()
+}
+
+func (s *evalStatus) markDone(t *Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tasks, t)
+	s.lockedPrint()
+}
+
+// lockedPrint prints the current status to the status group. s.tasks must not
+// be concurrently modified.
+func (s *evalStatus) lockedPrint() {
+	var (
+		waiting int
+		running int
+	)
+	for _, s := range s.tasks {
+		switch s {
+		case evalStatusWaiting:
+			waiting++
+		case evalStatusRunning:
+			running++
+		default:
+			panic("unknown status")
+		}
+	}
+	s.group.Printf("waiting/running: %d/%d", waiting, running)
 }
 
 // State maintains state for the task graph being run by the
