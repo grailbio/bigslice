@@ -53,6 +53,32 @@ func (testExecutor) HandleDebug(handler *http.ServeMux) {
 	panic("not implemented")
 }
 
+// constEvalTest sets up a 2-root-node task graph.
+type constEvalTest struct {
+	Tasks []*Task
+
+	wg      sync.WaitGroup
+	evalErr error
+}
+
+func (c *constEvalTest) Go(t *testing.T) {
+	t.Helper()
+	c.Tasks, _, _ = compileFunc(func() bigslice.Slice {
+		return bigslice.Const(2, []int{1, 2, 3})
+	})
+	ctx := context.Background()
+	c.wg.Add(1)
+	go func() {
+		c.evalErr = Eval(ctx, testExecutor{}, c.Tasks, nil)
+		c.wg.Done()
+	}()
+}
+
+func (c *constEvalTest) EvalErr() error {
+	c.wg.Wait()
+	return c.evalErr
+}
+
 // SimpleEvalTest sets up a simple, 2-node task graph.
 type simpleEvalTest struct {
 	Tasks []*Task
@@ -127,6 +153,72 @@ func TestTaskErr(t *testing.T) {
 	}
 	if got, want := test.CogroupTask.State(), TaskInit; got != want {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// TestAllRootsEvaluated verifies that all roots are evaluated at the moment
+// Eval returns.
+func TestAllRootsEvaluated(t *testing.T) {
+	var (
+		test constEvalTest
+		ctx  = context.Background()
+	)
+	test.Go(t)
+	// We have two root tasks, task0 and task1. task0 is evaluated
+	// successfully. While task1 runs, task0 is lost. Verify that Eval only
+	// returns once task0 is re-evaluated successfully.
+	var (
+		task0 = test.Tasks[0]
+		task1 = test.Tasks[1]
+	)
+	// task0 is evaluated successfully.
+	task0.Lock()
+	for task0.state != TaskRunning {
+		if err := task0.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task0.state = TaskOk
+	task0.Broadcast()
+	task0.Unlock()
+	// While task1 runs, task0 is lost.
+	task1.Lock()
+	for task1.state != TaskRunning {
+		if err := task1.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task1.Unlock()
+	// Allow time for evaluation to notice task0's TaskOk state before marking
+	// it lost.
+	// TODO: Though this seems to work reliably in my environment, consider a
+	// non-racy way of doing this. Note that this shouldn't ever cause the test
+	// to falsely fail. It just means that this will test the Running -> Lost
+	// path instead of the Running -> Ok -> Lost path, as the evaluator might
+	// not see the transient Ok state.
+	time.Sleep(1 * time.Millisecond)
+	task0.Lock()
+	task0.state = TaskLost
+	task0.Broadcast()
+	task0.Unlock()
+	// task1 is successfully evaluated.
+	task1.Lock()
+	task1.state = TaskOk
+	task1.Broadcast()
+	task1.Unlock()
+	task0.Lock()
+	// Expect task0 to be resubmitted. Eval should not return until all roots
+	// are successfully evaluated.
+	for task0.state != TaskRunning {
+		if err := task0.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task0.state = TaskOk
+	task0.Broadcast()
+	task0.Unlock()
+	if err := test.EvalErr(); err != nil {
+		t.Fatal(err)
 	}
 }
 

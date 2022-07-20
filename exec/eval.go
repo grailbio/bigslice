@@ -80,17 +80,19 @@ type Executor interface {
 func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.Group) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	state := newState()
-	for _, task := range roots {
-		state.Enqueue(task)
-	}
 	var (
+		state      = newState()
 		evalStatus = newEvalStatus(group)
 		donec      = make(chan *Task, 8)
 		errc       = make(chan error)
 	)
-	for !state.Done() {
+	for {
+		for _, task := range roots {
+			state.Enqueue(task)
+		}
+		if state.Done() {
+			return state.Err()
+		}
 		for !state.Done() && !state.Todo() {
 			select {
 			case err := <-errc:
@@ -103,7 +105,6 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 				evalStatus.markDone(task)
 			}
 		}
-
 		// Mark each ready task as runnable and keep track of them.
 		// The executor manages parallelism.
 		for _, task := range state.Runnable() {
@@ -172,7 +173,6 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 			}(task)
 		}
 	}
-	return state.Err()
 }
 
 type (
