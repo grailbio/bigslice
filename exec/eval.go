@@ -147,7 +147,10 @@ func Eval(ctx context.Context, executor Executor, roots []*Task, group *status.G
 								// We've lost this task too many times, so we
 								// consider it in error.
 								task.state = TaskErr
-								task.err = fmt.Errorf("lost on %d consecutive attempts", task.consecutiveLost)
+								task.err = errors.E(
+									errors.TooManyTries,
+									fmt.Sprintf("lost on %d consecutive attempts", task.consecutiveLost),
+								)
 								task.Status.Printf(task.err.Error())
 								task.Broadcast()
 							}

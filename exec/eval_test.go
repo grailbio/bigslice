@@ -6,7 +6,7 @@ package exec
 
 import (
 	"context"
-	"errors"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/eventlog"
 	"github.com/grailbio/bigslice"
 	"github.com/grailbio/bigslice/sliceio"
@@ -115,7 +116,7 @@ func TestTaskErr(t *testing.T) {
 	if got, want := test.CogroupTask.State(), TaskInit; got != want {
 		t.Fatalf("got %v, want %v: %v", got, want, test.CogroupTask)
 	}
-	test.ConstTask.Error(errors.New("const task error"))
+	test.ConstTask.Error(goerrors.New("const task error"))
 
 	err = test.EvalErr()
 	if err == nil {
@@ -258,17 +259,15 @@ func TestResubmitLostInteriorTask(t *testing.T) {
 // make meaningful progress.
 func TestPersistentTaskLoss(t *testing.T) {
 	var (
-		test simpleEvalTest
-		ctx  = context.Background()
+		test        simpleEvalTest
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	)
+	defer cancel()
 	test.Go(t)
 	fst := test.ConstTask
-	c := time.After(10 * time.Second)
 	for {
-		select {
-		case <-c:
-			t.Fatal("did not abandon persisently lost task")
-		default:
+		if err := ctx.Err(); err != nil {
+			t.Fatal(err)
 		}
 		fst.Lock()
 		for fst.state != TaskRunning {
@@ -283,14 +282,16 @@ func TestPersistentTaskLoss(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if fst.state == TaskErr {
+		isErr := fst.state == TaskErr
+		fst.Unlock()
+		if isErr {
 			// The evaluator has given up on the task.
 			break
 		}
-		fst.Unlock()
 	}
-	if test.EvalErr() == nil {
-		t.Errorf("expected error")
+	err := test.EvalErr()
+	if !errors.Is(errors.TooManyTries, err) {
+		t.Errorf("expected TooManyTries error, got: %v", err)
 	}
 }
 
