@@ -79,7 +79,7 @@ func (s *simpleEvalTest) Go(t *testing.T) {
 	}()
 }
 
-func (s *simpleEvalTest) Wait() error {
+func (s *simpleEvalTest) EvalErr() error {
 	s.wg.Wait()
 	return s.evalErr
 }
@@ -97,7 +97,9 @@ func waitState(t *testing.T, task *Task, state TaskState) {
 	}
 }
 
-func TestEvalErr(t *testing.T) {
+// TestTaskErr verifies that a task evaluation error (TaskErr) causes Eval to
+// return a corresponding error.
+func TestTaskErr(t *testing.T) {
 	var (
 		test simpleEvalTest
 		ctx  = context.Background()
@@ -115,7 +117,7 @@ func TestEvalErr(t *testing.T) {
 	}
 	test.ConstTask.Error(errors.New("const task error"))
 
-	err = test.Wait()
+	err = test.EvalErr()
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -196,7 +198,7 @@ func TestResubmitLostTask(t *testing.T) {
 	snd.Broadcast()
 	snd.Unlock()
 
-	if err := test.Wait(); err != nil {
+	if err := test.EvalErr(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -287,7 +289,7 @@ func TestPersistentTaskLoss(t *testing.T) {
 		}
 		fst.Unlock()
 	}
-	if test.Wait() == nil {
+	if test.EvalErr() == nil {
 		t.Errorf("expected error")
 	}
 }
