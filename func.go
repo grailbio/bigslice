@@ -144,11 +144,24 @@ func (f *FuncValue) typecheck(args ...reflect.Type) {
 	}
 }
 
-// Func creates a bigslice function from the provided function value.
-// Bigslice funcs must return a single Slice value. Funcs provide
-// bigslice with a means of dynamic abstraction: since Funcs can be
-// invoked remotely, dynamically created slices may be named across
-// process boundaries.
+// Func creates a bigslice function from the provided function value. Bigslice
+// funcs must return a single Slice value.
+//
+// All calls to Func must happen before exec.Start is called (and occur in
+// deterministic order). This rule is easy to follow by making all Func calls
+// occur in global variable initialization, with exec.Start called from the
+// program's main function, e.g.:
+//
+//  var myFunc = bigslice.Func(...)
+//
+//  func main() {
+//   	sess, err := exec.Start()
+//   	...
+//  }
+//
+// Funcs provide bigslice with a means of dynamic abstraction: since Funcs can
+// be invoked remotely, dynamically created slices may be named across process
+// boundaries.
 func Func(fn interface{}) *FuncValue {
 	fv := reflect.ValueOf(fn)
 	ftype := fv.Type()

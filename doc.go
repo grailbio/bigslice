@@ -22,10 +22,10 @@
 	executed remotely, bigslice programs have to be written with a few
 	constraints:
 
-	1. All slices must be constructed by bigslice funcs (bigslice.Func), and all
-	such functions must be instantiated before bigslice.Start is called. This
-	rule is easy to follow: if funcs are global variables, and bigslice.Start
-	is called from a program's main, then the program is compliant.
+	1. All slices must be constructed by bigslice funcs (bigslice.Func), and
+	all such functions must be instantiated before exec.Start is called. This
+	rule is easy to follow: if funcs are global variables, and exec.Start is
+	called from a program's main, then the program is compliant.
 
 	2. The driver program must be compiled on the same GOOS and GOARCH as the
 	target architecture. When running locally, this is not a concern, but
