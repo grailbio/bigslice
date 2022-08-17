@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/file/s3file"
 	"github.com/grailbio/base/log"
@@ -31,7 +30,7 @@ import (
 
 func init() {
 	file.RegisterImplementation("s3", func() file.Implementation {
-		return s3file.NewImplementation(s3file.NewDefaultProvider(session.Options{}), s3file.Options{})
+		return s3file.NewImplementation(s3file.NewDefaultProvider(), s3file.Options{})
 	})
 	s3file.SetBucketRegion("gdelt-open-data", "us-east-1")
 }
