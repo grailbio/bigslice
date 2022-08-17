@@ -32,7 +32,6 @@ func init() {
 	file.RegisterImplementation("s3", func() file.Implementation {
 		return s3file.NewImplementation(s3file.NewDefaultProvider(), s3file.Options{})
 	})
-	s3file.SetBucketRegion("gdelt-open-data", "us-east-1")
 }
 
 var domainCounts = bigslice.Func(func(files []string, prefix string) bigslice.Slice {
