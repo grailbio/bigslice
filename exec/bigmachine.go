@@ -167,8 +167,6 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 	return b.managers[i]
 }
 
-type invocationRef struct{ Index uint64 }
-
 func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv execInvocation) error {
 	b.mu.Lock()
 	if _, ok := b.invocations[inv.Index]; !ok {

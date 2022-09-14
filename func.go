@@ -5,7 +5,6 @@
 package bigslice
 
 import (
-	"encoding/gob"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -14,10 +13,6 @@ import (
 
 	"github.com/grailbio/bigslice/typecheck"
 )
-
-func init() {
-	gob.Register([]interface{}{})
-}
 
 var typeOfSlice = reflect.TypeOf((*Slice)(nil)).Elem()
 
@@ -176,9 +171,6 @@ func Func(fn interface{}) *FuncValue {
 	for i := 0; i < ftype.NumIn(); i++ {
 		typ := ftype.In(i)
 		v.args = append(v.args, typ)
-		if typ.Kind() != reflect.Interface {
-			gob.Register(reflect.Zero(typ).Interface())
-		}
 	}
 	if atomic.AddInt32(&funcsBusy, 1) != 1 {
 		panic("bigslice.Func: data race")
@@ -190,6 +182,14 @@ func Func(fn interface{}) *FuncValue {
 	}
 	_, v.file, v.line, _ = runtime.Caller(1)
 	return v
+}
+
+// FuncByIndex returns the *FuncValue, created by Func, with the given index.
+// We use this to address funcs across process boundaries, as we serialize the
+// index for the receiver to look up in its address space. This function must
+// not be called concurrently with Func.
+func FuncByIndex(i uint64) *FuncValue {
+	return funcs[i]
 }
 
 // FuncLocations returns a slice of strings that describe the locations of
@@ -250,8 +250,9 @@ func newInvocation(location string, fn uint64, exclusive bool, args ...interface
 	}
 }
 
-// Invoke performs the Func invocation represented by this Invocation
-// instance, returning the resulting slice.
+// Invoke performs the Func invocation represented by this Invocation instance,
+// returning the resulting slice. This method must not be called concurrently
+// with Func.
 func (i Invocation) Invoke() Slice {
 	return funcs[i.Func].Apply(i.Args...)
 }

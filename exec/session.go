@@ -32,6 +32,7 @@ import (
 const DefaultMaxLoad = 0.95
 
 func init() {
+	// Users may pass *Result as a bigslice.Slice.
 	gob.Register(&Result{})
 }
 
@@ -264,21 +265,6 @@ func (s *Session) start() {
 	dump.Register(name, func(ctx context.Context, w io.Writer) error {
 		return s.tracer.Marshal(w)
 	})
-}
-
-// execInvocation embeds bigslice.Invocation and is augmented with fields used
-// for execution.
-type execInvocation struct {
-	bigslice.Invocation
-	// Env is the compilation environment
-	Env CompileEnv
-}
-
-func makeExecInvocation(inv bigslice.Invocation) execInvocation {
-	return execInvocation{
-		Invocation: inv,
-		Env:        makeCompileEnv(),
-	}
 }
 
 // statusMu is used to prevent interleaving of slice and task status groups.
