@@ -226,10 +226,16 @@ type Invocation struct {
 
 func (inv Invocation) String() string {
 	args := make([]string, len(inv.Args))
-	for i, arg := range args {
-		args[i] = fmt.Sprint(arg)
+	for i := range args {
+		args[i] = fmt.Sprint(inv.Args[i])
 	}
-	return fmt.Sprintf("%s(%d, %d) %s", inv.Location, inv.Func, inv.Index, strings.Join(args, " "))
+	return fmt.Sprintf(
+		"%s func:%d invocation:%d args:(%s)",
+		inv.Location,
+		inv.Func,
+		inv.Index,
+		strings.Join(args, ", "),
+	)
 }
 
 var invocationIndex uint64
