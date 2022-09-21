@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -422,6 +423,34 @@ func TestBigmachineExecutorErrorRun(t *testing.T) {
 		return &errorSlice{bigslice.Const(1, []int{123}), errors.New("some error")}
 	})
 	run(t, x, tasks, TaskLost)
+}
+
+// noExportedFields is a struct with no exported fields. gob will return an
+// error when trying to encode a value of this type. We use this to verify our
+// handling of gob-encoding errors.
+type noExportedFields struct {
+	f struct{}
+}
+
+// TestBigmachineExecutorGobError verifies that gob-encoding errors result in
+// task evaluation errors.
+func TestBigmachineExecutorGobError(t *testing.T) {
+	x, stop := bigmachineTestExecutor(1)
+	defer stop()
+
+	fn := bigslice.Func(func(_ noExportedFields) bigslice.Slice {
+		return bigslice.Const(1, []int{123})
+	})
+	inv := makeExecInvocation(fn.Invocation("", noExportedFields{}))
+	slice := inv.Invoke()
+	tasks, err := compile(inv, slice, false)
+	if err != nil {
+		panic(err)
+	}
+	run(t, x, tasks, TaskErr)
+	if errString := tasks[0].Err().Error(); !strings.Contains(errString, "noExportedFields") {
+		t.Errorf("want error that contains \"noExportedFields\", got %q", errString)
+	}
 }
 
 func TestBigmachineExecutorFatalErrorRun(t *testing.T) {

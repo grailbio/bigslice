@@ -167,38 +167,83 @@ func (b *bigmachineExecutor) manager(i int) *machineManager {
 	return b.managers[i]
 }
 
-func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv execInvocation) error {
-	b.mu.Lock()
-	if _, ok := b.invocations[inv.Index]; !ok {
-		// This is the first time we are seeing this invocation.
-
-		// Substitute each *Result argument for an invocationRef and record the
-		// dependency.
-		for i, arg := range inv.Args {
-			result, ok := arg.(*Result)
-			if !ok {
-				continue
-			}
-			inv.Args[i] = invocationRef{result.invIndex}
-			if _, ok := b.invocations[result.invIndex]; !ok {
-				b.mu.Unlock()
-				return fmt.Errorf("invalid result invocation %x", result.invIndex)
-			}
-			if b.invocationDeps[inv.Index] == nil {
-				b.invocationDeps[inv.Index] = make(map[uint64]bool)
-			}
-			b.invocationDeps[inv.Index][result.invIndex] = true
-		}
-		b.invocations[inv.Index] = inv
+// checkInvocationReader checks that we can successfully read out the
+// serialized version of invocation invIndex in b's graph, as we will do when
+// we transport it to workers. As a side effect, the serialized invocation is
+// cached for future use.
+//
+// The invocation with index invIndex must previously have been added with
+// addInvocation.
+func (b *bigmachineExecutor) checkInvocationReader(invIndex uint64) (err error) {
+	rc, err := b.invocationReader(invIndex)
+	if err != nil {
+		return err
 	}
+	defer errors.CleanUp(rc.Close, &err)
+	if _, err = io.Copy(io.Discard, rc); err != nil {
+		return err
+	}
+	return nil
+}
 
-	// Now traverse the invocation graph bottom-up, making sure
-	// everything on the machine is compiled. We produce a valid order,
-	// but we don't capture opportunities for parallel compilations.
+// invocationReader returns a reader that reads the serialized version of
+// invocation invIndex in b's graph for transport to workers.
+//
+// The invocation with index invIndex must previously have been added with
+// addInvocation.
+func (b *bigmachineExecutor) invocationReader(invIndex uint64) (io.ReadCloser, error) {
+	b.mu.Lock()
+	inv := b.invocations[invIndex]
+	b.mu.Unlock()
+	return b.encodedInvocations.getOrCreate(inv.Index, func(w io.Writer) error {
+		if err := gob.NewEncoder(w).Encode(inv); err != nil {
+			return errors.E(errors.Fatal, errors.Invalid, "gob-encoding invocation", err)
+		}
+		return nil
+	})
+}
+
+// addInvocation adds an invocation to b's invocation graph. Returns true iff
+// the invocation was added for the first time.
+func (b *bigmachineExecutor) addInvocation(inv execInvocation) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.invocations[inv.Index]; ok {
+		return false, nil
+	}
+	// This is the first time we are seeing this invocation.
+
+	// Each *Result argument represents a dependency on other invocations.
+	// Substitute each *Result argument for an invocationRef so that the
+	// result/dependency may be transported to worker machines. See
+	// (*worker).Compile.
+	for i, arg := range inv.Args {
+		result, ok := arg.(*Result)
+		if !ok {
+			continue
+		}
+		if _, ok := b.invocations[result.invIndex]; !ok {
+			panic(fmt.Sprintf("result from unknown invocation %d", result.invIndex))
+		}
+		inv.Args[i] = invocationRef{result.invIndex}
+		if b.invocationDeps[inv.Index] == nil {
+			b.invocationDeps[inv.Index] = make(map[uint64]bool)
+		}
+		b.invocationDeps[inv.Index][result.invIndex] = true
+	}
+	b.invocations[inv.Index] = inv
+	return true, nil
+}
+
+func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, invIndex uint64) error {
+	b.mu.Lock()
+	// Traverse the invocation graph bottom-up, making sure everything on the
+	// machine is compiled. We produce a valid order, but we don't capture
+	// opportunities for parallel compilations.
 	// TODO(marius): allow for parallel compilation as some users are
 	// performing expensive computations inside of bigslice.Funcs.
 	var (
-		todo        = []uint64{inv.Index}
+		todo        = []uint64{invIndex}
 		invocations []execInvocation
 	)
 	for len(todo) > 0 {
@@ -223,16 +268,7 @@ func (b *bigmachineExecutor) compile(ctx context.Context, m *sliceMachine, inv e
 			}
 			b.sess.tracer.Event(m, inv, "B", "location", inv.Location, "args", args)
 			makeInvReader := func() (io.Reader, error) {
-				rc, err := b.encodedInvocations.getOrCreate(inv.Index, func(w io.Writer) error {
-					if err := gob.NewEncoder(w).Encode(inv); err != nil {
-						return errors.E(errors.Fatal, errors.Invalid, "error gob-encoding invocation", err)
-					}
-					return nil
-				})
-				if err != nil {
-					return nil, err
-				}
-				return rc, nil
+				return b.invocationReader(inv.Index)
 			}
 			err := m.RetryCall(ctx, "Worker.Compile", makeInvReader, nil)
 			if err != nil {
@@ -258,10 +294,27 @@ func (b *bigmachineExecutor) commit(ctx context.Context, m *sliceMachine, key st
 func (b *bigmachineExecutor) Run(task *Task) {
 	task.Status.Print("waiting for a machine")
 
+	invIndex := task.Invocation.Index
+	added, err := b.addInvocation(task.Invocation)
+	if err != nil {
+		task.Errorf("error adding invocation %d to graph: %v", invIndex, err)
+		return
+	}
+	if added {
+		// This is the first time we are seeing this invocation. Check if we
+		// can serialize and cache the invocation that we will ultimately send
+		// to worker machines. Do this eagerly to discover errors quickly,
+		// rather than potentially waiting until machines are started.
+		if err := b.checkInvocationReader(invIndex); err != nil {
+			task.Errorf("error serializing invocation %d: %v", invIndex, err)
+			return
+		}
+	}
+
 	// Use the default/shared cluster unless the func is exclusive.
 	var cluster int
 	if task.Invocation.Exclusive {
-		cluster = int(task.Invocation.Index)
+		cluster = int(invIndex)
 	}
 	mgr := b.manager(cluster)
 	procs := task.Pragma.Procs()
@@ -270,7 +323,7 @@ func (b *bigmachineExecutor) Run(task *Task) {
 	}
 	var (
 		ctx            = backgroundcontext.Get()
-		offerc, cancel = mgr.Offer(int(task.Invocation.Index), procs)
+		offerc, cancel = mgr.Offer(int(invIndex), procs)
 		m              *sliceMachine
 	)
 	select {
@@ -292,7 +345,7 @@ func (b *bigmachineExecutor) Run(task *Task) {
 	// machine.
 compile:
 	for {
-		err := b.compile(ctx, m, task.Invocation)
+		err := b.compile(ctx, m, invIndex)
 		switch {
 		case err == nil:
 			break compile
@@ -301,7 +354,7 @@ compile:
 			// invocation. We're going to try to run it again. Note that this
 			// is racy: the behavior remains correct but may imply additional
 			// data transfer. C'est la vie.
-			m.Compiles.Forget(task.Invocation.Index)
+			m.Compiles.Forget(invIndex)
 		case errors.Is(errors.Invalid, err) && errors.Match(fatalErr, err):
 			// Fatally invalid compilation parameters, e.g. func arguments that
 			// are not gob-encodable, are fatal to the task.
@@ -325,7 +378,7 @@ compile:
 	// outputs so that the receiving worker can read from them.
 	req := taskRunRequest{
 		Name:       task.Name,
-		Invocation: task.Invocation.Index,
+		Invocation: invIndex,
 	}
 	machineIndices := make(map[string]int)
 	g, _ := errgroup.WithContext(ctx)
@@ -370,7 +423,7 @@ compile:
 	b.sess.tracer.Event(m, task, "B")
 	task.Set(TaskRunning)
 	var reply taskRunReply
-	err := m.RetryCall(ctx, "Worker.Run", req, &reply)
+	err = m.RetryCall(ctx, "Worker.Run", req, &reply)
 	statsCancel()
 	m.Done(procs, err)
 	switch {
