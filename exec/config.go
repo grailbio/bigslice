@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	config.Register("bigslice", func(constr *config.Constructor) {
+	config.Register("bigslice", func(constr *config.ConstructorGen[*Session]) {
 		sess := newSession()
 		constr.IntVar(&sess.p, "parallelism", 1024, "allowable parallelism for the job")
 		var system bigmachine.System
@@ -22,7 +22,7 @@ func init() {
 		constr.FloatVar(&sess.maxLoad, "max-load", DefaultMaxLoad, "per-machine maximum load")
 		constr.StringVar(&sess.tracePath, "trace-path", "", "path at which to write trace event file")
 		constr.Doc = "bigslice configures the bigslice runtime"
-		constr.New = func() (interface{}, error) {
+		constr.New = func() (*Session, error) {
 			if system != nil {
 				sess.executor = newBigmachineExecutor(system)
 			} else {
