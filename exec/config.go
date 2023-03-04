@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	config.Register("bigslice", func(constr *config.ConstructorGen[*Session]) {
+	config.Register("bigslice", func(constr *config.Constructor[*Session]) {
 		sess := newSession()
 		constr.IntVar(&sess.p, "parallelism", 1024, "allowable parallelism for the job")
 		var system bigmachine.System
