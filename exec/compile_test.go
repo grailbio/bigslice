@@ -139,40 +139,34 @@ func TestCompile(t *testing.T) {
 func TestCompileEnv(t *testing.T) {
 	const Nshard = 8
 
-	// cachedSet is set up just before we invoke the Func. It represents the
+	// cachedShards is set up just before we invoke the Func. It represents the
 	// fake cache state from the perspective of that invocation.
-	cachedSet := make(map[int]bool)
+	var cachedShards []int
 	f := bigslice.Func(func() bigslice.Slice {
 		slice := bigslice.Const(Nshard, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 		// Break the pipeline, as we use this to detect for which compiled tasks
 		// compilation considered the cache valid. If the cache is valid, the
 		// compiled root task will have no dependencies.
 		slice = bigslice.Reshuffle(slice)
-		shardIsCached := make([]bool, Nshard)
-		for shard, cached := range cachedSet {
-			shardIsCached[shard] = cached
-		}
-		slice = fakeCache(slice, shardIsCached)
+		slice = fakeCache(slice, cachedShards)
 		return slice
 	})
 	inv := makeExecInvocation(f.Invocation("<unknown>"))
 	inv.Index = 0
 
-	cachedSet0 := make(map[int]bool)
-	for _, shard := range []int{1, 4, 5} {
-		cachedSet0[shard] = true
-	}
-	cachedSet = cachedSet0
+	cachedShardsFrozen := []int{1, 4, 5}
+	cachedShards = cachedShardsFrozen
 	slice0 := inv.Invoke()
 	tasks, err := compile(inv, slice0, false)
 	if err != nil {
 		t.Fatalf("compilation failed")
 	}
 	for _, task := range tasks {
-		cached := cachedSet0[task.Name.Shard]
-		// Verify that env has been updated with the cache state.
-		if got, want := inv.Env.IsCached(task.Name), cached; got != want {
-			t.Errorf("got %v, want %v", got, want)
+		var cached bool
+		for _, shard := range cachedShardsFrozen {
+			if shard == task.Name.Shard {
+				cached = true
+			}
 		}
 		// Verify that the resulting tasks reflect the cache state.
 		if got, want := len(task.Deps) == 0, cached; got != want {
@@ -183,28 +177,78 @@ func TestCompileEnv(t *testing.T) {
 	// Freeze the environment, and verify that compilation uses the environment
 	// and not the current cache state.
 	inv.Env.Freeze()
-	cachedSet1 := make(map[int]bool)
-	for _, shard := range []int{2, 4, 7} { // different cache state from above.
-		cachedSet1[shard] = true
-	}
-	cachedSet = cachedSet1
+	cachedShards = []int{2, 4, 7} // different cache state from above.
 	slice1 := inv.Invoke()
 	tasks, err = compile(inv, slice1, false)
 	if err != nil {
 		t.Fatalf("compilation failed")
 	}
 	for _, task := range tasks {
-		cached := cachedSet0[task.Name.Shard]
-		// Verify that the environment is unmodified.
-		if got, want := inv.Env.IsCached(task.Name), cached; got != want {
-			t.Errorf("got %v, want %v", got, want)
+		var cached bool
+		for _, shard := range cachedShardsFrozen {
+			if shard == task.Name.Shard {
+				cached = true
+			}
 		}
-		// Verify that the tasks are compiled according to the environment,
-		// which reflects cachedSet0, and not the current cache state,
-		// cachedSet1.
+		// Verify that the tasks are compiled according to the environment that
+		// reflects cachedShardsFrozen, and not the current cache state in
+		// cachedShards.
 		if got, want := len(task.Deps) == 0, cached; got != want {
 			t.Errorf("got %v, want %v", got, want)
 		}
+	}
+}
+
+// TestPipelinedCache verifies that cacheable slices that are pipelined for
+// execution behave as we expect.
+func TestPipelinedCache(t *testing.T) {
+	const Nshard = 8
+	f := bigslice.Func(func() bigslice.Slice {
+		slice := bigslice.Const(Nshard, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+		// Break the pipeline, as we use this to detect for which compiled tasks
+		// compilation considered the cache valid. If the cache is valid, the
+		// compiled root task will have no dependencies.
+		slice = bigslice.Reshuffle(slice)
+		id := func(i int) int { return i }
+		// These slices will be pipelined.  We set it up with different shards
+		// cached in different slices, with some shards not cached at all.
+		// When we examine the resulting dependencies of the (pipelined) task,
+		// we should only see dependencies for shards without any cache, as
+		// only those need the upstream results.
+		slice = fakeCache(bigslice.Map(slice, id), []int{0, 2})
+		slice = bigslice.Map(slice, id)
+		slice = fakeCache(bigslice.Map(slice, id), []int{5, 7})
+		slice = bigslice.Map(slice, id)
+		return slice
+	})
+	inv := makeExecInvocation(f.Invocation("<unknown>"))
+	inv.Index = 0
+	slice0 := inv.Invoke()
+	tasks, err := compile(inv, slice0, false)
+	if err != nil {
+		t.Fatalf("compilation failed")
+	}
+	// These are all the shards that we expect to be computable without
+	// dependencies, as some part of the (pipelined) computation is cached.
+	// This is the union of the shards cached in our fakeCache slices.
+	noDeps := []int{0, 2, 5, 7}
+	for _, task := range tasks {
+		var inNoDeps bool
+		for _, shard := range noDeps {
+			if shard == task.Name.Shard {
+				inNoDeps = true
+			}
+		}
+		// Verify that the resulting tasks reflect the cache state.
+		if got, want := len(task.Deps) == 0, inNoDeps; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+		// Invoke Do to verify that we can construct our pipelined computation.
+		// There have been bugs for which this call would panic.  Note that
+		// this is somewhat fragile, as we assume that Do does not access the
+		// input readers, instead only composing readers to represent the
+		// pipeline.
+		task.Do([]sliceio.Reader{sliceio.EmptyReader{}})
 	}
 }
 
@@ -368,10 +412,10 @@ func lineDiff(lhs, rhs string) string {
 }
 
 type fakeShardCache struct {
-	shardIsCached []bool
+	cachedSet map[int]bool
 }
 
-func (c fakeShardCache) IsCached(shard int) bool { return c.shardIsCached[shard] }
+func (c fakeShardCache) IsCached(shard int) bool { return c.cachedSet[shard] }
 func (fakeShardCache) WritethroughReader(shard int, reader sliceio.Reader) sliceio.Reader {
 	return reader
 }
@@ -405,6 +449,10 @@ func (*fakeCacheSlice) Combiner() slicefunc.Func                                
 func (c *fakeCacheSlice) Reader(shard int, deps []sliceio.Reader) sliceio.Reader { return deps[0] }
 func (c *fakeCacheSlice) Cache() slicecache.ShardCache                           { return c.cache }
 
-func fakeCache(slice bigslice.Slice, shardIsCached []bool) bigslice.Slice {
-	return &fakeCacheSlice{bigslice.MakeName("testcache"), slice, fakeShardCache{shardIsCached}}
+func fakeCache(slice bigslice.Slice, cachedShards []int) bigslice.Slice {
+	cachedSet := make(map[int]bool)
+	for _, shard := range cachedShards {
+		cachedSet[shard] = true
+	}
+	return &fakeCacheSlice{bigslice.MakeName("testcache"), slice, fakeShardCache{cachedSet}}
 }

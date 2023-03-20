@@ -122,42 +122,55 @@ func compile(inv execInvocation, slice bigslice.Slice, machineCombiners bool) (t
 	return
 }
 
-// CompileEnv is the environment for compilation. This environment should
-// capture all external state that can affect compilation of an invocation. It
-// is shared across compilations of the same invocation (e.g. on worker nodes)
-// to guarantee consistent compilation results. This is a requirement of
-// bigslice's computation model, as we assume that all nodes share the same view
-// of the task graph.
-type CompileEnv struct {
-	// Writable is true if this environment is writable. It is only exported so
-	// that it can be gob-{en,dec}oded.
-	Writable bool
+type (
+	// CompileEnv is the environment for compilation. This environment should
+	// capture all external state that can affect compilation of an invocation.
+	// It is shared across compilations of the same invocation (e.g. on worker
+	// nodes) to guarantee consistent compilation results. This is a
+	// requirement of bigslice's computation model, as we assume that all nodes
+	// share the same view of the task graph. It must be gob-encodable for
+	// transport to workers.
+	CompileEnv struct {
+		// Writable is true if this environment is writable. It is only
+		// exported so that it can be gob-{en,dec}oded.
+		Writable bool
+		// Cached indicates whether a task operation's results can be read from
+		// cache. An "operation" is one of the pipelined elements that a task
+		// may perform. It is only exported so that it can be gob-{en,dec}oded.
+		Cached map[taskOp]bool
+	}
+	// taskOp is a (task, operation) pair. It is used as the key of
+	// (CompileEnv).Cached.
+	taskOp struct {
+		// N is the task, specified by name.
+		N TaskName
+		// OpIdx is the operation, specified by index in the task processing
+		// pipeline.
+		OpIdx int
+	}
+)
 
-	// TaskCached indicates whether a task's results can be read from cache. It
-	// is only exported so that it can be gob-{en,dec}oded.
-	TaskCached map[TaskName]bool
-}
-
-// makeCompileEnv returns an empty and writable CompileEnv that can be passed to
-// compile.
+// makeCompileEnv returns an empty and writable CompileEnv that can be passed
+// to compile.
 func makeCompileEnv() CompileEnv {
 	return CompileEnv{
-		Writable:   true,
-		TaskCached: make(map[TaskName]bool),
+		Writable: true,
+		Cached:   make(map[taskOp]bool),
 	}
 }
 
-// MarkCached marks the task named n as cached.
-func (e CompileEnv) MarkCached(n TaskName) {
+// MarkCached marks the (task, operation) given by (n, opIdx) as cached.
+func (e CompileEnv) MarkCached(n TaskName, opIdx int) {
 	if !e.Writable {
 		panic("env not writable")
 	}
-	e.TaskCached[n] = true
+	e.Cached[taskOp{n, opIdx}] = true
 }
 
-// IsCached returns whether the task named n is cached.
-func (e CompileEnv) IsCached(n TaskName) bool {
-	return e.TaskCached[n]
+// IsCached returns whether the (task, operation) given by (n, opIdx) is
+// cached.
+func (e CompileEnv) IsCached(n TaskName, opIdx int) bool {
+	return e.Cached[taskOp{n, opIdx}]
 }
 
 // Freeze freezes the state, marking e no longer writable.
@@ -322,47 +335,47 @@ func (c *compiler) compile(slice bigslice.Slice, part partitioner) (tasks []*Tas
 	// Pipeline execution, folding multiple frame operations
 	// into a single task by composing their readers.
 	// Use cache when configured.
-	for i := len(slices) - 1; i >= 0; i-- {
+	for opIdx := len(slices) - 1; opIdx >= 0; opIdx-- {
 		var (
-			pprofLabel = fmt.Sprintf("%s(%s)", slices[i].Name(), c.inv.Location)
-			reader     = slices[i].Reader
+			pprofLabel = fmt.Sprintf("%s(%s)", slices[opIdx].Name(), c.inv.Location)
+			reader     = slices[opIdx].Reader
 			shardCache = slicecache.Empty
 		)
-		if c, ok := bigslice.Unwrap(slices[i]).(slicecache.Cacheable); ok {
+		if c, ok := bigslice.Unwrap(slices[opIdx]).(slicecache.Cacheable); ok {
 			shardCache = c.Cache()
 		}
 		if c.inv.Env.IsWritable() {
-			for shard := range tasks {
+			for shard, task := range tasks {
 				if shardCache.IsCached(shard) {
-					c.inv.Env.MarkCached(tasks[shard].Name)
+					c.inv.Env.MarkCached(task.Name, opIdx)
 				}
 			}
 		}
-		for shard := range tasks {
+		for shard, task := range tasks {
 			var (
 				shard = shard
-				prev  = tasks[shard].Do
+				prev  = task.Do
 			)
-			if c.inv.Env.IsCached(tasks[shard].Name) {
-				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+			if c.inv.Env.IsCached(task.Name, opIdx) {
+				task.Do = func([]sliceio.Reader) sliceio.Reader {
 					r := shardCache.CacheReader(shard)
 					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
 				}
 				// Forget task dependencies for cached shards because we'll read
 				// from the cache file.
-				tasks[shard].Deps = nil
+				task.Deps = nil
 				continue
 			}
 			if prev == nil {
 				// First, read the input directly.
-				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+				task.Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := reader(shard, readers)
 					r = shardCache.WritethroughReader(shard, r)
 					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
 				}
 			} else {
 				// Subsequently, read the previous pipelined slice's output.
-				tasks[shard].Do = func(readers []sliceio.Reader) sliceio.Reader {
+				task.Do = func(readers []sliceio.Reader) sliceio.Reader {
 					r := reader(shard, []sliceio.Reader{prev(readers)})
 					r = shardCache.WritethroughReader(shard, r)
 					return &sliceio.PprofReader{Reader: r, Label: pprofLabel}
