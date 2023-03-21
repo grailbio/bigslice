@@ -2,8 +2,11 @@ package slicecache
 
 import (
 	"context"
+	"io"
 
 	"github.com/grailbio/base/backgroundcontext"
+	"github.com/grailbio/base/compress/zstd"
+	"github.com/grailbio/base/errors"
 	"github.com/grailbio/base/file"
 	"github.com/grailbio/base/log"
 	"github.com/grailbio/bigslice/frame"
@@ -13,6 +16,7 @@ import (
 type fileReader struct {
 	sliceio.Reader
 	file file.File
+	zr   io.ReadCloser
 	path string
 }
 
@@ -23,12 +27,19 @@ func (f *fileReader) Read(ctx context.Context, frame frame.Frame) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		f.Reader = sliceio.NewDecodingReader(f.file.Reader(backgroundcontext.Get()))
+		f.zr, err = zstd.NewReader(f.file.Reader(backgroundcontext.Get()))
+		if err != nil {
+			return 0, err
+		}
+		f.Reader = sliceio.NewDecodingReader(f.zr)
 	}
 	n, err := f.Reader.Read(ctx, frame)
 	if err != nil {
+		if closeErr := f.zr.Close(); closeErr != nil {
+			log.Error.Printf("%s: close zstd reader: %v", f.file.Name(), closeErr)
+		}
 		if closeErr := f.file.Close(ctx); closeErr != nil {
-			log.Error.Printf("%s: close: %v", f.file.Name(), closeErr)
+			log.Error.Printf("%s: close file: %v", f.file.Name(), closeErr)
 		}
 	}
 	return n, err
@@ -42,6 +53,7 @@ type writethroughReader struct {
 	sliceio.Reader
 	path string
 	file file.File
+	zw   io.WriteCloser
 	enc  *sliceio.Encoder
 }
 
@@ -55,7 +67,11 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 		// Ideally we'd use the underlying context for each op here,
 		// but the way encoder is set up, we can't (understandably)
 		// pass a new writer for each encode.
-		r.enc = sliceio.NewEncodingWriter(r.file.Writer(backgroundcontext.Get()))
+		r.zw, err = zstd.NewWriter(r.file.Writer(backgroundcontext.Get()))
+		if err != nil {
+			return 0, err
+		}
+		r.enc = sliceio.NewEncodingWriter(r.zw)
 	}
 	n, err := r.Reader.Read(ctx, frame)
 	if err == nil || err == sliceio.EOF {
@@ -63,7 +79,9 @@ func (r *writethroughReader) Read(ctx context.Context, frame frame.Frame) (int, 
 			return n, writeErr
 		}
 		if err == sliceio.EOF {
-			if closeErr := r.file.Close(ctx); closeErr != nil {
+			closeErr := r.zw.Close()
+			errors.CleanUpCtx(ctx, r.file.Close, &closeErr)
+			if closeErr != nil {
 				return n, closeErr
 			}
 		}
