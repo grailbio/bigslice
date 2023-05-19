@@ -159,3 +159,65 @@ the Bigslice [combiner](https://github.com/grailbio/bigslice/blob/cafa2ff6e7ea96
 implements a hash table on top of frames,
 without any knowledge of the types of the values it contains.
 
+# What is a `bigslice.FuncValue`?
+
+Bigslice performs computations which are defined as functions that return a
+`bigslice.Slice`, e.g.:
+```
+func wordCount(url string) bigslice.Slice {
+	...
+}
+```
+
+To distribute computation, Bigslice invokes these functions on remote executors
+running in different processes.  However, because Go provides no convenient way
+to serialize executable code for remote execution, these functions are
+represented as
+[`bigslice.FuncValue`](https://pkg.go.dev/github.com/grailbio/bigslice#FuncValue)s,
+created by
+[`bigslice.Func`](https://pkg.go.dev/github.com/grailbio/bigslice#Func).
+`bigslice.Func` builds a global registry of `FuncValue`s that is identical
+across processes, requiring callers to call it in deterministic order.  This
+registry allows Bigslice to refer to the same function across process
+boundaries by index in the registry, so instead of serializing executable code,
+Bigslice serializes the index.  Consequently, a full invocation of a function,
+i.e. the function and its arguments, is represented by an
+[`Invocation`](https://pkg.go.dev/github.com/grailbio/bigslice#Invocation),
+which is also serializable.
+
+# Tasks
+`bigslice.Slice`s and their dependencies form an acyclic directed graph.  To
+compute a slice's contents, this graph is
+[compiled](https://github.com/grailbio/bigslice/blob/79c34a735576b13527741b003c10f52150ebe081/exec/compile.go#L111)
+into a corresponding acyclic directed graph of
+[exec.Task](https://pkg.go.dev/github.com/grailbio/bigslice/exec#Task)s.  A
+`Task` is the unit of computation in Bigslice: tasks are scheduled by Bigslice
+to run, possibly remotely and in parallel, to compute slice contents.  Each
+edge in the graph represents a dependency between tasks.  For example, a single
+task may perform a `Map` transformation, and it would depend on the task that
+computed the shard of data to be mapped.
+
+The [exec.Task](https://pkg.go.dev/github.com/grailbio/bigslice/exec#Task)
+structure represents both the graph and the execution state of the graph, e.g.
+whether the task has been successfully computed.
+
+The
+[`bigslice.Eval`](https://pkg.go.dev/github.com/grailbio/bigslice/exec#Eval)
+function computes task graphs from the provided set of roots, dispatching to
+the given
+[`exec.Executor`](https://pkg.go.dev/github.com/grailbio/bigslice/exec#Executor)
+to compute individual tasks when their dependencies have been satisified.
+`Eval` also reschedules tasks if their results are lost due to operational
+faults, e.g. the loss of a remote machine.  `(exec.Executor).Run` runs the
+given task, providing the data from its dependencies.
+
+A `Task`s performs its computation in its `Do` function:
+```
+type Task struct {
+	Do func([]sliceio.Reader) sliceio.Reader
+	...
+}
+```
+
+Data from its dependencies are provided by the input slice of readers.  The
+returned reader reads out the result of the computation (into a `Frame`).
