@@ -181,8 +181,8 @@ across processes, requiring callers to call it in deterministic order.  This
 registry allows Bigslice to refer to the same function across process
 boundaries by index in the registry, so instead of serializing executable code,
 Bigslice serializes the index.  Consequently, a full invocation of a function,
-i.e. the function and its arguments, is represented by an
-[`Invocation`](https://pkg.go.dev/github.com/grailbio/bigslice#Invocation),
+i.e. the function and its arguments, is represented by a
+[`bigslice.Invocation`](https://pkg.go.dev/github.com/grailbio/bigslice#Invocation),
 which is also serializable.
 
 # Tasks
